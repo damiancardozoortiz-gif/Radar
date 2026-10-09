@@ -5,6 +5,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#0b0d12">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="icon" href="./icon-192.png">
+<link rel="apple-touch-icon" href="./icon-192.png">
+
 <title>Radar YouTube V2</title>
 
 <style>
@@ -31,7 +39,8 @@ input,select{
 button{
  width:100%;padding:14px;border:0;border-radius:10px;
  background:linear-gradient(90deg,#ff354a,#ff713d);
- color:white;font-size:15px;font-weight:bold;margin-top:8px
+ color:white;font-size:15px;font-weight:bold;margin-top:8px;
+ cursor:pointer
 }
 button:disabled{opacity:.6}
 .stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:16px 0}
@@ -40,40 +49,57 @@ button:disabled{opacity:.6}
 h2{font-size:18px;margin:25px 0 12px}
 #estado{margin:12px 0}
 .error{color:#ff7382}
-.video{padding:0;overflow:hidden;color:inherit;text-decoration:none;display:block}
+.video{
+ padding:0;overflow:hidden;color:inherit;
+ text-decoration:none;display:block
+}
 .thumb{aspect-ratio:16/9;background:#10131b;position:relative}
 .thumb img{width:100%;height:100%;object-fit:cover;display:block}
 .body{padding:13px}
 .video-title{font-weight:bold;line-height:1.4;margin-bottom:7px}
 .video-info,.meta{color:#a4a9b5;font-size:12px;line-height:1.7}
 .meta{display:flex;flex-wrap:wrap;gap:12px;margin-top:6px}
-.rank{position:absolute;top:9px;left:9px;background:#ff354a;padding:7px 10px;border-radius:50%;font-weight:bold}
-.pill{position:absolute;top:9px;right:9px;background:#10271e;color:#50e3a4;padding:6px 9px;border-radius:20px;font-size:11px}
+.rank{
+ position:absolute;top:9px;left:9px;background:#ff354a;
+ padding:7px 10px;border-radius:50%;font-weight:bold
+}
+.pill{
+ position:absolute;top:9px;right:9px;background:#10271e;
+ color:#50e3a4;padding:6px 9px;border-radius:20px;font-size:11px
+}
 .bar{height:6px;background:#292e3a;border-radius:10px;margin-top:10px;overflow:hidden}
 .bar i{display:block;height:100%;background:linear-gradient(90deg,#ff354a,#ffbd45,#50e3a4)}
-.actions{display:flex;gap:8px}
-.actions button{flex:1}
-.secondary{background:#292e3a;box-shadow:none}
+.secondary{background:#292e3a}
 a{color:inherit}
+.install{
+ display:none;
+ background:linear-gradient(90deg,#2563eb,#4f46e5);
+ margin-bottom:16px
+}
 </style>
 </head>
 
 <body>
+
 <header>
  <div class="logo">◉ RADAR YOUTUBE V2</div>
  <h1>Radar de viralidad</h1>
  <div class="sub">Detectá videos que empiezan a despegar.</div>
 </header>
 
+<button id="instalar" class="install">📲 Instalar Radar YouTube</button>
+
 <div class="card">
  <div class="campo">
   <div class="label">CLAVE DE YOUTUBE DATA API V3</div>
-  <input id="clave" type="password" placeholder="Pegá tu clave de API">
+  <input id="clave" type="password" placeholder="Pegá tu clave de API" autocomplete="off">
  </div>
+
  <div class="campo">
   <div class="label">TEMA O NICHO (OPCIONAL)</div>
-  <input id="tema" placeholder="Ej: estoicismo, fitness, inteligencia artificial">
+  <input id="tema" type="text" placeholder="Ej: estoicismo, fitness, inteligencia artificial">
  </div>
+
  <div class="campo">
   <div class="label">FORMATO</div>
   <select id="formato">
@@ -82,6 +108,7 @@ a{color:inherit}
    <option value="largos">Buscar videos largos (orientativo)</option>
   </select>
  </div>
+
  <button id="btn">Actualizar Radar</button>
  <button id="borrar" class="secondary">Limpiar resultados</button>
 </div>
@@ -102,7 +129,7 @@ a{color:inherit}
 <div id="lista"></div>
 
 <div class="notice">
-La velocidad es una estimación de vistas acumuladas divididas por las horas desde la publicación; no son mediciones en tiempo real. La búsqueda de Shorts y videos largos es orientativa. Los videos encontrados dependen de los resultados y límites de la API de YouTube.
+La velocidad es una estimación de vistas acumuladas divididas por las horas desde la publicación. No son mediciones en tiempo real. El filtro de Shorts es orientativo. Los resultados dependen de la API de YouTube y de sus límites de uso.
 </div>
 
 <script>
@@ -142,18 +169,26 @@ function hace(h){
 async function api(ruta,params){
  const url="https://www.googleapis.com/youtube/v3/"+ruta+"?"+
   new URLSearchParams(params);
+
  const respuesta=await fetch(url);
  let datos;
- try{datos=await respuesta.json();}
- catch(e){throw new Error("YouTube devolvió una respuesta no válida.");}
+
+ try{
+  datos=await respuesta.json();
+ }catch(e){
+  throw new Error("YouTube devolvió una respuesta no válida.");
+ }
+
  if(!respuesta.ok){
   throw new Error(datos?.error?.message||"Error HTTP "+respuesta.status);
  }
+
  return datos;
 }
 
 function dibujar(){
  const lista=$("lista");
+
  if(!videos.length){
   lista.innerHTML="";
   $("total").textContent="0";
@@ -164,24 +199,30 @@ function dibujar(){
  const maxV=Math.max(1,...videos.map(v=>v.velocidad));
 
  lista.innerHTML=videos.map((v,i)=>`
-  <a class="video" href="https://www.youtube.com/watch?v=${encodeURIComponent(v.id)}"
+  <a class="video"
+     href="https://www.youtube.com/watch?v=${encodeURIComponent(v.id)}"
      target="_blank" rel="noopener noreferrer">
+
    <div class="thumb">
     <img src="https://i.ytimg.com/vi/${encodeURIComponent(v.id)}/mqdefault.jpg"
      alt="" loading="lazy">
     <span class="rank">${i+1}</span>
     ${despega(v)?'<span class="pill">🔥 DESPEGANDO</span>':""}
    </div>
+
    <div class="body">
     <div class="video-title">${esc(v.titulo)}</div>
     <div class="video-info">${esc(v.canal)} · ${hace(v.horas)}</div>
+
     <div class="meta">
      <span>👁 ${fmt(v.vistas)} vistas</span>
      <span>👍 ${v.likes.toFixed(2)}% de likes/vistas</span>
     </div>
+
     <div class="tag" style="margin-top:10px">
      ⚡ ${fmt(v.velocidad)} vistas/hora (estimadas)
     </div>
+
     <div class="bar">
      <i style="width:${Math.max(3,v.velocidad/maxV*100)}%"></i>
     </div>
@@ -207,7 +248,7 @@ async function buscar(){
  $("btn").disabled=true;
  $("btn").textContent="Buscando videos...";
  estado("Conectando con YouTube Data API...");
- 
+
  try{
   try{
    localStorage.setItem("yt_tema",tema);
@@ -237,6 +278,7 @@ async function buscar(){
    }
 
    const s=await api("search",params);
+
    const ids=(s.items||[])
     .map(x=>x.id?.videoId)
     .filter(Boolean);
@@ -257,6 +299,7 @@ async function buscar(){
     maxResults:"25",
     key:key
    });
+
    items=d.items||[];
   }
 
@@ -283,6 +326,7 @@ async function buscar(){
   if(formato==="shorts" && tema){
    videos=videos.filter(v=>esCorto(v.duracion));
   }
+
   if(formato==="largos" && tema){
    videos=videos.filter(v=>!esCorto(v.duracion));
   }
@@ -292,7 +336,10 @@ async function buscar(){
 
   try{
    localStorage.setItem("yt_cache",JSON.stringify({
-    t:Date.now(),videos:videos,tema:tema,formato:formato
+    t:Date.now(),
+    videos:videos,
+    tema:tema,
+    formato:formato
    }));
   }catch(e){}
 
@@ -313,9 +360,12 @@ function esCorto(duracion){
  const m=String(duracion).match(
   /^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/
  );
+
  if(!m)return false;
+
  const segundos=(Number(m[1]||0)*3600)+
   (Number(m[2]||0)*60)+Number(m[3]||0);
+
  return segundos>0 && segundos<=60;
 }
 
@@ -325,23 +375,65 @@ $("borrar").addEventListener("click",()=>{
  videos=[];
  dibujar();
  estado("Resultados borrados. Podés hacer una nueva búsqueda.");
- try{localStorage.removeItem("yt_cache");}catch(e){}
+
+ try{
+  localStorage.removeItem("yt_cache");
+ }catch(e){}
 });
 
+/* Recuperar los datos guardados */
 try{
  $("clave").value=localStorage.getItem("yt_clave")||"";
  $("tema").value=localStorage.getItem("yt_tema")||"";
  $("formato").value=localStorage.getItem("yt_formato")||"todos";
 
  const cache=JSON.parse(localStorage.getItem("yt_cache")||"null");
+
  if(cache && Array.isArray(cache.videos)){
   videos=cache.videos;
   dibujar();
   estado("Resultados guardados de la última consulta. Tocá Actualizar Radar para buscar de nuevo.");
  }
 }catch(e){
- estado("La página funciona, pero no se pudo recuperar el historial guardado.",true);
+ estado("No se pudo recuperar el historial guardado.",true);
+}
+
+/* Instalación de Radar como aplicación */
+let instalacionPendiente=null;
+
+window.addEventListener("beforeinstallprompt",event=>{
+ event.preventDefault();
+ instalacionPendiente=event;
+ $("instalar").style.display="block";
+});
+
+$("instalar").addEventListener("click",async()=>{
+ if(!instalacionPendiente){
+  estado("Si no aparece la instalación automática, abrí el menú de Chrome y elegí Instalar aplicación o Añadir a pantalla de inicio.");
+  return;
+ }
+
+ instalacionPendiente.prompt();
+ await instalacionPendiente.userChoice;
+ instalacionPendiente=null;
+ $("instalar").style.display="none";
+});
+
+window.addEventListener("appinstalled",()=>{
+ $("instalar").style.display="none";
+ estado("Radar YouTube V2 se instaló correctamente.");
+});
+
+/* Registrar el service worker */
+if("serviceWorker" in navigator &&
+   (location.protocol==="https:" || location.hostname==="localhost")){
+ window.addEventListener("load",()=>{
+  navigator.serviceWorker.register("./sw.js")
+   .then(()=>console.log("Radar: service worker registrado"))
+   .catch(error=>console.error("Error del service worker:",error));
+ });
 }
 </script>
+
 </body>
 </html>
