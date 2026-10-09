@@ -797,7 +797,258 @@ if("serviceWorker" in navigator&&(location.protocol==="https:"||location.hostnam
   });
 })();
 </script>
-<!-- FIN MOTOR INTELIGENTE LOCAL -->
+
+<!-- RADAR IA LOCAL - MODULO CORREGIDO -->
+<style>
+#radarIA {
+  margin:20px 0;padding:16px;background:#111722;color:#fff;
+  border:1px solid #354158;border-radius:14px;
+  font-family:Arial,sans-serif
+}
+#radarIA input,#radarIA select {
+  display:block;width:100%;box-sizing:border-box;
+  margin:6px 0 14px;padding:12px;border-radius:8px;
+  border:1px solid #45536b;background:#0b0d12;color:white
+}
+#radarIA button {
+  width:100%;padding:13px;margin:5px 0;
+  border:0;border-radius:8px;background:#d92645;
+  color:white;font-weight:bold
+}
+#radarIA .ria-card {
+  padding:12px;margin-top:12px;border-radius:10px;
+  background:#1b2636;overflow-wrap:anywhere
+}
+#radarIA .ria-score {font-size:30px;color:#71efb0;font-weight:bold}
+#radarIA .ria-error {color:#ffbf69}
+</style>
+
+<section id="radarIA">
+  <h2>🧠 Radar IA Local</h2>
+  <p>Analiza un video sin usar servicios externos.</p>
+
+  <label for="riaTitulo">Título del video</label>
+  <input id="riaTitulo" placeholder="Título del video">
+
+  <label for="riaUrl">URL (opcional)</label>
+  <input id="riaUrl" placeholder="https://www.youtube.com/watch?v=...">
+
+  <label for="riaVistas">Visitas actuales</label>
+  <input id="riaVistas" type="number" min="0" placeholder="25000">
+
+  <label for="riaHoras">Horas desde publicación</label>
+  <input id="riaHoras" type="number" min="0.1" step="0.1" placeholder="12">
+
+  <label for="riaFormato">Formato</label>
+  <select id="riaFormato">
+    <option value="Short">Short</option>
+    <option value="Video largo">Video largo</option>
+  </select>
+
+  <label for="riaAnterior">Visitas anteriores (opcional)</label>
+  <input id="riaAnterior" type="number" min="0" placeholder="18000">
+
+  <label for="riaIntervalo">Horas entre mediciones anteriores</label>
+  <input id="riaIntervalo" type="number" min="0.1" step="0.1" placeholder="3">
+
+  <button type="button" id="riaAnalizar">ANALIZAR VIDEO</button>
+  <div id="riaResultado" aria-live="polite"></div>
+
+  <div class="ria-card">
+    <b>Historial de análisis</b>
+    <button type="button" id="riaHistorial">VER HISTORIAL</button>
+    <button type="button" id="riaExportar">EXPORTAR CSV</button>
+    <div id="riaLista"></div>
+  </div>
+</section>
+
+<script>
+(function () {
+  const root = document.getElementById("radarIA");
+  if (!root || root.dataset.iniciado === "si") return;
+  root.dataset.iniciado = "si";
+
+  const $ = id => root.querySelector("#" + id);
+  const KEY = "radarIA_historial_v2";
+
+  function historial() {
+    try {
+      const h = JSON.parse(localStorage.getItem(KEY) || "[]");
+      return Array.isArray(h) ? h : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function seguro(texto) {
+    return String(texto).replace(/[&<>"']/g, c => ({
+      "&":"&amp;", "<":"&lt;", ">":"&gt;",
+      '"':"&quot;", "'":"&#39;"
+    }[c]));
+  }
+
+  function num(id) {
+    const valor = $(id).value.trim();
+    if (valor === "") return null;
+    const n = Number(valor);
+    return Number.isFinite(n) && n >= 0 ? n : NaN;
+  }
+
+  function guardar(datos) {
+    try {
+      localStorage.setItem(KEY, JSON.stringify(datos.slice(-300)));
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function mostrarError(mensaje) {
+    $("riaResultado").innerHTML =
+      '<div class="ria-card ria-error">' + seguro(mensaje) + '</div>';
+  }
+
+  $("riaAnalizar").addEventListener("click", function () {
+    try {
+      const titulo = $("riaTitulo").value.trim();
+      const url = $("riaUrl").value.trim();
+      const vistas = num("riaVistas");
+      const horas = num("riaHoras");
+      const anterior = num("riaAnterior");
+      const intervalo = num("riaIntervalo");
+
+      if (!titulo) return mostrarError("Escribe el título del video.");
+      if (vistas === null || !Number.isFinite(vistas))
+        return mostrarError("Introduce una cantidad válida de visitas.");
+      if (horas === null || !Number.isFinite(horas) || horas <= 0)
+        return mostrarError("Las horas desde publicación deben ser mayores que cero.");
+      if (anterior !== null && !Number.isFinite(anterior))
+        return mostrarError("Revisa las visitas anteriores.");
+      if (intervalo !== null &&
+          (!Number.isFinite(intervalo) || intervalo <= 0))
+        return mostrarError("El intervalo debe ser mayor que cero.");
+      if (anterior !== null && intervalo === null)
+        return mostrarError("Introduce las horas entre mediciones.");
+      if (anterior !== null && vistas < anterior)
+        return mostrarError("Las visitas actuales no pueden ser menores que las anteriores.");
+
+      const velocidad = vistas / horas;
+      let aceleracion = null;
+      let cambioVisitas = null;
+
+      if (anterior !== null) {
+        const velocidadAnterior = anterior / intervalo;
+        cambioVisitas = anterior > 0
+          ? (vistas - anterior) / anterior * 100
+          : null;
+        aceleracion = velocidadAnterior > 0
+          ? (velocidad / velocidadAnterior - 1) * 100
+          : null;
+      }
+
+      let score = Math.min(30, Math.log10(vistas + 1) * 5);
+      score += Math.min(25, Math.log10(velocidad + 1) * 6);
+
+      const palabras = titulo.split(/\s+/).length;
+      score += palabras >= 4 && palabras <= 15 ? 10 : 5;
+
+      if (aceleracion !== null && Number.isFinite(aceleracion))
+        score += Math.max(0, Math.min(25, aceleracion / 4));
+
+      if (anterior === null) score = Math.min(score, 65);
+      score = Math.round(Math.max(0, Math.min(100, score)));
+
+      const fmt = n => Number(n).toLocaleString("es-AR", {
+        maximumFractionDigits: 2
+      });
+
+      let interpretacion = "Falta otra medición para evaluar el cambio de velocidad.";
+      if (aceleracion !== null) {
+        interpretacion = aceleracion > 10
+          ? "La velocidad estimada aumentó. Conviene seguir observando."
+          : aceleracion >= 0
+            ? "La velocidad se mantiene o mejora ligeramente."
+            : "La velocidad estimada disminuyó.";
+      }
+
+      $("riaResultado").innerHTML =
+        '<div class="ria-card">' +
+        '<div class="ria-score">' + score + '/100</div>' +
+        '<b>' + (score >= 75 ? "Señal prometedora" :
+          score >= 50 ? "Merece seguimiento" : "Datos insuficientes o señal débil") +
+        '</b><p>Velocidad media: ' + fmt(velocidad) +
+        ' visitas por hora</p>' +
+        (cambioVisitas === null ? "" :
+          '<p>Cambio de visitas: ' + fmt(cambioVisitas) + '%</p>') +
+        (aceleracion === null ? "" :
+          '<p>Cambio de velocidad: ' + fmt(aceleracion) + '%</p>') +
+        '<p>' + seguro(interpretacion) + '</p>' +
+        '<p>Este indicador es experimental; no predice viralidad garantizada.</p>' +
+        '</div>';
+
+      const datos = historial();
+      datos.push({
+        fecha: new Date().toLocaleString("es-AR"),
+        titulo, url,
+        formato: $("riaFormato").value,
+        vistas, horas, velocidad, score,
+        aceleracion
+      });
+      const ok = guardar(datos);
+
+      if (!ok) {
+        $("riaResultado").innerHTML +=
+          '<div class="ria-card ria-error">El análisis funcionó, pero el navegador no permitió guardar el historial.</div>';
+      }
+    } catch (e) {
+      mostrarError("Error al analizar. Comprueba los datos y vuelve a intentarlo.");
+    }
+  });
+
+  $("riaHistorial").addEventListener("click", function () {
+    const datos = historial().slice().reverse();
+    $("riaLista").innerHTML = datos.length
+      ? datos.slice(0, 30).map(x =>
+        '<div class="ria-card"><b>' + seguro(x.titulo) +
+        '</b><p>' + Number(x.vistas).toLocaleString("es-AR") +
+        ' visitas · ' + Number(x.score) + '/100</p>' +
+        '<small>' + seguro(x.fecha) + '</small></div>'
+      ).join("")
+      : "<p>Todavía no hay análisis guardados.</p>";
+  });
+
+  $("riaExportar").addEventListener("click", function () {
+    const datos = historial();
+    if (!datos.length) {
+      $("riaLista").textContent = "Primero analiza un video.";
+      return;
+    }
+
+    const columnas = [
+      "fecha","titulo","url","formato",
+      "vistas","horas","velocidad","score","aceleracion"
+    ];
+    const csv = [
+      columnas.join(";"),
+      ...datos.map(x => columnas.map(k =>
+        '"' + String(x[k] ?? "").replace(/"/g, '""') + '"'
+      ).join(";"))
+    ].join("\r\n");
+
+    const blob = new Blob(["\uFEFF" + csv], {
+      type: "text/csv;charset=utf-8"
+    });
+    const a = document.createElement("a");
+    const urlTemporal = URL.createObjectURL(blob);
+    a.href = urlTemporal;
+    a.download = "radar-ia-historial.csv";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(urlTemporal), 1500);
+  });
+})();
+</script>
+<!-- FIN RADAR IA LOCAL -->
+ 
  
 </body>
 </html>
