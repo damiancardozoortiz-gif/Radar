@@ -4,1051 +4,383 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0b0d12">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Radar">
 <link rel="manifest" href="./manifest.webmanifest">
 <link rel="icon" href="./icon-192.png">
-<link rel="apple-touch-icon" href="./icon-192.png">
 <title>Radar YouTube V3</title>
 <style>
-:root{--bg:#0b0d12;--s:#171b25;--b:#292e3a;--m:#a4a9b5;--r:#ff354a;--o:#ff713d;--g:#50e3a4;--sat:env(safe-area-inset-top,0px);--sab:env(safe-area-inset-bottom,0px)}
-*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-[hidden]{display:none!important}
-html,body{height:100%}
-body{margin:0;background:var(--bg);color:#f5f5f5;font:15px/1.4 system-ui,Arial,sans-serif;overflow:hidden;overscroll-behavior:none}
-body:before{content:"";position:fixed;inset:0;background:radial-gradient(ellipse at top left,#35131d,transparent 55%);pointer-events:none}
-#app{position:relative;height:100%;height:100dvh;display:flex;flex-direction:column}
-button{font:inherit;color:#fff;border:0;cursor:pointer;transition:transform .15s,opacity .2s}
-button:active{transform:scale(.95)}
-button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--g);outline-offset:2px}
-.top{display:flex;align-items:center;gap:12px;padding:calc(var(--sat) + 12px) 18px 10px}
-.top h1{font-size:19px;margin:0;flex:1}
-.top small{display:block;color:var(--m);font-size:12px;font-weight:400}
-.sweep{width:36px;height:36px;border-radius:50%;border:2px solid var(--g);position:relative;overflow:hidden;flex:none;background:#0c1d17}
-.sweep:before{content:"";position:absolute;inset:0;background:repeating-radial-gradient(circle,transparent 0 18%,#50e3a444 18% 20%)}
-.sweep:after{content:"";position:absolute;inset:0;background:conic-gradient(transparent 70%,rgba(80,227,164,.75));animation:spin 2.6s linear infinite}
-.sweep.fast:after{animation-duration:.7s}
-.sweep.big{width:120px;height:120px;box-shadow:0 0 40px #50e3a455}
-main{flex:1;overflow-y:auto;padding:0 18px calc(var(--sab) + 100px)}
-.view{display:none}
-.view.on{display:block;animation:vin .35s ease both}
-.card{background:var(--s);border:1px solid var(--b);border-radius:16px;padding:14px;margin-bottom:12px}
-.lbl{color:var(--m);font-size:12px;margin:12px 0 4px}
-.lbl:first-child{margin-top:0}
-.notice{color:var(--m);font-size:13px;line-height:1.6;margin:10px 0}
-.error{color:#ff7382}
-input,select{width:100%;padding:13px;border-radius:10px;border:1px solid #343b4b;background:var(--bg);color:#fff;font:inherit}
-input[type=range]{padding:0;accent-color:var(--r)}
-.fila{display:flex;gap:8px}
-.btn{width:100%;padding:14px;border-radius:12px;background:linear-gradient(90deg,var(--r),var(--o));font-weight:700;margin-top:8px}
-.btn.sec{background:var(--b)}
-.btn:disabled{opacity:.6}
-.ic{flex:none;width:44px;height:40px;border-radius:10px;background:var(--b);font-size:17px;padding:0}
-.ic.on{color:#ffbd45;animation:pop .4s}
-#ref.spin{animation:spin .8s linear infinite}
-.chips{display:flex;gap:8px;overflow-x:auto;padding:4px 0 8px;scrollbar-width:none}
-.chip{flex:none;padding:8px 15px;border-radius:20px;background:var(--bg);border:1px solid var(--b);color:var(--m);font-size:13px;transition:background .25s,color .25s}
-.chip.on{background:linear-gradient(90deg,var(--r),var(--o));border-color:transparent;color:#fff}
-.panel{display:grid;grid-template-rows:0fr;transition:grid-template-rows .35s ease}
-.panel.open{grid-template-rows:1fr}
-.panel>div{overflow:hidden}
-.row{display:flex;justify-content:space-between;align-items:center;padding:8px 0}
-input.tg{appearance:none;-webkit-appearance:none;width:48px;height:28px;padding:0;border:0;border-radius:14px;background:var(--b);position:relative;transition:background .25s;flex:none}
-input.tg:after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;transition:transform .25s}
-input.tg:checked{background:var(--g)}
-input.tg:checked:after{transform:translateX(20px)}
-.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:14px 0}
-.stats .card{padding:12px;margin:0}
-.num{font-size:22px;font-weight:700;margin-top:4px}
+:root{--bg:#0b0d12;--s:#171b25;--b:#292e3a;--m:#a4a9b5;--r:#ff354a;--o:#ff713d;--g:#50e3a4}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:#f5f5f5;font:15px/1.5 system-ui,Arial}
+header{padding:18px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--b)}
+header h1{font-size:19px;margin:0;flex:1}
+header small,.muted,.info{color:var(--m);font-size:12px}
+main{max-width:800px;margin:auto;padding:16px 14px 100px}
+.card,.video{background:var(--s);border:1px solid var(--b);border-radius:15px;padding:14px;margin-bottom:12px}
+input,select{width:100%;padding:12px;border-radius:10px;border:1px solid #343b4b;background:var(--bg);color:white;font:inherit;margin:4px 0}
+button{border:0;border-radius:10px;padding:12px;color:white;font:inherit;font-weight:650;cursor:pointer}
+.btn{width:100%;margin:5px 0;background:linear-gradient(90deg,var(--r),var(--o))}
+.sec{background:var(--b)}
 .green{color:var(--g)}
-h2{font-size:18px;margin:20px 0 6px}
-.video{background:var(--s);border:1px solid var(--b);border-radius:16px;overflow:hidden;margin-bottom:12px;animation:up .5s cubic-bezier(.2,.8,.2,1) both;animation-delay:calc(var(--i)*60ms)}
-.thumb{display:block;aspect-ratio:16/9;background:#10131b;position:relative;overflow:hidden}
-.thumb img{width:100%;height:100%;object-fit:cover;display:block;transition:transform .5s}
-.thumb:active img{transform:scale(1.06)}
-.rank{position:absolute;top:9px;left:9px;width:32px;height:32px;display:grid;place-items:center;border-radius:50%;background:var(--r);font-weight:700}
-.pill{position:absolute;top:9px;right:9px;background:#10271e;color:var(--g);padding:6px 10px;border-radius:20px;font-size:12px;font-weight:700;animation:glow 1.6s infinite}
-.dur{position:absolute;right:9px;bottom:9px;background:rgba(0,0,0,.75);padding:2px 7px;border-radius:6px;font-size:12px}
-.body{padding:13px}
-.vt{display:block;font-weight:700;color:inherit;text-decoration:none;margin-bottom:6px}
-.info{color:var(--m);font-size:12px;line-height:1.7}
-.meta{display:flex;gap:14px;color:var(--m);font-size:13px;margin-top:4px}
-.vel{color:var(--g);font-weight:600;margin-top:8px}
-.bar{height:6px;background:var(--b);border-radius:9px;margin-top:10px;overflow:hidden}
-.bar i{display:block;height:100%;transform-origin:left;background:linear-gradient(90deg,var(--r),#ffbd45,var(--g));animation:grow .9s .2s cubic-bezier(.2,.8,.2,1) both;transition:width .6s}
-.acts{display:flex;gap:8px;margin-top:12px}
-.sk{height:260px;border-radius:16px;margin-bottom:12px;background:linear-gradient(100deg,var(--s) 30%,#222838 50%,var(--s) 70%);background-size:200% 100%;animation:sh 1.2s infinite}
-.vacio{text-align:center;color:var(--m);padding:34px 10px;line-height:1.7}
-.vacio span{display:block;font-size:46px;animation:float 3s ease-in-out infinite}
-nav{position:fixed;left:12px;right:12px;bottom:calc(var(--sab) + 10px);display:flex;background:rgba(23,27,37,.92);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:1px solid var(--b);border-radius:22px;padding:6px;z-index:5}
-nav button{flex:1;background:none;color:var(--m);padding:8px 0;font-size:12px;position:relative;z-index:1}
-nav button.on{color:#fff}
-nav b{display:block;font-size:20px;font-weight:400}
-nav u{text-decoration:none;font-size:10px;background:var(--r);border-radius:9px;padding:0 5px;margin-left:3px}
-nav u:empty{display:none}
-.ind{position:absolute;top:6px;bottom:6px;left:6px;width:calc((100% - 12px)/3);border-radius:16px;background:linear-gradient(90deg,#ff354a40,#ff713d40);transform:translateX(calc(var(--i,0)*100%));transition:transform .4s cubic-bezier(.5,1.5,.5,1)}
-.toast{position:fixed;left:50%;bottom:calc(var(--sab) + 92px);background:#222838;border:1px solid var(--b);padding:10px 18px;border-radius:20px;font-size:13px;z-index:30;max-width:90%;animation:toast 2.6s both}
-#splash{position:fixed;inset:0;z-index:20;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:22px;transition:opacity .5s,visibility .5s}
-#splash.out{opacity:0;visibility:hidden}
-.stxt{color:var(--r);font-weight:700;letter-spacing:4px;animation:fin 1.1s both}
-body.noanim *,body.noanim *:before,body.noanim *:after{animation:none!important;transition:none!important}
-@media(prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important}}
-@keyframes spin{to{transform:rotate(360deg)}}
-@keyframes vin{from{opacity:0;transform:translateY(14px)}}
-@keyframes up{from{opacity:0;transform:translateY(26px) scale(.97)}}
-@keyframes grow{from{transform:scaleX(0)}}
-@keyframes sh{to{background-position:-200% 0}}
-@keyframes glow{50%{box-shadow:0 0 14px #50e3a4aa}}
-@keyframes pop{40%{transform:scale(1.5) rotate(-12deg)}}
-@keyframes float{50%{transform:translateY(-8px)}}
-@keyframes fin{from{opacity:0;letter-spacing:14px}}
-@keyframes toast{0%{opacity:0;transform:translate(-50%,20px)}10%,85%{opacity:1;transform:translate(-50%,0)}100%{opacity:0;transform:translate(-50%,0)}}
+.tabs{display:flex;gap:7px;margin:12px 0}
+.tabs button{flex:1;background:var(--s);border:1px solid var(--b);font-size:13px}
+.tabs button.on{background:linear-gradient(90deg,var(--r),var(--o))}
+.view{display:none}.view.on{display:block}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.stats .card{padding:10px;margin:0}
+.num{font-size:21px;font-weight:800}
+h2{font-size:18px;margin:20px 0 10px}
+.thumb{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:10px;background:#10131b}
+.video{padding:10px}
+.video a{color:white;text-decoration:none}
+.vtitle{font-weight:700;display:block;margin:7px 0}
+.meta{font-size:12px;color:var(--m);line-height:1.7}
+.speed{color:var(--g);font-weight:700;margin:5px 0}
+.actions{display:flex;gap:8px}
+.actions button{flex:1;background:var(--b)}
+.notice{font-size:13px;color:var(--m);line-height:1.6}
+.status{padding:10px;border-radius:10px;background:#10131b;margin:8px 0;font-size:13px}
+.err{color:#ff7382}.ok{color:var(--g)}
+label{display:block;font-size:13px;color:var(--m);margin-top:12px}
+.hidden{display:none!important}
+nav{position:fixed;bottom:0;left:0;right:0;display:flex;gap:5px;padding:9px;background:#171b25f2;border-top:1px solid var(--b);padding-bottom:max(9px,env(safe-area-inset-bottom))}
+nav button{flex:1;background:transparent;color:var(--m);font-size:12px}
+nav button.on{color:white;background:#34303a}
+@media(min-width:600px){main{padding-top:22px}.stats .card{padding:14px}}
 </style>
 </head>
 <body>
-<div id="splash"><div class="sweep big"></div><div class="stxt">RADAR YOUTUBE</div></div>
+<header>
+ <div style="font-size:28px">📡</div>
+ <h1>Radar YouTube V3
+ <small style="display:block;font-weight:400">Radar de viralidad y crecimiento</small></h1>
+ <button id="refresh" class="sec" aria-label="Actualizar">↻</button>
+</header>
 
-<div id="app">
- <header class="top">
-  <div class="sweep" id="sw"></div>
-  <h1>Radar de viralidad<small>Detectá videos que empiezan a despegar</small></h1>
-  <button class="ic" id="ref" aria-label="Actualizar">↻</button>
- </header>
+<main>
+ <section class="view on" id="radar">
+  <div class="card">
+   <label for="topic">Tema o nicho</label>
+   <input id="topic" placeholder="Ej.: estoicismo, humor, fútbol">
+   <label for="region">Región</label>
+   <select id="region">
+    <option value="AR">Argentina</option><option value="MX">México</option>
+    <option value="ES">España</option><option value="US">Estados Unidos</option>
+    <option value="BR">Brasil</option><option value="CO">Colombia</option>
+    <option value="CL">Chile</option><option value="ALL">Todas las regiones*</option>
+   </select>
+   <label for="window">Publicado en las últimas</label>
+   <select id="window">
+    <option value="24">24 horas</option><option value="48" selected>48 horas</option>
+    <option value="168">7 días</option><option value="720">30 días</option>
+   </select>
+   <label for="format">Formato</label>
+   <select id="format"><option value="all">Todos</option>
+    <option value="shorts">Shorts (hasta 3 min, orientativo)</option>
+    <option value="long">Videos de más de 3 min</option>
+   </select>
+   <label for="sort">Orden del ranking</label>
+   <select id="sort">
+    <option value="speed">Velocidad estimada</option>
+    <option value="growth">Crecimiento medido</option>
+    <option value="views">Más vistas</option>
+    <option value="new">Más recientes</option>
+   </select>
+   <label for="limit">Cantidad</label>
+   <select id="limit"><option>10</option><option selected>25</option><option>50</option></select>
+   <label for="threshold">Umbral de despegue: <span id="thresholdText">1000</span> vistas/hora</label>
+   <input id="threshold" type="range" min="100" max="10000" step="100" value="1000">
+   <label><input id="onlyHot" type="checkbox" style="width:auto"> Mostrar solo videos despegando</label>
+   <button id="search" class="btn">🔎 Buscar videos</button>
+   <button id="export" class="btn sec">📄 Exportar ranking CSV</button>
+   <div class="notice">*Todas las regiones utiliza una búsqueda global aproximada. La velocidad estimada no equivale al crecimiento real.</div>
+  </div>
 
- <main id="main">
-  <section class="view on" id="v0">
-   <div class="card">
-    <input id="tema" type="search" placeholder="🔎 Tema o nicho (opcional)" enterkeyhint="search" autocomplete="off">
-    <div class="chips" id="cFormato"></div>
-    <button class="btn" id="btn">Buscar videos</button>
-    <button class="btn sec" id="bfil">⚙️ Filtros avanzados</button>
-    <div class="panel" id="panel"><div>
-     <div class="lbl">Ventana de tiempo (se aplica al buscar)</div><div class="chips" id="cVentana"></div>
-     <div class="lbl">Ordenar por</div><select id="orden"></select>
-     <div class="lbl">Región (se aplica al buscar)</div><select id="region"></select>
-     <div class="lbl">Cantidad de resultados</div><select id="cant"></select>
-     <div class="lbl">Umbral de despegue: <b id="umv"></b> vistas/hora</div><input id="umbral" type="range" min="100" max="10000" step="100">
-     <label class="row">Mostrar solo los que despegan<input type="checkbox" class="tg" id="solo"></label>
-    </div></div>
-   </div>
-   <div class="stats">
-    <div class="card"><div class="info">Videos</div><div class="num" id="total">0</div></div>
-    <div class="card"><div class="info">Despegando</div><div class="num green" id="alertas">0</div></div>
-    <div class="card"><div class="info">Máx. vistas/h</div><div class="num" id="top">0</div></div>
-   </div>
-   <h2>🔥 Ranking de crecimiento</h2>
-   <div id="estado" class="notice"></div>
-   <div id="lista"></div>
-   <div class="notice">La velocidad estimada es vistas totales ÷ horas desde la publicación. El crecimiento real se mide comparando con tu consulta anterior del mismo video. Shorts = hasta 3 min (orientativo).</div>
-  </section>
+  <div class="stats">
+   <div class="card"><div class="info">Videos</div><div class="num" id="total">0</div></div>
+   <div class="card"><div class="info">Despegando</div><div class="num green" id="hot">0</div></div>
+   <div class="card"><div class="info">Máx. vistas/h</div><div class="num" id="maxSpeed">0</div></div>
+  </div>
+  <div id="radarStatus" class="status">Ingresá tu clave API en Ajustes para empezar.</div>
+  <h2>🔥 Ranking de crecimiento</h2>
+  <div id="results"></div>
+ </section>
 
-  <section class="view" id="v1">
-   <h2 style="margin-top:6px">⭐ Favoritos</h2>
-   <button class="btn sec" id="actFav" style="margin:0 0 12px">↻ Actualizar estadísticas</button>
-   <div id="listaFav"></div>
-  </section>
+ <section class="view" id="favorites">
+  <h2>⭐ Mis favoritos</h2>
+  <div id="favResults"></div>
+ </section>
 
-  <section class="view" id="v2">
-   <div class="card">
-    <div class="lbl">Clave de YouTube Data API v3</div>
-    <div class="fila"><input id="clave" type="password" placeholder="Pegá tu clave de API" autocomplete="off"><button class="ic" id="ojo" aria-label="Mostrar clave">👁</button></div>
-    <button class="btn" id="probar">Probar clave</button>
-    <div class="notice">Se guarda solo en este dispositivo. Restringila a tu dominio en Google Cloud para que nadie más pueda usarla.</div>
-   </div>
-   <div class="card">
-    <div class="lbl">Cuota diaria (estimación local)</div>
-    <div id="cuotaTxt" class="info"></div>
-    <div class="bar"><i id="cuotaBar" style="width:1%"></i></div>
-   </div>
-   <div class="card">
-    <label class="row">Animaciones<input type="checkbox" class="tg" id="anim"></label>
-    <label class="row">Vibración al tocar<input type="checkbox" class="tg" id="vib"></label>
-   </div>
-   <div class="card">
-    <button class="btn" id="instalar" hidden style="margin:0 0 8px">📲 Instalar Radar</button>
-    <div class="notice" id="ios" hidden style="margin-top:0">En iPhone: tocá Compartir y elegí «Añadir a pantalla de inicio».</div>
-    <button class="btn sec" id="limpiar" style="margin-top:0">Limpiar resultados</button>
-    <button class="btn sec" id="reset">Reiniciar medición de crecimiento</button>
-    <button class="btn sec" id="todo">Borrar todos los datos</button>
-   </div>
-  </section>
- </main>
+ <section class="view" id="settings">
+  <h2>⚙️ Configuración</h2>
+  <div class="card">
+   <h3>YouTube Data API v3</h3>
+   <label for="apiKey">Clave de API</label>
+   <input id="apiKey" type="password" autocomplete="off" placeholder="Pegá tu API key">
+   <button class="btn" id="saveKey">Guardar clave</button>
+   <button class="btn sec" id="testKey">Probar conexión</button>
+   <div class="notice">La clave se guarda en este dispositivo. Restringila desde Google Cloud. No la publiques en repositorios ni la compartas.</div>
+  </div>
 
- <nav>
-  <div class="ind"></div>
-  <button class="on"><b>📡</b>Radar</button>
-  <button><b>⭐</b>Favoritos<u id="nfav"></u></button>
-  <button><b>⚙️</b>Ajustes</button>
- </nav>
-</div>
+  <div class="card">
+   <h3>🔐 Conectar tu canal con Google</h3>
+   <div id="oauthStatus" class="status">Todavía no conectado.</div>
+   <label for="clientId">OAuth Client ID (Aplicación web)</label>
+   <input id="clientId" placeholder="...apps.googleusercontent.com" autocomplete="off">
+   <button class="btn" id="saveClient">Guardar Client ID</button>
+   <button class="btn" id="connect">Conectar con Google</button>
+   <button class="btn sec" id="disconnect">Desconectar sesión local</button>
+   <button class="btn sec" id="analytics">Consultar YouTube Analytics</button>
+   <div id="analyticsStatus" class="status">Analytics todavía no consultado.</div>
+   <div class="notice">
+    Necesitás habilitar YouTube Analytics API y YouTube Data API v3 en Google Cloud.
+    El cliente OAuth debe ser de tipo Aplicación web y autorizar el origen de GitHub Pages.
+    El consentimiento debe estar configurado y tu cuenta debe tener acceso al canal.
+    Esta aplicación solicita permisos de lectura; no puede publicar videos.
+   </div>
+  </div>
 
+  <div class="card">
+   <h3>📊 Cuota estimada de API</h3>
+   <div id="quota">No hay consultas registradas hoy.</div>
+   <button class="btn sec" id="clearResults">Limpiar resultados</button>
+   <button class="btn sec" id="clearSnapshots">Reiniciar historial de crecimiento</button>
+   <button class="btn sec" id="clearAll">Borrar datos locales</button>
+  </div>
+ </section>
+</main>
+
+<nav>
+ <button class="on" data-view="radar">📡<br>Radar</button>
+ <button data-view="favorites">⭐<br>Favoritos</button>
+ <button data-view="settings">⚙️<br>Ajustes</button>
+</nav>
+
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <script>
 "use strict";
 const $=id=>document.getElementById(id);
-const ls={
- get(k,d){try{const v=localStorage.getItem(k);return v==null?d:JSON.parse(v)}catch(e){return d}},
- set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}
+const get=(k,d)=>{try{let v=localStorage.getItem(k);return v===null?d:JSON.parse(v)}catch{return d}};
+const put=(k,v)=>localStorage.setItem(k,JSON.stringify(v));
+const state={
+ key:localStorage.getItem("radar_api_key")||"",
+ client:localStorage.getItem("radar_client_id")||"",
+ videos:get("radar_videos",[]),
+ favs:get("radar_favs",[]),
+ snaps:get("radar_snaps",{}),
+ token:null,
+ quota:get("radar_quota",{day:"",units:0})
 };
-const DEF={key:"",tema:"",formato:"todos",ventana:48,orden:"vel",region:"AR",cant:25,umbral:1000,solo:false,anim:true,vib:true};
-const C=Object.assign({},DEF,ls.get("cfg3",{}));
-try{if(!C.key)C.key=localStorage.getItem("yt_clave")||""}catch(e){}
-const save=()=>ls.set("cfg3",C);
-const cache0=ls.get("cache3",null);
-let videos=cache0?.v||[], favs=ls.get("favs3",[]), snap=ls.get("snap3",{}), cuota=ls.get("cuota3",{d:"",u:0}), vista=0;
-const LANG={BR:"pt",US:"en"};
-
-/* ---------- utilidades ---------- */
-const fmt=n=>new Intl.NumberFormat("es-AR").format(n);
+let activeView="radar",tokenClient=null,oauthReady=false;
+const fmt=n=>new Intl.NumberFormat("es-AR").format(Math.round(Number(n)||0));
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const hrs=v=>Math.max(1,(Date.now()-v.pub)/36e5);
-const vel=v=>Math.round(v.vistas/hrs(v));
-const despega=v=>hrs(v)<=48&&vel(v)>=C.umbral;
-const hace=h=>h<2?"hace 1 hora":h<24?"hace "+Math.round(h)+" horas":"hace "+Math.round(h/24)+" días";
-const lapso=ms=>{const m=ms/6e4;return m<60?Math.round(m)+" min":m<1440?(m/60).toFixed(1).replace(".0","")+" h":Math.round(m/1440)+" días"};
-const mmss=s=>{const h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=String(s%60).padStart(2,"0");return h?h+":"+String(m).padStart(2,"0")+":"+x:m+":"+x};
-const vib=ms=>{if(C.vib&&navigator.vibrate)navigator.vibrate(ms)};
-const esFav=id=>favs.some(v=>v.id===id);
-const fmtOk=v=>C.formato==="shorts"?(v.seg>0&&v.seg<=180):C.formato==="largos"?v.seg>180:true;
-function seg(d){const m=String(d).match(/^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/);return m?(+m[1]||0)*3600+(+m[2]||0)*60+(+m[3]||0):0}
-function toast(t){const e=document.createElement("div");e.className="toast";e.textContent=t;document.body.appendChild(e);setTimeout(()=>e.remove(),2600)}
-function estado(t,err){const e=$("estado");e.textContent=t;e.className="notice"+(err?" error":"")}
-function contar(el,n){
- const a=+el.dataset.n||0;el.dataset.n=n;
- if(!C.anim){el.textContent=fmt(n);return}
- const t0=performance.now();
- (function f(t){const p=Math.min(1,(t-t0)/600);el.textContent=fmt(Math.round(a+(n-a)*(1-Math.pow(1-p,3))));if(p<1)requestAnimationFrame(f)})(t0);
-}
-
-/* ---------- API y cuota ---------- */
-function gastar(n){
- const h=new Date().toISOString().slice(0,10);
- if(cuota.d!==h)cuota={d:h,u:0};
- cuota.u+=n;ls.set("cuota3",cuota);pintarCuota();
-}
-function pintarCuota(){
- const h=new Date().toISOString().slice(0,10),u=cuota.d===h?cuota.u:0;
- $("cuotaTxt").textContent=fmt(u)+" de 10.000 unidades usadas hoy · quedan unas "+Math.floor((10000-u)/100)+" búsquedas";
- $("cuotaBar").style.width=Math.min(100,Math.max(1,u/100))+"%";
-}
-async function api(ruta,p){
- const r=await fetch("https://www.googleapis.com/youtube/v3/"+ruta+"?"+new URLSearchParams({...p,key:C.key}));
- let d;
- try{d=await r.json()}catch(e){throw new Error("YouTube devolvió una respuesta no válida.")}
- gastar(ruta==="search"?100:1);
- if(!r.ok){
-  const motivo=d?.error?.errors?.[0]?.reason;
-  throw new Error(motivo==="quotaExceeded"?"Se agotó la cuota diaria de la API. Se renueva a medianoche (hora del Pacífico).":d?.error?.message||"Error HTTP "+r.status);
- }
+const hours=v=>Math.max(1,(Date.now()-v.published)/3600000);
+const speed=v=>Math.round(v.views/hours(v));
+const isHot=v=>hours(v)<=48&&speed(v)>=+$("threshold").value;
+const duration=s=>{let m=String(s||"").match(/^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/);return m?(+m[1]||0)*3600+(+m[2]||0)*60+(+m[3]||0):0};
+const timeAgo=d=>{let h=Math.max(0,(Date.now()-d)/3600000);return h<1?"hace menos de 1 h":h<24?"hace "+Math.floor(h)+" h":"hace "+Math.floor(h/24)+" d"};
+function status(id,msg,error=false){$(id).textContent=msg;$(id).className="status "+(error?"err":"")}
+function quota(n){let day=new Date().toISOString().slice(0,10);if(state.quota.day!==day)state.quota={day,units:0};state.quota.units+=n;put("radar_quota",state.quota);$("quota").textContent=fmt(state.quota.units)+" unidades estimadas usadas hoy. La cuota real se verifica en Google Cloud."}
+async function api(path,params={}){
+ if(!state.key)throw Error("Primero guardá tu clave de YouTube Data API en Ajustes.");
+ let r=await fetch("https://www.googleapis.com/youtube/v3/"+path+"?"+new URLSearchParams({...params,key:state.key}));
+ let d=await r.json();quota(path==="search"?100:1);
+ if(!r.ok)throw Error(d?.error?.message||"Error de YouTube API ("+r.status+").");
  return d;
 }
-
-/* ---------- datos ---------- */
-function parse(i,t){
- const s=i.statistics||{},vistas=+s.viewCount||0,sn=snap[i.id];
- let crec=null;
- if(sn&&t-sn.t>=3e5&&vistas>=sn.v)crec=Math.round((vistas-sn.v)/((t-sn.t)/36e5));
- return{id:i.id,titulo:i.snippet.title,canal:i.snippet.channelTitle,pub:Date.parse(i.snippet.publishedAt),vistas,
-  likes:s.likeCount==null||!vistas?null:+s.likeCount/vistas*100,seg:seg(i.contentDetails?.duration),crec,prev:sn?t-sn.t:0};
+function saveSnapshots(list){
+ const now=Date.now();
+ for(const v of list){
+  const old=state.snaps[v.id];
+  if(old&&now-old.t>=300000){
+   v.growth=Math.round((v.views-old.views)/((now-old.t)/3600000));
+   v.interval=now-old.t;
+  }else if(old){v.growth=null;v.interval=now-old.t}
+  state.snaps[v.id]={t:now,views:v.views};
+ }
+ const keys=Object.keys(state.snaps);
+ if(keys.length>600)keys.sort((a,b)=>state.snaps[a].t-state.snaps[b].t).slice(0,keys.length-600).forEach(k=>delete state.snaps[k]);
+ put("radar_snaps",state.snaps);
 }
-function guardarSnap(vs,t){
- vs.forEach(v=>{if(!snap[v.id]||t-snap[v.id].t>=3e5)snap[v.id]={t,v:v.vistas}});
- const k=Object.keys(snap);
- if(k.length>600)k.sort((a,b)=>snap[a].t-snap[b].t).slice(0,k.length-600).forEach(x=>delete snap[x]);
- ls.set("snap3",snap);
-}
-function heredar(nuevos,viejos){
- const m=Object.fromEntries(viejos.map(v=>[v.id,v]));
- nuevos.forEach(v=>{const o=m[v.id];if(v.crec==null&&o){v.crec=o.crec;v.prev=o.prev}});
-}
-function ordenar(a){
- const f={vel,crec:v=>v.crec??-1,vistas:v=>v.vistas,likes:v=>v.likes??-1,nuevo:v=>v.pub}[C.orden];
- return [...a].sort((x,y)=>f(y)-f(x));
-}
-
-/* ---------- dibujo ---------- */
-const card=(v,i,max)=>{
- const u="https://www.youtube.com/watch?v="+encodeURIComponent(v.id),f=esFav(v.id);
- return `<div class="video" style="--i:${Math.min(i,8)}">
- <a class="thumb" href="${u}" target="_blank" rel="noopener noreferrer">
-  <img src="https://i.ytimg.com/vi/${encodeURIComponent(v.id)}/mqdefault.jpg" alt="" loading="lazy">
-  <span class="rank">${i+1}</span>${despega(v)?'<span class="pill">🔥 Despegando</span>':""}${v.seg?`<span class="dur">${mmss(v.seg)}</span>`:""}
- </a>
- <div class="body">
-  <a class="vt" href="${u}" target="_blank" rel="noopener noreferrer">${esc(v.titulo)}</a>
-  <div class="info">${esc(v.canal)} · ${hace(hrs(v))}</div>
-  <div class="meta"><span>👁 ${fmt(v.vistas)}</span><span>👍 ${v.likes==null?"likes ocultos":v.likes.toFixed(2)+"%"}</span></div>
-  <div class="vel">⚡ ${fmt(vel(v))} vistas/hora (estimadas)</div>
-  <div class="info">${v.crec!=null?`📈 +${fmt(v.crec)}/h medidas en los últimos ${lapso(v.prev)}`:"📈 Actualizá más tarde para medir el crecimiento real"}</div>
-  <div class="bar"><i style="width:${Math.max(3,vel(v)/max*100)}%"></i></div>
-  <div class="acts"><button class="ic${f?" on":""}" data-fav="${esc(v.id)}" aria-label="Favorito">${f?"★":"☆"}</button><button class="ic" data-share="${esc(v.id)}" aria-label="Compartir">📤</button></div>
- </div></div>`;
-};
-const lista=l=>{const m=Math.max(1,...l.map(vel));return l.map((v,i)=>card(v,i,m)).join("")};
-const vacio=(e,t)=>`<div class="vacio"><span>${e}</span>${t}</div>`;
-
-function dibujar(){
- let l=ordenar(videos.filter(fmtOk));
- if(C.solo)l=l.filter(despega);
- l=l.slice(0,C.cant);
- $("lista").innerHTML=l.length?lista(l):vacio("📡",videos.length?"Ningún video cumple estos filtros.<br>Probá bajar el umbral o cambiar el formato.":"Todavía no hay resultados.<br>Tocá «Buscar videos» para escanear.");
- contar($("total"),l.length);
- contar($("alertas"),l.filter(despega).length);
- contar($("top"),l.length?Math.max(...l.map(vel)):0);
-}
-function dibujarFavs(){
- $("listaFav").innerHTML=favs.length?lista(ordenar(favs)):vacio("⭐","Todavía no guardaste videos.<br>Tocá ☆ en cualquier video para seguirlo.");
- $("nfav").textContent=favs.length||"";
-}
-
-/* ---------- búsqueda ---------- */
-function cargando(on){
- $("btn").disabled=on;
- $("btn").textContent=on?"Buscando videos…":"Buscar videos";
- $("sw").classList.toggle("fast",on);
- $("ref").classList.toggle("spin",on);
- if(on){$("lista").innerHTML='<div class="sk"></div>'.repeat(3);estado("Conectando con YouTube Data API…")}
-}
-async function buscar(){
- if(!C.key){toast("Primero cargá tu clave de API");ir(2);$("clave").focus();return}
- C.tema=$("tema").value.trim();save();
- if(vista!==0)ir(0);
- cargando(true);
- try{
-  let items=[];
-  if(C.tema){
-   const p={part:"snippet",type:"video",q:C.tema,order:"viewCount",maxResults:"50",regionCode:C.region,
-    relevanceLanguage:LANG[C.region]||"es",publishedAfter:new Date(Date.now()-C.ventana*36e5).toISOString()};
-   if(C.formato==="shorts")p.videoDuration="short";
-   const s=await api("search",p);
-   const ids=(s.items||[]).map(x=>x.id?.videoId).filter(Boolean);
-   if(ids.length)items=(await api("videos",{part:"snippet,statistics,contentDetails",id:ids.join(",")})).items||[];
-  }else{
-   items=(await api("videos",{part:"snippet,statistics,contentDetails",chart:"mostPopular",regionCode:C.region,maxResults:"50"})).items||[];
-  }
-  const t=Date.now(),nuevos=items.map(i=>parse(i,t));
-  heredar(nuevos,videos);
-  guardarSnap(nuevos,t);
-  videos=nuevos;
-  ls.set("cache3",{v:videos,t});
-  dibujar();vib([15,30,15]);
-  estado(videos.length
-   ?"Actualizado a las "+new Date(t).toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"})+" · "+videos.length+" videos analizados"+(C.tema?"":" · tendencias de "+C.region+" (sin ventana de tiempo)")
-   :"No se encontraron videos con esa búsqueda. Probá una ventana más amplia.");
- }catch(e){
-  dibujar();
-  estado("Error: "+e.message,true);
- }finally{cargando(false)}
-}
-
-/* ---------- favoritos y compartir ---------- */
-const hallar=id=>videos.find(v=>v.id===id)||favs.find(v=>v.id===id);
-function toggleFav(id){
- const v=hallar(id);if(!v)return;
- if(esFav(id)){favs=favs.filter(x=>x.id!==id);toast("Quitado de favoritos")}
- else{favs.unshift(v);toast("★ Guardado en favoritos")}
- ls.set("favs3",favs);vib(15);
- document.querySelectorAll('[data-fav="'+id+'"]').forEach(x=>{
-  x.textContent=esFav(id)?"★":"☆";x.classList.toggle("on",esFav(id));
-  x.style.animation="none";void x.offsetWidth;x.style.animation="";
+function ordered(list){
+ const mode=$("sort").value;
+ return [...list].sort((a,b)=>{
+  if(mode==="growth")return (b.growth??-1)-(a.growth??-1);
+  if(mode==="views")return b.views-a.views;
+  if(mode==="new")return b.published-a.published;
+  return speed(b)-speed(a);
  });
- $("nfav").textContent=favs.length||"";
- if(vista===1)dibujarFavs();
 }
-async function compartir(id){
- const v=hallar(id),u="https://www.youtube.com/watch?v="+id;
+function renderCard(v,i){
+ const fav=state.favs.some(x=>x.id===v.id);
+ return `<article class="video">
+ <a href="https://www.youtube.com/watch?v=${encodeURIComponent(v.id)}" target="_blank" rel="noopener">
+ <img class="thumb" loading="lazy" src="https://i.ytimg.com/vi/${encodeURIComponent(v.id)}/mqdefault.jpg" alt="Miniatura de ${esc(v.title)}">
+ <span class="vtitle">${i+1}. ${esc(v.title)}</span></a>
+ <div class="meta">${esc(v.channel)} · ${timeAgo(v.published)}</div>
+ <div class="meta">👁 ${fmt(v.views)} vistas · ⏱ ${Math.floor(v.duration/60)} min ${v.duration%60} s</div>
+ <div class="speed">⚡ ${fmt(speed(v))} vistas/h estimadas ${isHot(v)?" · 🔥 DESPEGANDO":""}</div>
+ <div class="meta">${v.growth!=null?"📈 Cambio medido: "+(v.growth>=0?"+":"")+fmt(v.growth)+" vistas/h":"📊 Volvé a consultar después de unos minutos para medir el crecimiento"}</div>
+ <div class="actions"><button data-fav="${esc(v.id)}">${fav?"★ Guardado":"☆ Favorito"}</button>
+ <button data-share="${esc(v.id)}">Compartir</button></div></article>`;
+}
+function render(){
+ let list=state.videos.filter(v=>{
+  const f=$("format").value;
+  return f==="all"||(f==="shorts"&&v.duration<=180)||(f==="long"&&v.duration>180);
+ });
+ if($("onlyHot").checked)list=list.filter(isHot);
+ list=ordered(list).slice(0,+$("limit").value);
+ $("results").innerHTML=list.length?list.map(renderCard).join(""):"<div class='card notice'>No hay resultados. Realizá una búsqueda o modificá los filtros.</div>";
+ $("total").textContent=list.length;
+ $("hot").textContent=list.filter(isHot).length;
+ $("maxSpeed").textContent=fmt(list.length?Math.max(...list.map(speed)):0);
+ const favs=ordered(state.favs);
+ $("favResults").innerHTML=favs.length?favs.map(renderCard).join(""):"<div class='card notice'>Todavía no guardaste favoritos.</div>";
+}
+async function search(){
+ $("search").disabled=true;$("search").textContent="Buscando…";
+ status("radarStatus","Buscando videos públicos en YouTube…");
  try{
-  if(navigator.share)await navigator.share({title:v?.titulo,url:u});
-  else{await navigator.clipboard.writeText(u);toast("Enlace copiado")}
- }catch(e){}
+  const topic=$("topic").value.trim(),region=$("region").value;
+  const p={part:"snippet",type:"video",order:"viewCount",maxResults:"50",
+   publishedAfter:new Date(Date.now()-+$("window").value*3600000).toISOString()};
+  if(topic)p.q=topic;
+  if(region!=="ALL")p.regionCode=region;
+  if(region==="US")p.relevanceLanguage="en";
+  if(region==="BR")p.relevanceLanguage="pt";
+  if(region!=="US"&&region!=="BR")p.relevanceLanguage="es";
+  const s=await api("search",p);
+  const ids=(s.items||[]).map(x=>x.id?.videoId).filter(Boolean);
+  if(!ids.length){state.videos=[];put("radar_videos",[]);render();status("radarStatus","No se encontraron videos para esos filtros.");return}
+  const all=[];
+  for(let i=0;i<ids.length;i+=50){
+   const d=await api("videos",{part:"snippet,statistics,contentDetails",id:ids.slice(i,i+50).join(",")});
+   all.push(...(d.items||[]));
+  }
+  const now=Date.now();
+  state.videos=all.map(x=>({id:x.id,title:x.snippet.title,channel:x.snippet.channelTitle,
+   published:Date.parse(x.snippet.publishedAt),views:+x.statistics?.viewCount||0,
+   duration:duration(x.contentDetails?.duration),likes:+x.statistics?.likeCount||0,growth:null}));
+  saveSnapshots(state.videos);
+  put("radar_videos",state.videos);
+  render();
+  status("radarStatus","Búsqueda completada: "+state.videos.length+" videos. Repetí la consulta más tarde para comparar el crecimiento.");
+ }catch(e){status("radarStatus",e.message,true)}
+ finally{$("search").disabled=false;$("search").textContent="🔎 Buscar videos"}
 }
-async function actFavs(){
- if(!favs.length)return toast("No tenés favoritos todavía");
- if(!C.key){toast("Primero cargá tu clave de API");return ir(2)}
- $("actFav").disabled=true;
+function initOAuth(){
+ if(!window.google?.accounts?.oauth2){status("oauthStatus","Cargando el sistema de acceso de Google…");return false}
+ if(!state.client){status("oauthStatus","Guardá primero tu Client ID de OAuth.");return false}
+ tokenClient=google.accounts.oauth2.initTokenClient({
+  client_id:state.client,
+  scope:"https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/yt-analytics.readonly",
+  callback:async response=>{
+   if(response.error){status("oauthStatus","Google rechazó la autorización: "+response.error,true);return}
+   state.token=response.access_token;
+   status("oauthStatus","Conectado temporalmente con Google. Ya podés consultar Analytics.");
+   $("analytics").disabled=false;
+  }
+ });
+ oauthReady=true;return true;
+}
+async function analytics(){
+ if(!state.token){status("analyticsStatus","Primero conectá tu cuenta de Google.",true);return}
+ status("analyticsStatus","Consultando métricas de tu canal…");
  try{
-  const t=Date.now();
-  const d=await api("videos",{part:"snippet,statistics,contentDetails",id:favs.slice(0,50).map(v=>v.id).join(",")});
-  const nuevos=(d.items||[]).map(i=>parse(i,t));
-  heredar(nuevos,favs);
-  const m=Object.fromEntries(nuevos.map(v=>[v.id,v]));
-  favs=favs.map(v=>m[v.id]||v);
-  guardarSnap(nuevos,t);ls.set("favs3",favs);dibujarFavs();vib(15);toast("Favoritos actualizados");
- }catch(e){toast("Error: "+e.message.slice(0,80))}
- $("actFav").disabled=false;
+  const end=new Date();end.setDate(end.getDate()-2);
+  const start=new Date(end);start.setDate(start.getDate()-27);
+  const date=d=>d.toISOString().slice(0,10);
+  const url="https://youtubeanalytics.googleapis.com/v2/reports?"+new URLSearchParams({
+   ids:"channel==MINE",startDate:date(start),endDate:date(end),
+   metrics:"views,estimatedMinutesWatched,averageViewDuration,subscribersGained"
+  });
+  const r=await fetch(url,{headers:{Authorization:"Bearer "+state.token}});
+  const d=await r.json();
+  if(!r.ok)throw Error(d?.error?.message||"No se pudo consultar Analytics.");
+  const rows=d.rows?.[0];
+  if(!rows){status("analyticsStatus","Google no devolvió métricas para el período seleccionado.");return}
+  status("analyticsStatus","Últimos 28 días completos · Vistas: "+fmt(rows[0])+" · Minutos vistos: "+fmt(rows[1])+" · Duración media: "+Math.floor(rows[2]/60)+" min "+Math.round(rows[2]%60)+" s · Suscriptores ganados: "+fmt(rows[3]));
+ }catch(e){status("analyticsStatus",e.message,true)}
 }
-
-/* ---------- navegación ---------- */
-function ir(n){
- vista=n;
- document.querySelectorAll(".view").forEach((s,i)=>s.classList.toggle("on",i===n));
- document.querySelectorAll("nav button").forEach((b,i)=>b.classList.toggle("on",i===n));
- document.querySelector(".ind").style.setProperty("--i",n);
- $("main").scrollTo({top:0});vib(8);
- if(n===1)dibujarFavs();
-}
-document.querySelectorAll("nav button").forEach((b,i)=>b.onclick=()=>ir(i));
-document.addEventListener("click",e=>{
- const f=e.target.closest("[data-fav]"),s=e.target.closest("[data-share]");
- if(f)toggleFav(f.dataset.fav);
- if(s)compartir(s.dataset.share);
+$("threshold").addEventListener("input",()=>{$("thresholdText").textContent=fmt($("threshold").value);render()});
+$("search").addEventListener("click",search);
+$("refresh").addEventListener("click",search);
+$("sort").addEventListener("change",render);
+$("limit").addEventListener("change",render);
+$("format").addEventListener("change",render);
+$("onlyHot").addEventListener("change",render);
+document.querySelectorAll("nav button").forEach(b=>b.addEventListener("click",()=>{
+ activeView=b.dataset.view;
+ document.querySelectorAll("nav button").forEach(x=>x.classList.toggle("on",x===b));
+ document.querySelectorAll(".view").forEach(x=>x.classList.toggle("on",x.id===activeView));
+ if(activeView==="favorites")render();
+}));
+document.addEventListener("click",async e=>{
+ const f=e.target.closest("[data-fav]");
+ if(f){
+  const v=state.videos.find(x=>x.id===f.dataset.fav)||state.favs.find(x=>x.id===f.dataset.fav);
+  if(!v)return;
+  state.favs=state.favs.some(x=>x.id===v.id)?state.favs.filter(x=>x.id!==v.id):[...state.favs,v];
+  put("radar_favs",state.favs);render();
+ }
+ const sh=e.target.closest("[data-share]");
+ if(sh){
+  const url="https://www.youtube.com/watch?v="+sh.dataset.share;
+  try{if(navigator.share)await navigator.share({title:"Video de YouTube",url});else{await navigator.clipboard.writeText(url);alert("Enlace copiado")}}catch{}
+ }
 });
-
-/* ---------- controles ---------- */
-function chips(id,ops,k){
- const el=$(id);
- el.innerHTML=ops.map(([v,t])=>`<button class="chip${C[k]==v?" on":""}" data-v="${v}">${t}</button>`).join("");
- el.onclick=e=>{
-  const b=e.target.closest(".chip");if(!b)return;
-  C[k]=isNaN(b.dataset.v)?b.dataset.v:+b.dataset.v;save();vib(8);
-  [...el.children].forEach(c=>c.classList.toggle("on",c===b));
-  if(k==="formato")dibujar();
- };
-}
-function sel(id,ops,k){
- const e=$(id);
- e.innerHTML=ops.map(([v,t])=>`<option value="${v}">${t}</option>`).join("");
- e.value=C[k];
- e.onchange=()=>{C[k]=isNaN(e.value)?e.value:+e.value;save();if(k==="orden"||k==="cant")dibujar()};
-}
-chips("cFormato",[["todos","Todos"],["shorts","Shorts"],["largos","Largos"]],"formato");
-chips("cVentana",[[6,"6 h"],[24,"24 h"],[48,"48 h"],[168,"7 días"]],"ventana");
-sel("orden",[["vel","⚡ Vistas por hora"],["crec","📈 Crecimiento real medido"],["vistas","👁 Más vistas"],["likes","👍 Mejor % de likes"],["nuevo","🆕 Más recientes"]],"orden");
-sel("region",[["AR","🇦🇷 Argentina"],["MX","🇲🇽 México"],["ES","🇪🇸 España"],["CO","🇨🇴 Colombia"],["CL","🇨🇱 Chile"],["PE","🇵🇪 Perú"],["UY","🇺🇾 Uruguay"],["US","🇺🇸 Estados Unidos"],["BR","🇧🇷 Brasil"]],"region");
-sel("cant",[[10,"10 videos"],[25,"25 videos"],[50,"50 videos"]],"cant");
-
-$("tema").value=C.tema;
-$("clave").value=C.key;
-$("umbral").value=C.umbral;
-$("umv").textContent=fmt(C.umbral);
-$("umbral").oninput=e=>{C.umbral=+e.target.value;$("umv").textContent=fmt(C.umbral);save();dibujar()};
-["solo","anim","vib"].forEach(k=>{
- const e=$(k);e.checked=C[k];
- e.onchange=()=>{C[k]=e.checked;save();vib(8);if(k==="anim")document.body.classList.toggle("noanim",!C.anim);if(k==="solo")dibujar()};
+$("saveKey").addEventListener("click",()=>{
+ state.key=$("apiKey").value.trim();
+ localStorage.setItem("radar_api_key",state.key);
+ status("radarStatus",state.key?"Clave guardada en este dispositivo.":"Clave eliminada.");
+ alert("Clave guardada localmente.");
 });
-document.body.classList.toggle("noanim",!C.anim);
-
-$("btn").onclick=buscar;
-$("ref").onclick=()=>{if(!$("btn").disabled)buscar()};
-$("tema").addEventListener("keydown",e=>{if(e.key==="Enter"){e.target.blur();buscar()}});
-$("bfil").onclick=()=>{$("panel").classList.toggle("open");vib(8)};
-$("actFav").onclick=actFavs;
-$("clave").oninput=e=>{C.key=e.target.value.trim();save()};
-$("ojo").onclick=()=>{const c=$("clave");c.type=c.type==="password"?"text":"password"};
-$("probar").onclick=async()=>{
- C.key=$("clave").value.trim();save();
- if(!C.key)return toast("Pegá tu clave primero");
- $("probar").disabled=true;
- try{await api("videos",{part:"id",chart:"mostPopular",maxResults:"1",regionCode:C.region});toast("✅ La clave funciona");vib([20,40,20])}
- catch(e){toast("❌ "+e.message.slice(0,90))}
- $("probar").disabled=false;
-};
-$("limpiar").onclick=()=>{videos=[];ls.set("cache3",null);dibujar();estado("Resultados borrados. Podés hacer una nueva búsqueda.");toast("Resultados borrados")};
-$("reset").onclick=()=>{snap={};ls.set("snap3",snap);videos.forEach(v=>{v.crec=null});favs.forEach(v=>{v.crec=null});ls.set("favs3",favs);dibujar();toast("Medición reiniciada")};
-$("todo").onclick=()=>{
- if(!confirm("¿Borrar clave, favoritos, caché y ajustes de este dispositivo?"))return;
- try{["cfg3","cache3","favs3","snap3","cuota3","yt_clave","yt_tema","yt_formato","yt_cache"].forEach(k=>localStorage.removeItem(k))}catch(e){}
+$("testKey").addEventListener("click",async()=>{
+ state.key=$("apiKey").value.trim();localStorage.setItem("radar_api_key",state.key);
+ try{const d=await api("videos",{part:"snippet",chart:"mostPopular",regionCode:"AR",maxResults:"1"});alert("Conexión correcta con YouTube Data API v3.");}
+ catch(e){alert("Error: "+e.message)}
+});
+$("saveClient").addEventListener("click",()=>{
+ state.client=$("clientId").value.trim();
+ localStorage.setItem("radar_client_id",state.client);
+ tokenClient=null;oauthReady=false;
+ status("oauthStatus","Client ID guardado. Tocá Conectar con Google.");
+});
+$("connect").addEventListener("click",()=>{
+ if(!state.client){status("oauthStatus","Ingresá tu Client ID primero.",true);return}
+ if(!window.google?.accounts?.oauth2){status("oauthStatus","Google todavía está cargando. Esperá unos segundos y probá otra vez.",true);return}
+ if(!initOAuth())return;
+ tokenClient.requestAccessToken({prompt:"consent"});
+});
+$("disconnect").addEventListener("click",()=>{
+ if(state.token&&window.google?.accounts?.oauth2)google.accounts.oauth2.revoke(state.token,()=>{});
+ state.token=null;tokenClient=null;oauthReady=false;
+ status("oauthStatus","Sesión local desconectada.");
+ status("analyticsStatus","Volvé a conectar Google para consultar Analytics.");
+});
+$("analytics").addEventListener("click",analytics);
+$("export").addEventListener("click",()=>{
+ const list=ordered(state.videos);
+ if(!list.length){alert("Primero buscá videos.");return}
+ const rows=[["Título","Canal","URL","Vistas","Vistas estimadas/hora","Crecimiento medido/hora","Publicado"]];
+ list.forEach(v=>rows.push([v.title,v.channel,"https://www.youtube.com/watch?v="+v.id,v.views,speed(v),v.growth??"",new Date(v.published).toISOString()]));
+ const csv=rows.map(row=>row.map(x=>'"'+String(x).replace(/"/g,'""')+'"').join(",")).join("\r\n");
+ const blob=new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8"});
+ const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="radar-youtube-ranking.csv";a.click();URL.revokeObjectURL(a.href);
+});
+$("clearResults").addEventListener("click",()=>{state.videos=[];put("radar_videos",[]);render();status("radarStatus","Resultados eliminados.")});
+$("clearSnapshots").addEventListener("click",()=>{state.snaps={};put("radar_snaps",{});alert("Historial reiniciado.")});
+$("clearAll").addEventListener("click",()=>{
+ if(!confirm("¿Borrar todos los datos locales de Radar en este dispositivo?"))return;
+ ["radar_api_key","radar_client_id","radar_videos","radar_favs","radar_snaps","radar_quota"].forEach(k=>localStorage.removeItem(k));
  location.reload();
-};
-
-/* ---------- arranque ---------- */
-dibujar();dibujarFavs();pintarCuota();
-estado(!C.key?"Cargá tu clave de API en Ajustes y tocá «Buscar videos»."
- :cache0?.t?"Resultados guardados de la última consulta ("+hace((Date.now()-cache0.t)/36e5)+"). Tocá «Buscar videos» para actualizar."
- :"Listo. Escribí un tema o dejalo vacío para ver las tendencias.");
-setTimeout(()=>$("splash").classList.add("out"),C.anim?1600:150);
-
-/* ---------- instalación como app ---------- */
-let instalacion=null;
-window.addEventListener("beforeinstallprompt",e=>{e.preventDefault();instalacion=e;$("instalar").hidden=false});
-$("instalar").onclick=async()=>{
- if(!instalacion)return;
- instalacion.prompt();await instalacion.userChoice;
- instalacion=null;$("instalar").hidden=true;
-};
-window.addEventListener("appinstalled",()=>{$("instalar").hidden=true;toast("Radar se instaló correctamente")});
-if(/iphone|ipad|ipod/i.test(navigator.userAgent)&&!navigator.standalone)$("ios").hidden=false;
-
-if("serviceWorker" in navigator&&(location.protocol==="https:"||location.hostname==="localhost")){
- window.addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(e=>console.error("Service worker:",e)));
-}
+});
+$("apiKey").value=state.key;
+$("clientId").value=state.client;
+$("thresholdText").textContent=fmt($("threshold").value);
+$("quota").textContent=fmt(state.quota.units||0)+" unidades estimadas registradas hoy.";
+render();
+setTimeout(()=>{if(!state.client)status("oauthStatus","Ingresá tu Client ID OAuth para conectar el canal.");},1500);
 </script>
-
-<!-- RADAR YOUTUBE V2 - MOTOR INTELIGENTE LOCAL -->
-<style>
-#radarIA {
-  margin: 22px 0;
-  padding: 18px;
-  background: #111722;
-  color: #f5f7fa;
-  border: 1px solid #293449;
-  border-radius: 16px;
-  font-family: Arial, sans-serif;
-}
-#radarIA h2 { margin-top: 0; }
-#radarIA p { color: #b9c4d6; font-size: 14px; }
-#radarIA input, #radarIA select {
-  width: 100%;
-  padding: 12px;
-  margin: 5px 0 12px;
-  color: #fff;
-  background: #0b0d12;
-  border: 1px solid #39465b;
-  border-radius: 9px;
-}
-#radarIA button {
-  padding: 12px;
-  width: 100%;
-  border: 0;
-  border-radius: 9px;
-  color: white;
-  background: #d92645;
-  font-weight: bold;
-  margin: 5px 0;
-}
-#radarIA .ria-card {
-  background: #192231;
-  border: 1px solid #2b3a50;
-  border-radius: 12px;
-  padding: 12px;
-  margin-top: 12px;
-  overflow-wrap: anywhere;
-}
-#radarIA .ria-score {
-  color: #71efb0;
-  font-size: 28px;
-  font-weight: bold;
-}
-#radarIA .ria-muted { color: #aab7c9; font-size: 12px; }
-#radarIA .ria-danger { color: #ffbf69; }
-</style>
-
-<section id="radarIA">
-  <h2>🧠 Radar IA Local</h2>
-  <p>
-    Analizador gratuito de oportunidades.
-    Introduce los datos públicos de un video.
-    No necesitas una clave de IA.
-  </p>
-
-  <label for="riaTitulo">Título del video</label>
-  <input id="riaTitulo" placeholder="Ej.: 5 errores que destruyen tu disciplina">
-
-  <label for="riaUrl">URL del video (opcional)</label>
-  <input id="riaUrl" placeholder="https://www.youtube.com/watch?v=...">
-
-  <label for="riaVistas">Visitas actuales</label>
-  <input id="riaVistas" type="number" min="0" placeholder="Ej.: 25000">
-
-  <label for="riaHoras">Horas desde su publicación</label>
-  <input id="riaHoras" type="number" min="0.1" step="0.1" placeholder="Ej.: 12">
-
-  <label for="riaFormato">Formato</label>
-  <select id="riaFormato">
-    <option value="short">Short</option>
-    <option value="largo">Video largo</option>
-  </select>
-
-  <label for="riaAnterior">Visitas de la medición anterior (opcional)</label>
-  <input id="riaAnterior" type="number" min="0" placeholder="Ej.: 18000">
-
-  <label for="riaIntervalo">Horas entre ambas mediciones</label>
-  <input id="riaIntervalo" type="number" min="0.1" step="0.1" placeholder="Ej.: 3">
-
-  <button type="button" id="riaAnalizar">
-    ANALIZAR OPORTUNIDAD
-  </button>
-
-  <div id="riaResultado" aria-live="polite"></div>
-
-  <div class="ria-card">
-    <h3>📈 Historial guardado</h3>
-    <p>Registros de análisis de este navegador.</p>
-    <button type="button" id="riaHistorial">VER HISTORIAL</button>
-    <button type="button" id="riaExportar">EXPORTAR HISTORIAL CSV</button>
-    <div id="riaLista"></div>
-  </div>
-
-  <p class="ria-muted">
-    La puntuación es experimental, no una predicción garantizada
-    de viralidad. Las visitas deben verificarse con datos reales.
-  </p>
-</section>
-
-<script>
-(function () {
-  "use strict";
-
-  const $ = id => document.getElementById(id);
-  const KEY = "radarIA_historial_v1";
-
-  function leerHistorial() {
-    try {
-      const data = JSON.parse(localStorage.getItem(KEY) || "[]");
-      return Array.isArray(data) ? data : [];
-    } catch (e) {
-      return [];
-    }
-  }
-
-  function guardarHistorial(datos) {
-    try {
-      localStorage.setItem(KEY, JSON.stringify(datos.slice(-500)));
-      return true;
-    } catch (e) {
-      return false;
-    }
-  }
-
-  function numero(id) {
-    const v = $(id).value.trim();
-    if (v === "") return null;
-    const n = Number(v);
-    return Number.isFinite(n) && n >= 0 ? n : NaN;
-  }
-
-  function puntuar(vistas, horas, anterior, intervalo, titulo) {
-    const velocidad = vistas / horas;
-    let score = 0;
-
-    // Señal inicial de alcance: escala logarítmica.
-    score += Math.min(30, Math.log10(vistas + 1) * 5);
-
-    // Velocidad observada, no garantía de crecimiento futuro.
-    score += Math.min(25, Math.log10(velocidad + 1) * 6);
-
-    // El crecimiento sólo se evalúa si hay dos mediciones válidas.
-    let cambio = null;
-    let aceleracion = null;
-
-    if (anterior !== null && intervalo > 0) {
-      const velocidadAnterior = anterior / intervalo;
-      cambio = anterior > 0
-        ? ((vistas - anterior) / anterior) * 100
-        : null;
-
-      if (velocidadAnterior > 0) {
-        aceleracion =
-          ((velocidad / velocidadAnterior) - 1) * 100;
-        score += Math.max(0, Math.min(25, aceleracion / 4));
-      }
-    }
-
-    // Señal de contenido: sólo indica que hay un título para analizar.
-    const palabras = titulo.trim().split(/\s+/).filter(Boolean).length;
-    if (palabras >= 4 && palabras <= 15) score += 10;
-    else if (palabras > 0) score += 5;
-
-    // Penalización leve por falta de señales comparables.
-    if (anterior === null || intervalo <= 0) score = Math.min(score, 65);
-
-    return {
-      score: Math.round(Math.max(0, Math.min(100, score))),
-      velocidad,
-      cambio,
-      aceleracion
-    };
-  }
-
-  function escapar(texto) {
-    return String(texto).replace(/[&<>"']/g, c => ({
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      '"': "&quot;",
-      "'": "&#39;"
-    }[c]));
-  }
-
-  function formato(n) {
-    return Number(n).toLocaleString("es-AR", {
-      maximumFractionDigits: 2
-    });
-  }
-
-  $("riaAnalizar").addEventListener("click", function () {
-    const titulo = $("riaTitulo").value.trim();
-    const url = $("riaUrl").value.trim();
-    const vistas = numero("riaVistas");
-    const horas = numero("riaHoras");
-    const anterior = numero("riaAnterior");
-    const intervalo = numero("riaIntervalo");
-    const formatoVideo = $("riaFormato").value;
-
-    if (!titulo || vistas === null || horas === null ||
-        !Number.isFinite(vistas) || !Number.isFinite(horas) ||
-        horas <= 0 || (anterior !== null && !Number.isFinite(anterior)) ||
-        (intervalo !== null && !Number.isFinite(intervalo))) {
-      $("riaResultado").innerHTML =
-        '<div class="ria-card ria-danger">Revisa el título, las visitas y las horas. Deben ser datos válidos y las horas mayores que cero.</div>';
-      return;
-    }
-
-    if ((anterior !== null && intervalo <= 0) ||
-        (anterior !== null && vistas < anterior)) {
-      $("riaResultado").innerHTML =
-        '<div class="ria-card ria-danger">La medición anterior debe tener un intervalo mayor que cero y las visitas actuales no deberían ser menores. Verifica los datos.</div>';
-      return;
-    }
-
-    const r = puntuar(
-      vistas, horas, anterior,
-      intervalo || 0, titulo
-    );
-
-    let nivel = "Oportunidad por verificar";
-    if (r.score >= 75) nivel = "Señal prometedora";
-    else if (r.score >= 50) nivel = "Merece seguimiento";
-
-    let explicacion = anterior === null
-      ? "Falta una segunda medición. Guarda otra lectura más tarde para comprobar si el crecimiento se acelera."
-      : "Compara la velocidad entre las dos mediciones. Un intervalo corto o datos incompletos pueden distorsionar el resultado.";
-
-    if (r.aceleracion !== null) {
-      explicacion = r.aceleracion > 10
-        ? "La velocidad calculada es mayor en la medición actual. Conviene verificar la tendencia con más mediciones."
-        : r.aceleracion >= 0
-          ? "La velocidad calculada se mantiene o mejora ligeramente. Sigue observando antes de sacar conclusiones."
-          : "La velocidad calculada disminuyó. El video podría estar perdiendo impulso, aunque una sola comparación no basta.";
-    }
-
-    const registro = {
-      fecha: new Date().toISOString(),
-      titulo, url, formato: formatoVideo, vistas, horas,
-      anterior, intervalo: intervalo || null,
-      velocidad: r.velocidad,
-      cambio: r.cambio,
-      aceleracion: r.aceleracion,
-      score: r.score
-    };
-
-    const historial = leerHistorial();
-    historial.push(registro);
-    const guardado = guardarHistorial(historial);
-
-    $("riaResultado").innerHTML =
-      '<div class="ria-card">' +
-      '<div class="ria-score">' + r.score + '/100</div>' +
-      '<strong>' + nivel + '</strong>' +
-      '<p><b>Velocidad media estimada:</b> ' +
-      formato(r.velocidad) + ' visitas/hora</p>' +
-      '<p><b>Formato:</b> ' +
-      (formatoVideo === "short" ? "Short" : "Video largo") +
-      '</p>' +
-      (r.cambio === null ? "" :
-        '<p><b>Cambio entre lecturas:</b> ' +
-        formato(r.cambio) + '%</p>') +
-      (r.aceleracion === null ? "" :
-        '<p><b>Cambio de velocidad estimado:</b> ' +
-        formato(r.aceleracion) + '%</p>') +
-      '<p>' + escapar(explicacion) + '</p>' +
-      '<p class="ria-muted">' +
-      (guardado
-        ? "Análisis guardado en este navegador."
-        : "No se pudo guardar. Comprueba el permiso de almacenamiento.") +
-      '</p></div>';
-
-  });
-
-  $("riaHistorial").addEventListener("click", function () {
-    const h = leerHistorial().slice().reverse();
-    $("riaLista").innerHTML = h.length
-      ? h.slice(0, 30).map(x =>
-        '<div class="ria-card"><b>' +
-        escapar(x.titulo) + '</b><p>' +
-        formato(x.vistas) + ' visitas · ' +
-        formato(x.velocidad) + ' visitas/h · Puntuación ' +
-        x.score + '/100</p><span class="ria-muted">' +
-        escapar(new Date(x.fecha).toLocaleString("es-AR")) +
-        '</span></div>'
-      ).join("")
-      : "<p>No hay análisis guardados todavía.</p>";
-  });
-
-  $("riaExportar").addEventListener("click", function () {
-    const h = leerHistorial();
-    if (!h.length) {
-      $("riaLista").textContent = "Todavía no hay datos para exportar.";
-      return;
-    }
-
-    const columnas = [
-      "fecha", "titulo", "url", "formato", "vistas",
-      "horas", "velocidad", "cambio", "aceleracion", "score"
-    ];
-
-    const csv = [
-      columnas.join(";"),
-      ...h.map(x => columnas.map(k =>
-        '"' + String(x[k] ?? "").replace(/"/g, '""') + '"'
-      ).join(";"))
-    ].join("\r\n");
-
-    const blob = new Blob(["\uFEFF" + csv], {
-      type: "text/csv;charset=utf-8;"
-    });
-    const enlace = document.createElement("a");
-    const archivo = URL.createObjectURL(blob);
-    enlace.href = archivo;
-    enlace.download = "radar-ia-historial.csv";
-    enlace.click();
-    setTimeout(() => URL.revokeObjectURL(archivo), 1000);
-  });
-})();
-</script>
-
-<!-- RADAR IA LOCAL - MODULO CORREGIDO -->
-<style>
-#radarIA {
-  margin:20px 0;padding:16px;background:#111722;color:#fff;
-  border:1px solid #354158;border-radius:14px;
-  font-family:Arial,sans-serif
-}
-#radarIA input,#radarIA select {
-  display:block;width:100%;box-sizing:border-box;
-  margin:6px 0 14px;padding:12px;border-radius:8px;
-  border:1px solid #45536b;background:#0b0d12;color:white
-}
-#radarIA button {
-  width:100%;padding:13px;margin:5px 0;
-  border:0;border-radius:8px;background:#d92645;
-  color:white;font-weight:bold
-}
-#radarIA .ria-card {
-  padding:12px;margin-top:12px;border-radius:10px;
-  background:#1b2636;overflow-wrap:anywhere
-}
-#radarIA .ria-score {font-size:30px;color:#71efb0;font-weight:bold}
-#radarIA .ria-error {color:#ffbf69}
-</style>
-
-<section id="radarIA">
-  <h2>🧠 Radar IA Local</h2>
-  <p>Analiza un video sin usar servicios externos.</p>
-
-  <label for="riaTitulo">Título del video</label>
-  <input id="riaTitulo" placeholder="Título del video">
-
-  <label for="riaUrl">URL (opcional)</label>
-  <input id="riaUrl" placeholder="https://www.youtube.com/watch?v=...">
-
-  <label for="riaVistas">Visitas actuales</label>
-  <input id="riaVistas" type="number" min="0" placeholder="25000">
-
-  <label for="riaHoras">Horas desde publicación</label>
-  <input id="riaHoras" type="number" min="0.1" step="0.1" placeholder="12">
-
-  <label for="riaFormato">Formato</label>
-  <select id="riaFormato">
-    <option value="Short">Short</option>
-    <option value="Video largo">Video largo</option>
-  </select>
-
-  <label for="riaAnterior">Visitas anteriores (opcional)</label>
-  <input id="riaAnterior" type="number" min="0" placeholder="18000">
-
-  <label for="riaIntervalo">Horas entre mediciones anteriores</label>
-  <input id="riaIntervalo" type="number" min="0.1" step="0.1" placeholder="3">
-
-  <button type="button" id="riaAnalizar">ANALIZAR VIDEO</button>
-  <div id="riaResultado" aria-live="polite"></div>
-
-  <div class="ria-card">
-    <b>Historial de análisis</b>
-    <button type="button" id="riaHistorial">VER HISTORIAL</button>
-    <button type="button" id="riaExportar">EXPORTAR CSV</button>
-    <div id="riaLista"></div>
-  </div>
-</section>
-
-<script>
-(function () {
-  const root = document.getElementById("radarIA");
-  if (!root || root.dataset.iniciado === "si") return;
-  root.dataset.iniciado = "si";
-
-  const $ = id => root.querySelector("#" + id);
-  const KEY = "radarIA_historial_v2";
-
-  function historial() {
-    try {
-      const h = JSON.parse(localStorage.getItem(KEY) || "[]");
-      return Array.isArray(h) ? h : [];
-    } catch (e) {
-      return [];
-    }
-  }
-
-  function seguro(texto) {
-    return String(texto).replace(/[&<>"']/g, c => ({
-      "&":"&amp;", "<":"&lt;", ">":"&gt;",
-      '"':"&quot;", "'":"&#39;"
-    }[c]));
-  }
-
-  function num(id) {
-    const valor = $(id).value.trim();
-    if (valor === "") return null;
-    const n = Number(valor);
-    return Number.isFinite(n) && n >= 0 ? n : NaN;
-  }
-
-  function guardar(datos) {
-    try {
-      localStorage.setItem(KEY, JSON.stringify(datos.slice(-300)));
-      return true;
-    } catch (e) {
-      return false;
-    }
-  }
-
-  function mostrarError(mensaje) {
-    $("riaResultado").innerHTML =
-      '<div class="ria-card ria-error">' + seguro(mensaje) + '</div>';
-  }
-
-  $("riaAnalizar").addEventListener("click", function () {
-    try {
-      const titulo = $("riaTitulo").value.trim();
-      const url = $("riaUrl").value.trim();
-      const vistas = num("riaVistas");
-      const horas = num("riaHoras");
-      const anterior = num("riaAnterior");
-      const intervalo = num("riaIntervalo");
-
-      if (!titulo) return mostrarError("Escribe el título del video.");
-      if (vistas === null || !Number.isFinite(vistas))
-        return mostrarError("Introduce una cantidad válida de visitas.");
-      if (horas === null || !Number.isFinite(horas) || horas <= 0)
-        return mostrarError("Las horas desde publicación deben ser mayores que cero.");
-      if (anterior !== null && !Number.isFinite(anterior))
-        return mostrarError("Revisa las visitas anteriores.");
-      if (intervalo !== null &&
-          (!Number.isFinite(intervalo) || intervalo <= 0))
-        return mostrarError("El intervalo debe ser mayor que cero.");
-      if (anterior !== null && intervalo === null)
-        return mostrarError("Introduce las horas entre mediciones.");
-      if (anterior !== null && vistas < anterior)
-        return mostrarError("Las visitas actuales no pueden ser menores que las anteriores.");
-
-      const velocidad = vistas / horas;
-      let aceleracion = null;
-      let cambioVisitas = null;
-
-      if (anterior !== null) {
-        const velocidadAnterior = anterior / intervalo;
-        cambioVisitas = anterior > 0
-          ? (vistas - anterior) / anterior * 100
-          : null;
-        aceleracion = velocidadAnterior > 0
-          ? (velocidad / velocidadAnterior - 1) * 100
-          : null;
-      }
-
-      let score = Math.min(30, Math.log10(vistas + 1) * 5);
-      score += Math.min(25, Math.log10(velocidad + 1) * 6);
-
-      const palabras = titulo.split(/\s+/).length;
-      score += palabras >= 4 && palabras <= 15 ? 10 : 5;
-
-      if (aceleracion !== null && Number.isFinite(aceleracion))
-        score += Math.max(0, Math.min(25, aceleracion / 4));
-
-      if (anterior === null) score = Math.min(score, 65);
-      score = Math.round(Math.max(0, Math.min(100, score)));
-
-      const fmt = n => Number(n).toLocaleString("es-AR", {
-        maximumFractionDigits: 2
-      });
-
-      let interpretacion = "Falta otra medición para evaluar el cambio de velocidad.";
-      if (aceleracion !== null) {
-        interpretacion = aceleracion > 10
-          ? "La velocidad estimada aumentó. Conviene seguir observando."
-          : aceleracion >= 0
-            ? "La velocidad se mantiene o mejora ligeramente."
-            : "La velocidad estimada disminuyó.";
-      }
-
-      $("riaResultado").innerHTML =
-        '<div class="ria-card">' +
-        '<div class="ria-score">' + score + '/100</div>' +
-        '<b>' + (score >= 75 ? "Señal prometedora" :
-          score >= 50 ? "Merece seguimiento" : "Datos insuficientes o señal débil") +
-        '</b><p>Velocidad media: ' + fmt(velocidad) +
-        ' visitas por hora</p>' +
-        (cambioVisitas === null ? "" :
-          '<p>Cambio de visitas: ' + fmt(cambioVisitas) + '%</p>') +
-        (aceleracion === null ? "" :
-          '<p>Cambio de velocidad: ' + fmt(aceleracion) + '%</p>') +
-        '<p>' + seguro(interpretacion) + '</p>' +
-        '<p>Este indicador es experimental; no predice viralidad garantizada.</p>' +
-        '</div>';
-
-      const datos = historial();
-      datos.push({
-        fecha: new Date().toLocaleString("es-AR"),
-        titulo, url,
-        formato: $("riaFormato").value,
-        vistas, horas, velocidad, score,
-        aceleracion
-      });
-      const ok = guardar(datos);
-
-      if (!ok) {
-        $("riaResultado").innerHTML +=
-          '<div class="ria-card ria-error">El análisis funcionó, pero el navegador no permitió guardar el historial.</div>';
-      }
-    } catch (e) {
-      mostrarError("Error al analizar. Comprueba los datos y vuelve a intentarlo.");
-    }
-  });
-
-  $("riaHistorial").addEventListener("click", function () {
-    const datos = historial().slice().reverse();
-    $("riaLista").innerHTML = datos.length
-      ? datos.slice(0, 30).map(x =>
-        '<div class="ria-card"><b>' + seguro(x.titulo) +
-        '</b><p>' + Number(x.vistas).toLocaleString("es-AR") +
-        ' visitas · ' + Number(x.score) + '/100</p>' +
-        '<small>' + seguro(x.fecha) + '</small></div>'
-      ).join("")
-      : "<p>Todavía no hay análisis guardados.</p>";
-  });
-
-  $("riaExportar").addEventListener("click", function () {
-    const datos = historial();
-    if (!datos.length) {
-      $("riaLista").textContent = "Primero analiza un video.";
-      return;
-    }
-
-    const columnas = [
-      "fecha","titulo","url","formato",
-      "vistas","horas","velocidad","score","aceleracion"
-    ];
-    const csv = [
-      columnas.join(";"),
-      ...datos.map(x => columnas.map(k =>
-        '"' + String(x[k] ?? "").replace(/"/g, '""') + '"'
-      ).join(";"))
-    ].join("\r\n");
-
-    const blob = new Blob(["\uFEFF" + csv], {
-      type: "text/csv;charset=utf-8"
-    });
-    const a = document.createElement("a");
-    const urlTemporal = URL.createObjectURL(blob);
-    a.href = urlTemporal;
-    a.download = "radar-ia-historial.csv";
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(urlTemporal), 1500);
-  });
-})();
-</script>
-<!-- FIN RADAR IA LOCAL -->
- 
- 
 </body>
-</html>
+</html>                 
