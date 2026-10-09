@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0d12">
+<title>Radar YouTube V2</title>
+<style>
+:root{--bg:#0b0d12;--panel:#141923;--panel2:#10151e;--line:#283244;--text:#f2f5fa;--muted:#9aa7bb;--red:#ff465d;--yellow:#ffd166;--green:#5ce0a0;--blue:#77a9ff}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;width:100%;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;overflow-x:hidden}
+body{padding:0 0 30px;touch-action:pan-y}
+button,input,select{font:inherit}
+button{cursor:pointer}
+header{padding:22px 16px 16px;background:linear-gradient(135deg,#171c27,#0b0d12);border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:10px}
+.logo{width:42px;height:42px;border-radius:13px;background:var(--red);display:grid;place-items:center;font-size:23px;font-weight:900;color:#fff;box-shadow:0 0 28px #ff465d33}
+h1{font-size:22px;margin:0;letter-spacing:.2px}
+.sub{color:var(--muted);font-size:12px;margin-top:4px}
+.headerrow{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.pill{border:1px solid var(--line);border-radius:99px;padding:6px 9px;color:var(--muted);font-size:11px;white-space:nowrap}
+nav{display:flex;gap:7px;padding:10px 12px;overflow-x:auto;background:#0b0d12;position:sticky;top:0;z-index:5;border-bottom:1px solid var(--line)}
+nav button{flex:0 0 auto;border:1px solid transparent;border-radius:10px;padding:10px 12px;background:transparent;color:var(--muted);font-size:13px}
+nav button.active{background:#24202a;border-color:#66303a;color:#fff}
+main{max-width:1000px;margin:auto;padding:14px 12px 30px;min-height:60vh}
+.view{display:none;width:100%;min-width:0}
+.view.active{display:block}
+h2{font-size:19px;margin:6px 0 5px}
+h3{font-size:15px;margin:0 0 10px}
+p{line-height:1.45}
+.muted{color:var(--muted);font-size:13px}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+@media(min-width:700px){.grid{grid-template-columns:repeat(4,minmax(0,1fr))}.two{grid-template-columns:1fr 1fr}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:15px;padding:14px;margin:10px 0;min-width:0}
+.stat{padding:13px;border-radius:13px;background:var(--panel2);border:1px solid var(--line);min-width:0}
+.stat .value{font-size:23px;font-weight:800;margin-top:5px;overflow-wrap:anywhere}
+.stat .label{font-size:11px;color:var(--muted)}
+input,select{width:100%;padding:12px;background:#0b1018;border:1px solid #354156;border-radius:10px;color:var(--text);outline:none;min-width:0}
+input:focus,select:focus{border-color:var(--blue)}
+label{display:block;font-size:12px;color:var(--muted);margin:10px 0 6px}
+button.primary{background:var(--red);color:white;border:0;font-weight:750}
+button.secondary{background:#222b3a;color:var(--text);border:1px solid #354156}
+button.danger{background:#3a1c24;color:#ffb8c0;border:1px solid #70313d}
+button.full{width:100%;padding:13px;border-radius:11px;margin-top:10px}
+button.small{padding:7px 9px;border-radius:8px;font-size:12px}
+.row{display:flex;gap:8px;align-items:center}
+.row>*{min-width:0}
+.row input{flex:1}
+.row button{flex:0 0 auto;padding:12px;border-radius:10px}
+.controls{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.note{background:#1b202a;border-left:3px solid var(--yellow);padding:10px 12px;border-radius:8px;font-size:12px;color:#d7deea;line-height:1.5}
+.status{margin:10px 0;padding:10px 12px;border-radius:9px;background:#121a24;border:1px solid var(--line);font-size:13px;display:none;white-space:pre-wrap;overflow-wrap:anywhere}
+.status.show{display:block}
+.status.error{border-color:#7c3340;color:#ffc2c9}
+.status.good{border-color:#27674b;color:#aaf3ce}
+.list{display:flex;flex-direction:column;gap:10px;margin-top:12px}
+.video{display:grid;grid-template-columns:112px minmax(0,1fr);gap:11px;background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:9px;min-width:0}
+.video img{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:8px;background:#222}
+.video h3{font-size:13px;line-height:1.35;margin:0 0 5px;overflow-wrap:anywhere}
+.video a{color:var(--text);text-decoration:none}
+.channel{font-size:11px;color:var(--muted);margin-bottom:6px}
+.metrics{display:flex;flex-wrap:wrap;gap:5px}
+.metric{font-size:10px;border:1px solid #344055;border-radius:7px;padding:4px 6px;color:#dbe4f2}
+.metric.hot{border-color:#9a3442;color:#ffabb5}
+.metric.good{border-color:#28664a;color:#aaf3ce}
+.video-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:7px}
+.empty{padding:22px 10px;text-align:center;color:var(--muted);font-size:13px}
+hr{border:0;border-top:1px solid var(--line);margin:14px 0}
+footer{color:#748197;text-align:center;font-size:11px;padding:18px}
+.hide{display:none!important}
+a.link{color:#9bc1ff}
+small{color:var(--muted)}
+</style>
+</head>
+<body>
+<header>
+  <div class="headerrow">
+    <div class="brand"><div class="logo">▶</div><div><h1>Radar YouTube <span style="color:var(--red)">V2</span></h1><div class="sub">Detectá videos que empiezan a despegar</div></div></div>
+    <div class="pill" id="apiBadge">API sin configurar</div>
+  </div>
+</header>
+<nav>
+  <button class="active" data-view="inicio" onclick="ir('inicio')">⌂ Inicio</button>
+  <button data-view="buscar" onclick="ir('buscar')">⌕ Buscar</button>
+  <button data-view="tendencias" onclick="ir('tendencias')">↗ Top 100</button>
+  <button data-view="historial" onclick="ir('historial')">◷ Historial</button>
+  <button data-view="ajustes" onclick="ir('ajustes')">⚙ Ajustes</button>
+</nav>
+<main>
+<section class="view active" id="inicio">
+  <h2>Tu radar de crecimiento</h2>
+  <p class="muted">Buscá cualquier nicho, guardá mediciones y compará cómo crecen las visualizaciones entre tus revisiones.</p>
+  <div class="grid">
+    <div class="stat"><div class="label">Videos analizados</div><div class="value" id="kVideos">0</div></div>
+    <div class="stat"><div class="label">Videos guardados</div><div class="value" id="kHist">0</div></div>
+    <div class="stat"><div class="label">En aceleración</div><div class="value" id="kHot">0</div></div>
+    <div class="stat"><div class="label">Último análisis</div><div class="value" style="font-size:15px" id="kLast">—</div></div>
+  </div>
+  <div class="panel">
+    <h3>⚡ Búsqueda rápida</h3>
+    <label for="quickQuery">Tema o nicho</label>
+    <input id="quickQuery" placeholder="Ej.: inteligencia artificial, fútbol, cocina...">
+    <div class="controls">
+      <div><label for="quickType">Formato</label><select id="quickType"><option value="all">Shorts y videos largos</option><option value="shorts">Shorts (aprox.)</option><option value="long">Videos largos</option></select></div>
+      <div><label for="quickOrder">Orden inicial</label><select id="quickOrder"><option value="date">Más recientes</option><option value="relevance">Más relevantes</option><option value="viewCount">Más vistos</option></select></div>
+    </div>
+    <button class="primary full" onclick="buscarDesdeInicio()">Buscar videos</button>
+  </div>
+  <div class="panel">
+    <h3>Cómo funciona la detección</h3>
+    <p class="muted">YouTube entrega las estadísticas actuales, no un historial público completo. La velocidad y aceleración reales se calculan desde las mediciones que guardes con este Radar. Cuantas más mediciones separadas por tiempo, mejor será la comparación.</p>
+    <div class="note">Los resultados dependen de la API oficial de YouTube y de tu clave. El filtro Shorts es aproximado porque la API no ofrece un campo fiable que identifique todos los Shorts.</div>
+  </div>
+  <div id="homeStatus" class="status"></div>
+</section>
+
+<section class="view" id="buscar">
+  <h2>Buscar videos</h2>
+  <p class="muted">Buscá por tema, palabra clave o canal. Se consultan videos públicos de YouTube.</p>
+  <div class="panel">
+    <label for="query">¿Qué querés investigar?</label>
+    <input id="query" placeholder="Ej.: estoicismo, recetas, videojuegos..." autocomplete="off">
+    <div class="controls">
+      <div><label for="videoType">Formato</label><select id="videoType"><option value="all">Todos</option><option value="shorts">Shorts (aprox. ≤ 60 s)</option><option value="long">Largos (> 60 s)</option></select></div>
+      <div><label for="order">Orden de búsqueda</label><select id="order"><option value="date">Más recientes</option><option value="relevance">Relevancia</option><option value="viewCount">Más vistos</option></select></div>
+      <div><label for="age">Antigüedad</label><select id="age"><option value="any">Cualquier fecha</option><option value="1">Últimas 24 horas</option><option value="7">Últimos 7 días</option><option value="30">Últimos 30 días</option><option value="90">Últimos 90 días</option></select></div>
+      <div><label for="maxResults">Cantidad por búsqueda</label><select id="maxResults"><option value="25">25 videos</option><option value="50" selected>50 videos</option><option value="100">Hasta 100 videos</option></select></div>
+    </div>
+    <button class="primary full" id="searchBtn" onclick="buscarVideos()">Analizar videos</button>
+    <button class="secondary full" onclick="guardarMediciones()">Guardar medición de estos resultados</button>
+    <div id="searchStatus" class="status"></div>
+  </div>
+  <div class="row" style="justify-content:space-between;margin:14px 2px"><strong id="resultTitle">Resultados</strong><button class="secondary small" onclick="exportarCSV()">Exportar CSV</button></div>
+  <div id="results" class="list"><div class="empty">Todavía no hay resultados. Hacé una búsqueda para empezar.</div></div>
+</section>
+
+<section class="view" id="tendencias">
+  <h2>Top 100 del Radar</h2>
+  <p class="muted">Clasificación de los videos que buscaste y guardaste. No representa un ranking universal de todo YouTube.</p>
+  <div class="panel">
+    <div class="controls">
+      <div><label for="rankMode">Ordenar por</label><select id="rankMode" onchange="dibujarTop()"><option value="growth">Velocidad de crecimiento</option><option value="accel">Aceleración</option><option value="views">Visualizaciones</option><option value="recent">Más recientes</option></select></div>
+      <div><label for="rankFilter">Mostrar</label><select id="rankFilter" onchange="dibujarTop()"><option value="all">Todos los guardados</option><option value="hot">Solo en aceleración</option><option value="emerging">Emergentes</option></select></div>
+    </div>
+    <button class="secondary full" onclick="dibujarTop()">Actualizar Top 100</button>
+  </div>
+  <div id="topResults" class="list"><div class="empty">Guardá mediciones para construir tu Top 100.</div></div>
+</section>
+
+<section class="view" id="historial">
+  <h2>Historial de mediciones</h2>
+  <p class="muted">Cada vez que guardás una medición se registra la cantidad de vistas y la hora. Las comparaciones empiezan a ser útiles después de dos o más mediciones.</p>
+  <div class="row" style="flex-wrap:wrap">
+    <button class="secondary small" onclick="exportarCSV()">Exportar CSV</button>
+    <button class="danger small" onclick="borrarHistorial()">Borrar historial</button>
+  </div>
+  <div id="historyResults" class="list"><div class="empty">Todavía no guardaste mediciones.</div></div>
+</section>
+
+<section class="view" id="ajustes">
+  <h2>Configuración</h2>
+  <div class="panel">
+    <h3>Clave de YouTube Data API v3</h3>
+    <p class="muted">Necesitás una clave propia de Google Cloud con YouTube Data API v3 habilitada. La clave se guarda solo en este navegador, en tu dispositivo.</p>
+    <label for="apiKey">API key</label>
+    <input id="apiKey" type="password" placeholder="Pegá acá tu clave de API">
+    <div class="row" style="margin-top:8px;flex-wrap:wrap">
+      <button class="primary small" onclick="guardarConfig()">Guardar configuración</button>
+      <button class="secondary small" onclick="mostrarClave()">Mostrar/ocultar</button>
+      <button class="secondary small" onclick="probarAPI()">Probar conexión</button>
+    </div>
+    <p class="muted">Guía oficial: <a class="link" href="https://console.cloud.google.com/apis/library/youtube.googleapis.com" target="_blank" rel="noopener">habilitar YouTube Data API</a> · <a class="link" href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">crear credenciales</a></p>
+    <div id="settingsStatus" class="status"></div>
+  </div>
+  <div class="panel">
+    <h3>Datos locales</h3>
+    <p class="muted">El historial se guarda en el almacenamiento local del navegador. Si borrás los datos del navegador o cambiás de navegador, podrías perderlo. Exportá un CSV como respaldo.</p>
+    <button class="secondary full" onclick="exportarCSV()">Exportar historial CSV</button>
+    <button class="danger full" onclick="borrarTodo()">Borrar todos los datos locales</button>
+  </div>
+</section>
+</main>
+<footer>Radar YouTube V2 · Herramienta personal de investigación · No afiliada a YouTube</footer>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const KEYS = {api:"radar_v2_api", history:"radar_v2_historial", config:"radar_v2_config", cache:"radar_v2_cache"};
+let videos = [];
+let ultimaBusqueda = 0;
+let historial = leer(KEYS.history, {});
+let config = leer(KEYS.config, {umbral:1000});
+
+function leer(key, fallback) {
+  try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : fallback; }
+  catch (e) { return fallback; }
+}
+function guardarLocal(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); return true; }
+  catch (e) { return false; }
+}
+function fmt(n) { return new Intl.NumberFormat("es-AR").format(Math.round(Number(n) || 0)); }
+function fechaCorta(s) {
+  if (!s) return "Fecha desconocida";
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? "Fecha desconocida" : d.toLocaleDateString("es-AR");
+}
+function fechaHora(s) {
+  if (!s) return "—";
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString("es-AR");
+}
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function status(id, message, type="") {
+  const el = $(id);
+  if (!el) return;
+  el.textContent = message;
+  el.className = "status show" + (type ? " " + type : "");
+}
+function hideStatus(id) {
+  const el = $(id);
+  if (el) el.className = "status";
+}
+function ir(id) {
+  document.querySelectorAll(".view").forEach(v => v.classList.toggle("active", v.id === id));
+  document.querySelectorAll("nav button").forEach(b => b.classList.toggle("active", b.dataset.view === id));
+  if (id === "historial") dibujarHistorial();
+  if (id === "tendencias") dibujarTop();
+  window.scrollTo({top:0, behavior:"smooth"});
+}
+function getAPI() {
+  return (localStorage.getItem(KEYS.api) || "").trim();
+}
+function actualizarBadge() {
+  $("apiBadge").textContent = getAPI() ? "API configurada" : "API sin configurar";
+  $("apiBadge").style.color = getAPI() ? "var(--green)" : "var(--yellow)";
+}
+function guardarConfig() {
+  const key = $("apiKey").value.trim();
+  if (!key) {
+    status("settingsStatus", "Pegá tu API key antes de guardar.", "error");
+    return;
+  }
+  try { localStorage.setItem(KEYS.api, key); }
+  catch(e) { status("settingsStatus", "No se pudo guardar la clave en este navegador.", "error"); return; }
+  guardarLocal(KEYS.config, config);
+  actualizarBadge();
+  status("settingsStatus", "Configuración guardada en este navegador.", "good");
+}
+function mostrarClave() {
+  $("apiKey").type = $("apiKey").type === "password" ? "text" : "password";
+}
+async function api(ruta, params={}) {
+  const key = getAPI();
+  if (!key) throw new Error("Falta la API key. Entrá en Ajustes y guardala primero.");
+  const query = new URLSearchParams({...params, key});
+  const url = "https://www.googleapis.com/youtube/v3/" + ruta + "?" + query.toString();
+  let response;
+  try { response = await fetch(url); }
+  catch (e) { throw new Error("No se pudo conectar. Revisá internet o probá desde Chrome."); }
+  let data;
+  try { data = await response.json(); } catch(e) { throw new Error("YouTube devolvió una respuesta que no se pudo leer."); }
+  if (!response.ok || data.error) {
+    const reason = data?.error?.errors?.[0]?.reason;
+    const msg = data?.error?.message || "Error de YouTube API.";
+    if (reason === "quotaExceeded") throw new Error("Se agotó la cuota diaria de la API de YouTube. Probá mañana.");
+    if (reason === "keyInvalid" || response.status === 400) throw new Error("La API key parece inválida o está mal configurada. Revisá Ajustes.");
+    if (response.status === 403) throw new Error("Acceso denegado. Revisá que YouTube Data API v3 esté habilitada y que la clave sea válida. Detalle: " + msg);
+    throw new Error(msg);
+  }
+  return data;
+}
+async function probarAPI() {
+  const typed = $("apiKey").value.trim();
+  if (typed && typed !== getAPI()) {
+    try { localStorage.setItem(KEYS.api, typed); } catch(e) {}
+  }
+  status("settingsStatus", "Probando conexión con YouTube...");
+  try {
+    const d = await api("videos", {part:"snippet,statistics", chart:"mostPopular", regionCode:"AR", maxResults:"1"});
+    status("settingsStatus", "Conexión correcta. YouTube respondió y la clave funciona.", "good");
+    actualizarBadge();
+  } catch(e) {
+    status("settingsStatus", e.message, "error");
+  }
+}
+function buscarDesdeInicio() {
+  $("query").value = $("quickQuery").value.trim();
+  $("videoType").value = $("quickType").value;
+  $("order").value = $("quickOrder").value;
+  ir("buscar");
+  buscarVideos();
+}
+async function buscarVideos() {
+  const q = $("query").value.trim();
+  if (!q) { status("searchStatus", "Escribí un tema o palabra clave para buscar.", "error"); return; }
+  const btn = $("searchBtn");
+  btn.disabled = true; btn.textContent = "Buscando...";
+  status("searchStatus", "Consultando YouTube. Puede tardar unos segundos...");
+  $("results").innerHTML = "";
+  try {
+    const count = Number($("maxResults").value);
+    const age = $("age").value;
+    let publishedAfter;
+    if (age !== "any") publishedAfter = new Date(Date.now() - Number(age) * 86400000).toISOString();
+    const maxSearch = Math.min(count, 50);
+    const params = {part:"snippet", type:"video", q, maxResults:String(maxSearch), order:$("order").value, safeSearch:"none"};
+    if (publishedAfter) params.publishedAfter = publishedAfter;
+    let items = [];
+    let pageToken = "";
+    const pages = count > 50 ? 2 : 1;
+    for (let p=0; p<pages; p++) {
+      const searchParams = {...params};
+      if (pageToken) searchParams.pageToken = pageToken;
+      const found = await api("search", searchParams);
+      items = items.concat(found.items || []);
+      pageToken = found.nextPageToken || "";
+      if (!pageToken) break;
+    }
+    const ids = [...new Set(items.map(x => x.id && x.id.videoId).filter(Boolean))];
+    if (!ids.length) {
+      videos = [];
+      renderVideos();
+      status("searchStatus", "No se encontraron videos para esa búsqueda. Probá otras palabras.", "good");
+      return;
+    }
+    const details = await api("videos", {part:"snippet,statistics,contentDetails", id:ids.join(","), maxResults:"50"});
+    const map = new Map((details.items || []).map(v => [v.id, v]));
+    let result = ids.map(id => {
+      const v = map.get(id);
+      if (!v) return null;
+      const duration = parseDuration(v.contentDetails?.duration || "PT0S");
+      const views = Number(v.statistics?.viewCount || 0);
+      const likes = Number(v.statistics?.likeCount || 0);
+      const comments = Number(v.statistics?.commentCount || 0);
+      return {
+        id:v.id, title:v.snippet?.title || "Sin título",
+        channel:v.snippet?.channelTitle || "Canal desconocido",
+        channelId:v.snippet?.channelId || "",
+        publishedAt:v.snippet?.publishedAt || "",
+        thumbnail:v.snippet?.thumbnails?.medium?.url || v.snippet?.thumbnails?.default?.url || "",
+        views, likes, comments, duration,
+        url:"https://www.youtube.com/watch?v="+v.id,
+        description:v.snippet?.description || ""
+      };
+    }).filter(Boolean);
+    const type = $("videoType").value;
+    if (type === "shorts") result = result.filter(v => v.duration > 0 && v.duration <= 60);
+    if (type === "long") result = result.filter(v => v.duration > 60);
+    videos = result;
+    ultimaBusqueda = Date.now();
+    renderVideos();
+    status("searchStatus", "Listo: " + videos.length + " videos cargados. Guardá una medición ahora y repetí la búsqueda más tarde para medir crecimiento.", "good");
+    actualizarResumen();
+  } catch(e) {
+    status("searchStatus", e.message || "Ocurrió un error inesperado.", "error");
+    $("results").innerHTML = '<div class="empty">No se pudieron cargar los resultados.</div>';
+  } finally {
+    btn.disabled = false; btn.textContent = "Analizar videos";
+  }
+}
+function parseDuration(iso) {
+  const m = String(iso).match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+  if (!m) return 0;
+  return Number(m[1]||0)*3600 + Number(m[2]||0)*60 + Number(m[3]||0);
+}
+function durText(sec) {
+  sec = Number(sec)||0;
+  const h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60), s=sec%60;
+  return h ? `${h}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}` : `${m}:${String(s).padStart(2,"0")}`;
+}
+function getHistory(id) { return Array.isArray(historial[id]) ? historial[id] : []; }
+function metricsFor(v) {
+  const h = getHistory(v.id);
+  if (h.length < 2) return {rate:null, accel:null, points:h.length, first:null, last:null};
+  const a=h[h.length-2], b=h[h.length-1];
+  const hours=Math.max((new Date(b.time)-new Date(a.time))/3600000, 1/60);
+  const rate=(Number(b.views)-Number(a.views))/hours;
+  let accel=null;
+  if (h.length>=3) {
+    const c=h[h.length-3];
+    const h1=Math.max((new Date(a.time)-new Date(c.time))/3600000,1/60);
+    const r1=(Number(a.views)-Number(c.views))/h1;
+    accel=rate-r1;
+  }
+  return {rate,accel,points:h.length,first:a,last:b};
+}
+function renderVideos() {
+  const container=$("results");
+  $("resultTitle").textContent = "Resultados ("+videos.length+")";
+  if (!videos.length) { container.innerHTML='<div class="empty">No hay videos para mostrar.</div>'; return; }
+  container.innerHTML=videos.map((v,i)=>videoCard(v,i)).join("");
+}
+function videoCard(v, i) {
+  const m=metricsFor(v);
+  const rate=m.rate===null?"Sin historial":(m.rate>=0?"+":"")+fmt(m.rate)+" vistas/h";
+  const accel=m.accel===null?"Aceleración: pendiente":(m.accel>=0?"+":"")+fmt(m.accel)+" vistas/h";
+  const hot=m.rate!==null && m.rate>=Number(config.umbral||1000);
+  return `<article class="video">
+    <a href="${esc(v.url)}" target="_blank" rel="noopener"><img loading="lazy" src="${esc(v.thumbnail)}" alt=""></a>
+    <div><h3><a href="${esc(v.url)}" target="_blank" rel="noopener">${esc(v.title)}</a></h3>
+    <div class="channel">${esc(v.channel)} · ${fechaCorta(v.publishedAt)} · ${durText(v.duration)}</div>
+    <div class="metrics">
+      <span class="metric">${fmt(v.views)} vistas</span>
+      <span class="metric">${fmt(v.likes)} me gusta</span>
+      <span class="metric">${fmt(v.comments)} comentarios</span>
+      <span class="metric ${hot?'hot':''}">${esc(rate)}</span>
+      <span class="metric ${m.accel!==null && m.accel>0?'good':''}">${esc(accel)}</span>
+    </div>
+    <div class="video-actions"><button class="secondary small" onclick="guardarUno(${i})">Guardar medición</button><button class="secondary small" onclick="copiarEnlace('${v.id}')">Copiar enlace</button></div>
+    </div></article>`;
+}
+function guardarUno(index) {
+  const v=videos[index];
+  if (!v) return;
+  guardarVideo(v);
+  actualizarResumen();
+  renderVideos();
+  status("searchStatus", "Medición guardada para: " + v.title, "good");
+}
+function guardarVideo(v) {
+  if (!historial[v.id]) historial[v.id]=[];
+  const h=historial[v.id];
+  const last=h[h.length-1];
+  const now=new Date().toISOString();
+  if (last && Math.abs(new Date(now)-new Date(last.time)) < 60000) {
+    last.views=v.views; last.likes=v.likes; last.comments=v.comments; last.time=now;
+  } else {
+    h.push({time:now,views:v.views,likes:v.likes,comments:v.comments,title:v.title,channel:v.channel,publishedAt:v.publishedAt,thumbnail:v.thumbnail,url:v.url,duration:v.duration});
+  }
+  if (h.length>100) h.splice(0,h.length-100);
+  guardarLocal(KEYS.history,historial);
+}
+function guardarMediciones() {
+  if (!videos.length) { status("searchStatus","Primero buscá videos para poder guardar mediciones.","error"); return; }
+  videos.forEach(guardarVideo);
+  actualizarResumen(); renderVideos();
+  status("searchStatus","Se guardaron mediciones de "+videos.length+" videos. Volvé a medirlos más tarde para calcular velocidad y aceleración.","good");
+}
+function allSavedVideos() {
+  const out=[];
+  for (const [id,h] of Object.entries(historial)) {
+    if (!Array.isArray(h)||!h.length) continue;
+    const last=h[h.length-1], m=metricsFor({id});
+    out.push({...last,id,measurements:h.length,rate:m.rate,accel:m.accel});
+  }
+  return out;
+}
+function dibujarTop() {
+  const mode=$("rankMode").value, filter=$("rankFilter").value;
+  let arr=allSavedVideos();
+  if (filter==="hot") arr=arr.filter(v=>v.rate!==null && v.rate>=Number(config.umbral||1000));
+  if (filter==="emerging") arr=arr.filter(v=>v.measurements>=2 && (v.rate||0)>0 && v.views<100000);
+  arr.sort((a,b)=>{
+    if (mode==="views") return b.views-a.views;
+    if (mode==="recent") return new Date(b.time)-new Date(a.time);
+    if (mode==="accel") return (b.accel??-Infinity)-(a.accel??-Infinity);
+    return (b.rate??-Infinity)-(a.rate??-Infinity);
+  });
+  arr=arr.slice(0,100);
+  $("topResults").innerHTML=arr.length?arr.map((v,i)=>savedCard(v,i+1)).join(""):'<div class="empty">Todavía no hay suficientes mediciones. Buscá videos y usá “Guardar medición”.</div>';
+}
+function savedCard(v,rank) {
+  const rate=v.rate===null||v.rate===undefined?"Esperando otra medición":(v.rate>=0?"+":"")+fmt(v.rate)+" vistas/h";
+  const acc=v.accel===null||v.accel===undefined?"Aceleración pendiente":(v.accel>=0?"+":"")+fmt(v.accel)+" vistas/h";
+  const hot=v.rate!==null && v.rate!==undefined && v.rate>=Number(config.umbral||1000);
+  return `<article class="video"><div style="position:relative"><a href="${esc(v.url||'#')}" target="_blank" rel="noopener"><img loading="lazy" src="${esc(v.thumbnail||'')}" alt=""></a><div class="pill" style="position:absolute;left:5px;top:5px;background:#0b0d12dd">#${rank}</div></div><div><h3><a href="${esc(v.url||'#')}" target="_blank" rel="noopener">${esc(v.title||"Video")}</a></h3><div class="channel">${esc(v.channel||"Canal")} · ${v.measurements||1} medición(es)</div><div class="metrics"><span class="metric">${fmt(v.views)} vistas</span><span class="metric ${hot?'hot':''}">${esc(rate)}</span><span class="metric">${esc(acc)}</span><span class="metric">Última: ${fechaHora(v.time)}</span></div></div></article>`;
+}
+function dibujarHistorial() {
+  const arr=allSavedVideos().sort((a,b)=>new Date(b.time)-new Date(a.time));
+  $("historyResults").innerHTML=arr.length?arr.map((v,i)=>savedCard(v,i+1)).join(""):'<div class="empty">Todavía no guardaste mediciones.</div>';
+}
+function actualizarResumen() {
+  const arr=allSavedVideos();
+  $("kVideos").textContent=fmt(videos.length);
+  $("kHist").textContent=fmt(arr.length);
+  $("kHot").textContent=fmt(arr.filter(v=>v.rate!==null&&v.rate!==undefined&&v.rate>=Number(config.umbral||1000)).length);
+  $("kLast").textContent=ultimaBusqueda?new Date(ultimaBusqueda).toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"}):"—";
+}
+function exportarCSV() {
+  const rows=[["video_id","titulo","canal","url","vistas_ultima_medicion","me_gusta","comentarios","fecha_medicion","cantidad_mediciones","vistas_por_hora","aceleracion_vistas_hora"]];
+  for (const [id,h] of Object.entries(historial)) {
+    if (!Array.isArray(h)||!h.length) continue;
+    const v=h[h.length-1], m=metricsFor({id});
+    rows.push([id,v.title||"",v.channel||"",v.url||"",v.views??0,v.likes??0,v.comments??0,v.time||"",h.length,m.rate??"",m.accel??""]);
+  }
+  if (rows.length===1) { alert("Todavía no hay mediciones guardadas para exportar."); return; }
+  const csv=rows.map(row=>row.map(x=>'"'+String(x??"").replace(/"/g,'""')+'"').join(",")).join("\r\n");
+  const blob=new Blob(["\ufeff"+csv],{type:"text/csv;charset=utf-8;"});
+  const url=URL.createObjectURL(blob), a=document.createElement("a");
+  a.href=url; a.download="radar-youtube-historial.csv"; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+}
+function borrarHistorial() {
+  if (!confirm("¿Borrar todo el historial de mediciones? Esta acción no se puede deshacer.")) return;
+  historial={}; guardarLocal(KEYS.history,historial); dibujarHistorial(); dibujarTop(); actualizarResumen();
+}
+function borrarTodo() {
+  if (!confirm("¿Borrar historial, configuración y API key guardados en este navegador?")) return;
+  localStorage.removeItem(KEYS.history); localStorage.removeItem(KEYS.config); localStorage.removeItem(KEYS.api); localStorage.removeItem(KEYS.cache);
+  historial={}; config={umbral:1000}; $("apiKey").value="";
+  actualizarBadge(); actualizarResumen(); dibujarHistorial(); dibujarTop();
+  status("settingsStatus","Se borraron los datos locales.","good");
+}
+async function copiarEnlace(id) {
+  const url="https://www.youtube.com/watch?v="+id;
+  try { await navigator.clipboard.writeText(url); alert("Enlace copiado."); }
+  catch(e) { prompt("Copiá este enlace:",url); }
+}
+function iniciar() {
+  $("apiKey").value=getAPI();
+  actualizarBadge();
+  actualizarResumen();
+  dibujarTop();
+}
+iniciar();
+</script>
+</body>
+</html>
