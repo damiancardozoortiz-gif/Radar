@@ -312,7 +312,7 @@ function plus(){
  $("clChannel").onclick=async()=>{
   const an=$("analyticsStatus")?.textContent||"";
   if(typeof state==="undefined"||!state.token){st("Primero conectá tu cuenta de Google en Ajustes.",1);return}
-  if(/todavía no|Primero|Consultando/i.test(an)){st("Primero tocá 'Consultar YouTube Analytics' en Ajustes.",1);return}
+  if(!/Últimos 28 días/.test(an)){st("Primero tocá 'Consultar YouTube Analytics' en Ajustes.",1);return}
   let ch="";
   try{
    const r=await fetch("https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics&mine=true",{headers:{Authorization:"Bearer "+state.token}});
@@ -321,6 +321,14 @@ function plus(){
   send("Analizá mi canal y decime qué mejorar. Datos del canal: "+(ch||"no disponibles")+". Métricas de Analytics (últimos 28 días): "+an+
    " Cruzalo con el nicho del radar y dame 3 acciones concretas.");
  };
+
+ // "Borrar datos locales" también borra la clave y los datos de Claude
+ const ca=$("clearAll");
+ if(ca){const n=ca.cloneNode(true);ca.replaceWith(n);n.onclick=()=>{
+  if(!confirm("¿Borrar todos los datos locales de Radar en este dispositivo?"))return;
+  ["radar_api_key","radar_client_id","radar_videos","radar_favs","radar_snaps","radar_quota",KEY,MOD,"radar_alerted","radar_watch"].forEach(k=>localStorage.removeItem(k));
+  location.reload();
+ }}
 }
 
 const boot=()=>{mount();plus()};
