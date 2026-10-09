@@ -1,0 +1,219 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b0d12">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<title>Radar YouTube V2</title>
+<style>
+*{box-sizing:border-box}
+:root{--bg:#0b0d12;--panel:#171b25;--border:#2a3040;--text:#f5f5f5;--muted:#a4a9b5;--red:#ff354a;--green:#50e3a4}
+body{margin:0;background:radial-gradient(700px 400px at 0% 0%,#ff354a20,transparent 65%),var(--bg);color:var(--text);font-family:Arial,sans-serif;padding:0 0 85px}
+header{padding:23px 18px 12px}
+.logo{font-weight:bold;color:var(--red);letter-spacing:2px;font-size:13px}
+h1{font-size:29px;margin:12px 0 6px}
+h2{font-size:19px;margin:22px 0 13px}
+h3{font-size:15px}
+p,.muted{color:var(--muted);font-size:13px;line-height:1.6}
+main{padding:0 16px;max-width:760px;margin:auto}
+.panel{background:linear-gradient(145deg,#1b2030,#141823);border:1px solid var(--border);border-radius:16px;padding:16px;margin-bottom:13px}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.num{font-size:26px;font-weight:bold;margin-top:9px}
+.green{color:var(--green)}
+.label{font-size:11px;color:var(--muted);letter-spacing:.5px}
+input,select{display:block;width:100%;padding:13px;margin-top:7px;border:1px solid var(--border);border-radius:10px;background:#0b0d12;color:white;font-size:15px}
+.field{margin:13px 0}
+button{padding:12px;border:0;border-radius:10px;background:linear-gradient(90deg,#ff354a,#ff6a3d);color:white;font-weight:bold;font-size:14px;cursor:pointer}
+button:disabled{opacity:.5}
+.full{width:100%;margin-top:10px}
+.secondary{background:#242b3b;border:1px solid #363e50}
+.row{display:flex;gap:9px}
+.row>*{flex:1;min-width:0}
+.nav{position:fixed;z-index:20;bottom:0;left:0;right:0;display:grid;grid-template-columns:repeat(5,1fr);padding:8px 3px calc(8px + env(safe-area-inset-bottom));background:#10131bf5;border-top:1px solid #303545;backdrop-filter:blur(12px)}
+.nav button{background:transparent;box-shadow:none;color:#a4a9b5;padding:7px 1px;font-size:10px;line-height:1.7}
+.nav button span{display:block;font-size:20px}
+.nav button.active{color:#ff5365}
+.view{display:none}
+.view.active{display:block}
+.shortcut{display:block;text-align:left;width:100%;margin:8px 0;background:#202637;border:1px solid #30384b;box-shadow:none;padding:15px}
+.shortcut strong{display:block;font-size:15px;margin-bottom:5px}
+.video{display:block;color:inherit;text-decoration:none;background:var(--panel);border:1px solid var(--border);border-radius:13px;overflow:hidden;margin:12px 0}
+.video.hot{border-color:var(--green)}
+.thumb{aspect-ratio:16/9;background:#080a0f;position:relative}
+.thumb img{width:100%;height:100%;object-fit:cover}
+.rank{position:absolute;top:8px;left:8px;background:var(--red);border-radius:50%;padding:7px 10px;font-weight:bold}
+.body{padding:12px}
+.vtitle{font-weight:bold;font-size:14px;line-height:1.5}
+.meta{font-size:12px;color:var(--muted);line-height:2;margin-top:5px}
+.vel{color:var(--green);font-size:13px;font-weight:bold;margin-top:8px}
+.notice{font-size:12px;color:var(--muted);line-height:1.6;margin:12px 0}
+.error{color:#ff7180}
+.badge{display:inline-block;color:var(--green);border:1px solid #50e3a455;border-radius:20px;padding:4px 8px;font-size:10px;margin-top:7px}
+hr{border:0;border-top:1px solid var(--border);margin:16px 0}
+.hidden{display:none!important}
+label{font-size:12px;color:var(--muted)}
+.checkrow{display:flex;align-items:center;gap:10px;margin:14px 0}
+.checkrow input{width:auto;margin:0}
+@media(min-width:600px){body{padding-bottom:25px}.nav{position:static;max-width:760px;margin:20px auto;border:1px solid var(--border);border-radius:15px}.video{display:grid;grid-template-columns:42% 1fr}.thumb{height:100%;min-height:170px}.nav button{font-size:12px}}
+</style>
+</head>
+<body>
+
+<header>
+ <div class="logo">◉ RADAR YOUTUBE</div>
+ <h1 id="pageTitle">Inicio</h1>
+ <div class="muted" id="pageSub">Tu centro de detección de tendencias.</div>
+</header>
+
+<main>
+<section class="view active" id="inicio">
+ <div class="panel">
+  <div class="label" data-i18n="welcome">PANEL PRINCIPAL</div>
+  <h2 data-i18n="welcomeTitle">Encontrá tu próximo video viral</h2>
+  <p data-i18n="welcomeText">Explorá tendencias, medí el crecimiento y descubrí oportunidades.</p>
+  <button class="full" onclick="ir('buscar')" data-i18n="startSearch">⌕ Buscar videos</button>
+ </div>
+ <div class="stats">
+  <div class="panel"><div class="label" data-i18n="monitored">VIDEOS EN RANKING</div><div class="num" id="homeTotal">0</div></div>
+  <div class="panel"><div class="label" data-i18n="explosions">POSIBLES EXPLOSIONES</div><div class="num green" id="homeAlerts">0</div></div>
+  <div class="panel"><div class="label" data-i18n="accelerating">ACELERANDO</div><div class="num" id="homeAccel">0</div></div>
+  <div class="panel"><div class="label" data-i18n="measurements">MEDICIONES</div><div class="num" id="homeMeasures">0</div></div>
+ </div>
+ <h2 data-i18n="quickAccess">Acceso rápido</h2>
+ <button class="shortcut" onclick="ir('tendencias')"><strong>🔥 <span data-i18n="trends">Tendencias</span></strong><span class="muted" data-i18n="trendsDesc">Ranking de videos con mayor potencial.</span></button>
+ <button class="shortcut" onclick="ir('historial')"><strong>📊 <span data-i18n="history">Historial</span></strong><span class="muted" data-i18n="historyDesc">Consultá las mediciones guardadas.</span></button>
+ <button class="shortcut" onclick="ir('config')"><strong>⚙️ <span data-i18n="settings">Configuración</span></strong><span class="muted" data-i18n="settingsDesc">Idioma, alertas y preferencias.</span></button>
+ <div id="homeRecent" class="notice"></div>
+</section>
+
+<section class="view" id="buscar">
+ <div class="panel">
+  <h2 data-i18n="searchTitle">Buscador de YouTube</h2>
+  <div class="field"><label data-i18n="topic">TEMA O NICHO</label><input id="tema" placeholder="Motivación, fútbol, humor, IA"></div>
+  <div class="field"><label data-i18n="period">PUBLICADOS EN</label>
+   <select id="periodo"><option value="1">24 horas</option><option value="3" selected>3 días</option><option value="7">7 días</option></select>
+  </div>
+  <div class="field"><label data-i18n="region">PAÍS</label>
+   <select id="region"><option value="AR">Argentina</option><option value="MX">México</option><option value="ES">España</option><option value="US">Estados Unidos</option><option value="BR">Brasil</option><option value="CO">Colombia</option><option value="CL">Chile</option></select>
+  </div>
+  <div class="field"><label data-i18n="maxResults">CANTIDAD MÁXIMA</label>
+   <select id="cantidad"><option value="20">20 videos</option><option value="50">50 videos</option><option value="100" selected>100 videos</option></select>
+  </div>
+  <button id="btnBuscar" class="full" onclick="buscar()">Buscar videos</button>
+  <div id="estado" class="notice" aria-live="polite">Ingresá una clave de API en Configuración.</div>
+ </div>
+</section>
+
+<section class="view" id="tendencias">
+ <div class="panel">
+  <h2 data-i18n="rankingTitle">🔥 Radar de tendencias</h2>
+  <div class="field"><label data-i18n="sort">ORDENAR POR</label>
+   <select id="orden" onchange="dibujar()">
+    <option value="score">Potencial viral</option>
+    <option value="speed">Vistas por hora</option>
+    <option value="accel">Aceleración medida</option>
+    <option value="views">Visualizaciones totales</option>
+    <option value="new">Más recientes</option>
+   </select>
+  </div>
+  <button class="secondary full" onclick="exportarCSV()" data-i18n="export">Exportar ranking CSV</button>
+ </div>
+ <div id="lista"></div>
+</section>
+
+<section class="view" id="historial">
+ <div class="panel">
+  <h2 data-i18n="historyTitle">📊 Historial de mediciones</h2>
+  <p data-i18n="historyInfo">Las mediciones se guardan en este dispositivo.</p>
+  <div id="historialContenido" class="notice"></div>
+  <button class="secondary full" onclick="exportarHistorial()" data-i18n="exportHistory">Exportar historial CSV</button>
+  <button class="secondary full" onclick="borrarHistorial()" data-i18n="clearHistory">Borrar historial</button>
+ </div>
+</section>
+
+<section class="view" id="config">
+ <div class="panel">
+  <h2 data-i18n="settingsTitle">⚙️ Configuración</h2>
+  <div class="field"><label data-i18n="apiKey">CLAVE DE API DE YOUTUBE</label><input id="clave" type="password" autocomplete="off" placeholder="Pegá tu clave de API"></div>
+  <div class="notice" data-i18n="apiWarning">La clave se guarda en el almacenamiento local de este navegador. No compartas tu archivo con la clave incluida.</div>
+  <button class="full" onclick="guardarConfig()" data-i18n="save">Guardar configuración</button>
+  <hr>
+  <div class="field"><label data-i18n="language">IDIOMA / LANGUAGE / IDIOMA</label>
+   <select id="idioma" onchange="cambiarIdioma()">
+    <option value="es">Español</option><option value="en">English</option><option value="pt">Português</option>
+   </select>
+  </div>
+  <div class="field"><label data-i18n="threshold">MÍNIMO DE VISTAS POR HORA</label><input id="umbral" type="number" min="1" max="10000000" value="1000"></div>
+  <div class="field"><label data-i18n="ageLimit">ANTIGÜEDAD MÁXIMA PARA ALERTAS (HORAS)</label><input id="edadMax" type="number" min="1" max="720" value="48"></div>
+  <div class="checkrow"><input type="checkbox" id="soloRecientes"><label for="soloRecientes" data-i18n="onlyExplosions">Mostrar solo posibles explosiones en Tendencias</label></div>
+  <button class="full" onclick="guardarConfig()" data-i18n="savePreferences">Guardar preferencias</button>
+  <hr>
+  <h3 data-i18n="dataManagement">Administración de datos</h3>
+  <button class="secondary full" onclick="exportarCSV()" data-i18n="export">Exportar ranking CSV</button>
+  <button class="secondary full" onclick="restaurar()" data-i18n="reset">Restablecer preferencias</button>
+  <p class="notice" data-i18n="privacy">Los datos de búsqueda e historial se almacenan localmente. La API de YouTube tiene límites de cuota.</p>
+ </div>
+</section>
+</main>
+
+<nav class="nav" aria-label="Navegación principal">
+ <button class="active" data-view="inicio" onclick="ir('inicio')"><span>⌂</span><b data-i18n="navHome">Inicio</b></button>
+ <button data-view="buscar" onclick="ir('buscar')"><span>⌕</span><b data-i18n="navSearch">Buscar</b></button>
+ <button data-view="tendencias" onclick="ir('tendencias')"><span>↗</span><b data-i18n="navTrends">Tendencias</b></button>
+ <button data-view="historial" onclick="ir('historial')"><span>◷</span><b data-i18n="navHistory">Historial</b></button>
+ <button data-view="config" onclick="ir('config')"><span>⚙</span><b data-i18n="navSettings">Ajustes</b></button>
+</nav>
+
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+const fmt=n=>new Intl.NumberFormat("es-AR").format(Math.round(Number(n)||0));
+const HIST="radar_v2_historial",CACHE="radar_v2_cache",PREF="radar_v2_config";
+let videos=[],historial=leer(HIST,{}),config=leer(PREF,{idioma:"es",umbral:1000,edadMax:48,soloRecientes:false});
+let ultimaBusqueda=0;
+
+function leer(k,d){try{const x=localStorage.getItem(k);return x?JSON.parse(x):d}catch(e){return d}}
+function guardar(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true}catch(e){mensaje("No se pudo guardar. Revisá el almacenamiento disponible.",true);return false}}
+function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
+
+const idiomas={
+ es:{inicio:"Inicio",sub:"Tu centro de detección de tendencias.",welcome:"PANEL PRINCIPAL",welcomeTitle:"Encontrá tu próximo video viral",welcomeText:"Explorá tendencias, medí el crecimiento y descubrí oportunidades.",startSearch:"⌕ Buscar videos",monitored:"VIDEOS EN RANKING",explosions:"POSIBLES EXPLOSIONES",accelerating:"ACELERANDO",measurements:"MEDICIONES",quickAccess:"Acceso rápido",trends:"Tendencias",trendsDesc:"Ranking de videos con mayor potencial.",history:"Historial",historyDesc:"Consultá las mediciones guardadas.",settings:"Configuración",settingsDesc:"Idioma, alertas y preferencias.",searchTitle:"Buscador de YouTube",topic:"TEMA O NICHO",period:"PUBLICADOS EN",region:"PAÍS",maxResults:"CANTIDAD MÁXIMA",rankingTitle:"🔥 Radar de tendencias",sort:"ORDENAR POR",export:"Exportar ranking CSV",historyTitle:"📊 Historial de mediciones",historyInfo:"Las mediciones se guardan en este dispositivo.",exportHistory:"Exportar historial CSV",clearHistory:"Borrar historial",settingsTitle:"⚙️ Configuración",apiKey:"CLAVE DE API DE YOUTUBE",apiWarning:"La clave se guarda en este navegador. No compartas tu archivo con la clave incluida.",save:"Guardar configuración",language:"IDIOMA",threshold:"MÍNIMO DE VISTAS POR HORA",ageLimit:"ANTIGÜEDAD MÁXIMA PARA ALERTAS (HORAS)",onlyExplosions:"Mostrar solo posibles explosiones en Tendencias",savePreferences:"Guardar preferencias",dataManagement:"Administración de datos",reset:"Restablecer preferencias",privacy:"Los datos se guardan localmente. YouTube tiene límites de cuota.",navHome:"Inicio",navSearch:"Buscar",navTrends:"Tendencias",navHistory:"Historial",navSettings:"Ajustes",needKey:"Ingresá una clave de API en Configuración.",searching:"Buscando videos…",noResults:"No se encontraron videos.",done:"Búsqueda completada. Volvé a medir más tarde para calcular la aceleración.",apiError:"Error de YouTube: ",firstMeasure:"Primera medición: esperando otra consulta.",accel:"Acelerando",watch:"En observación",explosion:"POSIBLE EXPLOSIÓN",views:"vistas",perHour:"vistas/hora",measures:"mediciones",score:"Índice",published:"Publicado",historyEmpty:"Todavía no hay mediciones guardadas.",saved:"Configuración guardada.",cleared:"Historial eliminado.",noVideos:"Primero buscá videos.",recent:"Última búsqueda: ",lastSearch:"Última búsqueda",growth:"Cambio de vistas",speed:"Velocidad medida",estimated:"estimadas",measured:"medidas"},
+ en:{inicio:"Home",sub:"Your trend detection center.",welcome:"MAIN DASHBOARD",welcomeTitle:"Find your next viral video",welcomeText:"Explore trends, measure growth and discover opportunities.",startSearch:"⌕ Search videos",monitored:"RANKED VIDEOS",explosions:"POSSIBLE EXPLOSIONS",accelerating:"ACCELERATING",measurements:"MEASUREMENTS",quickAccess:"Quick access",trends:"Trends",trendsDesc:"Rank videos by potential.",history:"History",historyDesc:"Review saved measurements.",settings:"Settings",settingsDesc:"Language, alerts and preferences.",searchTitle:"YouTube Search",topic:"TOPIC OR NICHE",period:"PUBLISHED WITHIN",region:"COUNTRY",maxResults:"MAXIMUM RESULTS",rankingTitle:"🔥 Trend radar",sort:"SORT BY",export:"Export ranking CSV",historyTitle:"📊 Measurement history",historyInfo:"Measurements are stored on this device.",exportHistory:"Export history CSV",clearHistory:"Clear history",settingsTitle:"⚙️ Settings",apiKey:"YOUTUBE API KEY",apiWarning:"Your key is stored in this browser. Do not share files containing it.",save:"Save settings",language:"LANGUAGE",threshold:"MINIMUM VIEWS PER HOUR",ageLimit:"MAXIMUM ALERT AGE (HOURS)",onlyExplosions:"Show only possible explosions in Trends",savePreferences:"Save preferences",dataManagement:"Data management",reset:"Reset preferences",privacy:"Data is stored locally. YouTube API quotas apply.",navHome:"Home",navSearch:"Search",navTrends:"Trends",navHistory:"History",navSettings:"Settings",needKey:"Enter an API key in Settings.",searching:"Searching videos…",noResults:"No videos found.",done:"Search complete. Measure again later to calculate acceleration.",apiError:"YouTube error: ",firstMeasure:"First measurement: waiting for another query.",accel:"Accelerating",watch:"Monitoring",explosion:"POSSIBLE EXPLOSION",views:"views",perHour:"views/hour",measures:"measurements",score:"Score",published:"Published",historyEmpty:"No saved measurements yet.",saved:"Settings saved.",cleared:"History deleted.",noVideos:"Search for videos first.",recent:"Last search: ",lastSearch:"Last search",growth:"View change",speed:"Measured speed",estimated:"estimated",measured:"measured"},
+ pt:{inicio:"Início",sub:"Seu centro de detecção de tendências.",welcome:"PAINEL PRINCIPAL",welcomeTitle:"Encontre seu próximo vídeo viral",welcomeText:"Explore tendências, meça o crescimento e descubra oportunidades.",startSearch:"⌕ Buscar vídeos",monitored:"VÍDEOS NO RANKING",explosions:"POSSÍVEIS EXPLOSÕES",accelerating:"ACELERANDO",measurements:"MEDIÇÕES",quickAccess:"Acesso rápido",trends:"Tendências",trendsDesc:"Ranking de vídeos com maior potencial.",history:"Histórico",historyDesc:"Consulte as medições salvas.",settings:"Configurações",settingsDesc:"Idioma, alertas e preferências.",searchTitle:"Busca do YouTube",topic:"TEMA OU NICHO",period:"PUBLICADOS EM",region:"PAÍS",maxResults:"QUANTIDADE MÁXIMA",rankingTitle:"🔥 Radar de tendências",sort:"ORDENAR POR",export:"Exportar ranking CSV",historyTitle:"📊 Histórico de medições",historyInfo:"As medições ficam salvas neste dispositivo.",exportHistory:"Exportar histórico CSV",clearHistory:"Apagar histórico",settingsTitle:"⚙️ Configurações",apiKey:"CHAVE DA API DO YOUTUBE",apiWarning:"A chave fica salva neste navegador. Não compartilhe arquivos que contenham a chave.",save:"Salvar configurações",language:"IDIOMA",threshold:"MÍNIMO DE VISUALIZAÇÕES POR HORA",ageLimit:"IDADE MÁXIMA PARA ALERTAS (HORAS)",onlyExplosions:"Mostrar apenas possíveis explosões em Tendências",savePreferences:"Salvar preferências",dataManagement:"Gerenciamento de dados",reset:"Redefinir preferências",privacy:"Os dados são salvos localmente. Há limites de cota na API do YouTube.",navHome:"Início",navSearch:"Buscar",navTrends:"Tendências",navHistory:"Histórico",navSettings:"Ajustes",needKey:"Insira uma chave de API em Configurações.",searching:"Buscando vídeos…",noResults:"Nenhum vídeo encontrado.",done:"Busca concluída. Meça novamente mais tarde para calcular a aceleração.",apiError:"Erro do YouTube: ",firstMeasure:"Primeira medição: aguardando nova consulta.",accel:"Acelerando",watch:"Em observação",explosion:"POSSÍVEL EXPLOSÃO",views:"visualizações",perHour:"visualizações/hora",measures:"medições",score:"Índice",published:"Publicado",historyEmpty:"Ainda não há medições salvas.",saved:"Configurações salvas.",cleared:"Histórico apagado.",noVideos:"Busque vídeos primeiro.",recent:"Última busca: ",lastSearch:"Última busca",growth:"Mudança de visualizações",speed:"Velocidade medida",estimated:"estimadas",measured:"medidas"}
+};
+function tr(k){return (idiomas[config.idioma]||idiomas.es)[k]||idiomas.es[k]||k}
+function aplicarIdioma(){
+ document.documentElement.lang=config.idioma||"es";
+ document.querySelectorAll("[data-i18n]").forEach(el=>{const k=el.dataset.i18n;if(tr(k))el.textContent=tr(k)});
+ const titulo={inicio:tr("inicio"),buscar:tr("navSearch"),tendencias:tr("navTrends"),historial:tr("navHistory"),config:tr("navSettings")};
+ $("pageTitle").textContent=titulo[document.querySelector(".view.active")?.id||"inicio"]||"Radar YouTube";
+ $("pageSub").textContent=tr("sub");
+}
+function ir(id){
+ document.querySelectorAll(".view").forEach(v=>v.classList.toggle("active",v.id===id));
+ document.querySelectorAll(".nav button").forEach(b=>b.classList.toggle("active",b.dataset.view===id));
+ aplicarIdioma();
+ if(id==="historial")dibujarHistorial();
+}
+function mensaje(s,error=false){$("estado").textContent=s;$("estado").className="notice"+(error?" error":"")}
+async function api(ruta,params){
+ const u="https://www.googleapis.com/youtube/v3/"+ruta+"?"+new URLSearchParams(params);
+ const r=await fetch(u);let d={};
+ try{d=await r.json()}catch(e){}
+ if(!r.ok)throw Error(d.error?.message||("HTTP "+r.status));
+ return d;
+}
+function tomarMedicion(id,vistas,ahora){
+ const h=historial[id]||(historial[id]=[]);
+ const prev=h[h.length-1];
+ let velocidad=null,aceleracion=null,cambio=null;
+ if(prev){
+  const dt=(ahora-prev.t)/3600000;
+  if(dt>0){cambio=vistas-prev.vistas;velocidad=cambio/dt}
+ }
+ if(!prev||ahora-prev.t>=30000){
+  h.push({t:ahora,vistas});
+  if(h.length>30)h.splice(0,h.le
