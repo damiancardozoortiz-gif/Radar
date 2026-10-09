@@ -1,500 +1,346 @@
+
 <!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Radar YouTube</title>
-<style>
-* { box-sizing: border-box; }
-body {
-  margin: 0;
-  padding: 20px;
-  background: #0b0d12;
-  color: #f5f5f5;
-  font-family: Arial, sans-serif;
-}
-header { margin: 12px 0 24px; }
-.logo { color: #ff3b4e; font-weight: bold; letter-spacing: 2px; }
-h1 { font-size: 30px; margin: 8px 0; }
-.sub { color: #a4a9b5; font-size: 14px; }
-.stats {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
-.card {
-  background: #171b25;
-  border: 1px solid #292e3a;
-  border-radius: 14px;
-  padding: 16px;
-}
-.label { color: #a4a9b5; font-size: 12px; }
-.number { font-size: 25px; font-weight: bold; margin-top: 8px; }
-.green { color: #50e3a4; }
-h2 { font-size: 18px; margin: 28px 0 14px; }
-button {
-  width: 100%;
-  border: 0;
-  border-radius: 10px;
-  padding: 14px;
-  background: #ff354a;
-  color: white;
-  font-weight: bold;
-  font-size: 15px;
-  margin-top: 16px;
-}
-.video {
-  background: #171b25;
-  border: 1px solid #292e3a;
-  border-radius: 12px;
-  padding: 14px;
-  margin-bottom: 10px;
-}
-.video-title { font-weight: bold; margin-bottom: 8px; }
-.video-info { color: #a4a9b5; font-size: 13px; line-height: 1.7; }
-.tag { color: #50e3a4; font-weight: bold; }
-.notice { color: #a4a9b5; font-size: 12px; line-height: 1.5; margin-top: 18px; }
-</style>
-</head>
-<body>
-
-<header>
-  <div class="logo">● RADAR YOUTUBE</div>
-  <h1>Radar de viralidad</h1>
-  <div class="sub">Encontrá videos que empiezan a despegar.</div>
-</header>
-
-<div class="stats">
-  <div class="card">
-    <div class="label">VIDEOS MONITOREADOS</div>
-    <div class="number" id="total">3</div>
-  </div>
-  <div class="card">
-    <div class="label">EN OBSERVACIÓN</div>
-    <div class="number green" id="alertas">1</div>
-  </div>
-</div>
-
-<h2>🔥 Radar de tendencias</h2>
-<div id="lista"></div>
-
-<button onclick="actualizar()">Actualizar radar de prueba</button>
-
-<div class="notice">
-  Versión inicial de prueba. Los videos y las métricas son ficticios:
-  todavía no estamos conectados a YouTube.
-</div>
-
-<script>
-const videos = [
-  {
-    titulo: "El hábito que puede cambiar tu vida",
-    vistas: 125000,
-    crecimiento: 18.6,
-    velocidad: 2400
-  },
-  {
-    titulo: "Tres errores que frenan tu progreso",
-    vistas: 48200,
-    crecimiento: 7.2,
-    velocidad: 420
-  },
-  {
-    titulo: "Una idea que nadie te explica",
-    vistas: 8900,
-    crecimiento: 24.5,
-    velocidad: 680
-  }
-];
-
-function formato(n) {
-  return new Intl.NumberFormat("es-AR").format(n);
-}
-
-function dibujar() {
-  const lista = document.getElementById("lista");
-  lista.innerHTML = "";
-
-  const ordenados = [...videos].sort(
-    (a, b) => b.crecimiento - a.crecimiento
-  );
-
-  ordenados.forEach((v, i) => {
-    lista.innerHTML += `
-      <div class="video">
-        <div class="video-title">${i + 1}. ${v.titulo}</div>
-        <div class="video-info">
-          Vistas: ${formato(v.vistas)}<br>
-          Crecimiento simulado: <span class="tag">+${v.crecimiento.toFixed(1)}%</span><br>
-          Velocidad simulada: ${formato(v.velocidad)} vistas/hora
-        </div>
-      </div>`;
-  });
-}
-
-function actualizar() {
-  videos.forEach(v => {
-    v.vistas += Math.floor(Math.random() * 500);
-    v.crecimiento += Math.random() * 2;
-    v.velocidad = Math.floor(100 + Math.random() * 3000);
-  });
-
-  document.getElementById("total").textContent = videos.length;
-  document.getElementById("alertas").textContent =
-    videos.filter(v => v.crecimiento > 20).length;
-
- html>
-<html lang="es">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#0b0d12">
-<link rel="manifest" href="manifest.webmanifest">
-<link rel="icon" href="icon-192.png">
-<link rel="apple-touch-icon" href="icon-192.png">
-<title>Radar YouTube</title>
+<title>Radar YouTube V2</title>
+
 <style>
-* { box-sizing: border-box; }
-body {
-  margin: 0;
-  padding: 20px;
-  background: #0b0d12;
-  color: #f5f5f5;
-  font-family: Arial, sans-serif;
+*{box-sizing:border-box}
+body{
+ margin:0;padding:18px;background:#0b0d12;color:#f5f5f5;
+ font-family:Arial,sans-serif;min-height:100vh;
+ background-image:radial-gradient(ellipse at top left,#35131d,transparent 55%);
 }
-header { margin: 12px 0 24px; }
-.logo { color: #ff3b4e; font-weight: bold; letter-spacing: 2px; }
-h1 { font-size: 30px; margin: 8px 0; }
-.sub { color: #a4a9b5; font-size: 14px; }
-.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.card {
-  background: #171b25;
-  border: 1px solid #292e3a;
-  border-radius: 14px;
-  padding: 16px;
+header{margin:10px 0 22px}
+.logo{color:#ff4055;font-weight:bold;letter-spacing:2px}
+h1{font-size:29px;margin:10px 0}
+.sub,.notice{color:#a4a9b5;font-size:13px;line-height:1.6}
+.card,.video{
+ background:#171b25;border:1px solid #292e3a;
+ border-radius:14px;padding:15px;margin-bottom:12px
 }
-.label { color: #a4a9b5; font-size: 12px; }
-.number { font-size: 25px; font-weight: bold; margin-top: 8px; }
-.green { color: #50e3a4; }
-h2 { font-size: 18px; margin: 28px 0 14px; }
-input {
-  width: 100%;
-  margin-top: 6px;
-  padding: 12px;
-  border-radius: 10px;
-  border: 1px solid #292e3a;
-  background: #0b0d12;
-  color: #f5f5f5;
-  font-size: 15px;
+.label{color:#a4a9b5;font-size:12px}
+input,select{
+ width:100%;padding:13px;margin-top:7px;border-radius:9px;
+ border:1px solid #343b4b;background:#0b0d12;color:white;font-size:15px
 }
-.campo + .campo { margin-top: 14px; }
-button {
-  width: 100%;
-  border: 0;
-  border-radius: 10px;
-  padding: 14px;
-  background: #ff354a;
-  color: white;
-  font-weight: bold;
-  font-size: 15px;
-  margin-top: 16px;
+.campo{margin-bottom:13px}
+button{
+ width:100%;padding:14px;border:0;border-radius:10px;
+ background:linear-gradient(90deg,#ff354a,#ff713d);
+ color:white;font-size:15px;font-weight:bold;margin-top:8px
 }
-button:disabled { opacity: .5; }
-.video {
-  display: block;
-  background: #171b25;
-  border: 1px solid #292e3a;
-  border-radius: 12px;
-  padding: 14px;
-  margin-bottom: 10px;
-  color: inherit;
-  text-decoration: none;
-}
-.video-title { font-weight: bold; margin-bottom: 8px; }
-.video-info { color: #a4a9b5; font-size: 13px; line-height: 1.7; }
-.tag { color: #50e3a4; font-weight: bold; }
-.notice { color: #a4a9b5; font-size: 12px; line-height: 1.5; margin-top: 18px; }
-#estado { margin: 0 0 12px; }
-.error { color: #ff6b7a; }
-
-/* ===== Versión con vida ===== */
-body {
-  background:
-    radial-gradient(900px 500px at 10% -10%, rgba(255,53,74,.18), transparent 60%),
-    radial-gradient(700px 500px at 110% 25%, rgba(80,227,164,.10), transparent 60%),
-    #0b0d12;
-  background-attachment: fixed;
-  min-height: 100vh;
-}
-h1 {
-  background: linear-gradient(90deg, #fff, #ffb3bb);
-  -webkit-background-clip: text; background-clip: text; color: transparent;
-}
-.radar {
-  display: inline-block; width: 18px; height: 18px; border-radius: 50%;
-  border: 2px solid #ff3b4e; position: relative; vertical-align: -4px; margin-right: 8px; overflow: hidden;
-}
-.radar::after {
-  content: ""; position: absolute; inset: 0; border-radius: 50%;
-  background: conic-gradient(rgba(255,59,78,0) 0deg, rgba(255,59,78,.95) 70deg, rgba(255,59,78,0) 71deg);
-  animation: giro 2s linear infinite;
-}
-.card { background: linear-gradient(145deg, #1b2030, #141823); }
-button {
-  background: linear-gradient(90deg, #ff354a, #ff6a3d);
-  box-shadow: 0 6px 20px rgba(255,53,74,.35);
-  transition: transform .15s;
-}
-button:active { transform: scale(.97); }
-button:disabled { opacity: .7; animation: pulso 1s ease-in-out infinite; }
-
-.video {
-  padding: 0; overflow: hidden;
-  animation: subir .5s ease-out both;
-  animation-delay: calc(var(--i, 0) * 60ms);
-}
-.video.hot {
-  border-color: #50e3a4;
-  animation: subir .5s ease-out both, brillo 2.4s ease-in-out infinite;
-  animation-delay: calc(var(--i, 0) * 60ms), 0s;
-}
-.thumb { position: relative; aspect-ratio: 16 / 9; background: #0e1118; overflow: hidden; }
-.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .4s; }
-.video:active .thumb img { transform: scale(1.06); }
-.rank {
-  position: absolute; top: 8px; left: 8px; width: 28px; height: 28px; border-radius: 50%;
-  background: #ff354a; display: flex; align-items: center; justify-content: center;
-  font-weight: bold; font-size: 14px; box-shadow: 0 2px 8px rgba(0,0,0,.5);
-}
-.pill {
-  position: absolute; top: 8px; right: 8px; padding: 4px 9px; border-radius: 999px;
-  background: rgba(11,13,18,.8); border: 1px solid #50e3a4; color: #50e3a4;
-  font-size: 11px; font-weight: bold; letter-spacing: .5px; animation: pulso 1.6s ease-in-out infinite;
-}
-.body { padding: 12px 14px 14px; }
-.video-title {
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-  margin-bottom: 6px;
-}
-.meta { display: flex; gap: 14px; color: #a4a9b5; font-size: 13px; margin-top: 6px; }
-.vel { margin-top: 8px; font-size: 14px; }
-.bar { height: 6px; border-radius: 99px; background: #232837; margin-top: 8px; overflow: hidden; }
-.bar i {
-  display: block; height: 100%; border-radius: 99px; transform-origin: left;
-  background: linear-gradient(90deg, #ff354a, #ffb03b, #50e3a4);
-  animation: llenar .9s ease-out both;
-  animation-delay: calc(var(--i, 0) * 60ms + 250ms);
-}
-.sk {
-  height: 250px; border-radius: 12px; margin-bottom: 10px;
-  background: linear-gradient(100deg, #171b25 30%, #222839 50%, #171b25 70%);
-  background-size: 200% 100%; animation: brillar 1.2s linear infinite;
-}
-@keyframes giro { to { transform: rotate(360deg); } }
-@keyframes subir { from { opacity: 0; transform: translateY(14px); } }
-@keyframes llenar { from { transform: scaleX(0); } }
-@keyframes pulso { 50% { opacity: .55; } }
-@keyframes brillo { 50% { box-shadow: 0 0 18px rgba(80,227,164,.35); } }
-@keyframes brillar { to { background-position: -200% 0; } }
-@media (prefers-reduced-motion: reduce) {
-  * { animation: none !important; transition: none !important; }
-}
+button:disabled{opacity:.6}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:16px 0}
+.number{font-size:26px;font-weight:bold;margin-top:8px}
+.green,.tag{color:#50e3a4}
+h2{font-size:18px;margin:25px 0 12px}
+#estado{margin:12px 0}
+.error{color:#ff7382}
+.video{padding:0;overflow:hidden;color:inherit;text-decoration:none;display:block}
+.thumb{aspect-ratio:16/9;background:#10131b;position:relative}
+.thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.body{padding:13px}
+.video-title{font-weight:bold;line-height:1.4;margin-bottom:7px}
+.video-info,.meta{color:#a4a9b5;font-size:12px;line-height:1.7}
+.meta{display:flex;flex-wrap:wrap;gap:12px;margin-top:6px}
+.rank{position:absolute;top:9px;left:9px;background:#ff354a;padding:7px 10px;border-radius:50%;font-weight:bold}
+.pill{position:absolute;top:9px;right:9px;background:#10271e;color:#50e3a4;padding:6px 9px;border-radius:20px;font-size:11px}
+.bar{height:6px;background:#292e3a;border-radius:10px;margin-top:10px;overflow:hidden}
+.bar i{display:block;height:100%;background:linear-gradient(90deg,#ff354a,#ffbd45,#50e3a4)}
+.actions{display:flex;gap:8px}
+.actions button{flex:1}
+.secondary{background:#292e3a;box-shadow:none}
+a{color:inherit}
 </style>
 </head>
-<body>
 
+<body>
 <header>
-  <div class="logo"><span class="radar"></span>RADAR YOUTUBE</div>
-  <h1>Radar de viralidad</h1>
-  <div class="sub">Encontrá videos que empiezan a despegar.</div>
+ <div class="logo">◉ RADAR YOUTUBE V2</div>
+ <h1>Radar de viralidad</h1>
+ <div class="sub">Detectá videos que empiezan a despegar.</div>
 </header>
 
-<div class="card" style="margin-bottom:12px">
-  <div class="campo">
-    <div class="label">CLAVE DE API DE YOUTUBE</div>
-    <input id="clave" type="password" placeholder="Pegá tu clave acá" autocomplete="off">
-  </div>
-  <div class="campo">
-    <div class="label">TEMA (OPCIONAL)</div>
-    <input id="tema" type="text" placeholder="Ej: hábitos, fitness, inteligencia artificial">
-  </div>
-  <button id="btn">Buscar videos</button>
+<div class="card">
+ <div class="campo">
+  <div class="label">CLAVE DE YOUTUBE DATA API V3</div>
+  <input id="clave" type="password" placeholder="Pegá tu clave de API">
+ </div>
+ <div class="campo">
+  <div class="label">TEMA O NICHO (OPCIONAL)</div>
+  <input id="tema" placeholder="Ej: estoicismo, fitness, inteligencia artificial">
+ </div>
+ <div class="campo">
+  <div class="label">FORMATO</div>
+  <select id="formato">
+   <option value="todos">Todos los videos</option>
+   <option value="shorts">Buscar Shorts (orientativo)</option>
+   <option value="largos">Buscar videos largos (orientativo)</option>
+  </select>
+ </div>
+ <button id="btn">Actualizar Radar</button>
+ <button id="borrar" class="secondary">Limpiar resultados</button>
 </div>
 
 <div class="stats">
-  <div class="card">
-    <div class="label">VIDEOS MONITOREADOS</div>
-    <div class="number" id="total">0</div>
-  </div>
-  <div class="card">
-    <div class="label">DESPEGANDO</div>
-    <div class="number green" id="alertas">0</div>
-  </div>
+ <div class="card">
+  <div class="label">VIDEOS ENCONTRADOS</div>
+  <div class="number" id="total">0</div>
+ </div>
+ <div class="card">
+  <div class="label">EN DESPEGUE</div>
+  <div class="number green" id="alertas">0</div>
+ </div>
 </div>
 
-<h2>🔥 Radar de tendencias</h2>
-<div id="estado" class="notice">Pegá tu clave y tocá Buscar videos.</div>
+<h2>🔥 Ranking de crecimiento</h2>
+<div id="estado" class="notice">Ingresá tu clave de API y tocá Actualizar Radar.</div>
 <div id="lista"></div>
 
 <div class="notice">
-  Con tema: videos de los últimos 3 días sobre ese tema, priorizando español. Sin tema: los más populares de Argentina.
-  "Despegando" (🔥) son los videos publicados hace menos de 48 horas con 1.000 vistas por hora o más.
+La velocidad es una estimación de vistas acumuladas divididas por las horas desde la publicación; no son mediciones en tiempo real. La búsqueda de Shorts y videos largos es orientativa. Los videos encontrados dependen de los resultados y límites de la API de YouTube.
 </div>
 
 <script>
-const UMBRAL = 1000;   // vistas/hora mínimas para "despegando"
-const MAX_HORAS = 48;  // y que haya sido publicado hace menos de 48 horas
-const despega = v => v.horas <= MAX_HORAS && v.velocidad >= UMBRAL;
-const $ = id => document.getElementById(id);
-const fmt = n => new Intl.NumberFormat("es-AR").format(n);
-const esc = s => String(s).replace(/[&<>"']/g, c => (
-  { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
-));
+"use strict";
 
+const $ = id => document.getElementById(id);
+const UMBRAL = 1000;
+const MAX_HORAS = 48;
 let videos = [];
 
-try {
-  $("clave").value = localStorage.getItem("yt_clave") || "";
-  $("tema").value = localStorage.getItem("yt_tema") || "";
-} catch (e) {}
+function fmt(n){
+ return new Intl.NumberFormat("es-AR").format(n);
+}
 
-try {
-  const c = JSON.parse(localStorage.getItem("yt_cache") || "null");
-  if (c && c.videos && c.videos.length) {
-    videos = c.videos;
-    window.addEventListener("DOMContentLoaded", () => {
-      dibujar();
-      estado("Última actualización: " + new Date(c.t).toLocaleString("es-AR") + ". Tocá Buscar videos para actualizar.");
+function esc(s){
+ return String(s ?? "").replace(/[&<>"']/g,c=>({
+  "&":"&amp;","<":"&lt;",">":"&gt;",
+  '"':"&quot;","'":"&#39;"
+ }[c]));
+}
+
+function estado(mensaje,error=false){
+ $("estado").textContent=mensaje;
+ $("estado").className="notice"+(error?" error":"");
+}
+
+function despega(v){
+ return v.horas<=MAX_HORAS && v.velocidad>=UMBRAL;
+}
+
+function hace(h){
+ if(h<1)return "hace menos de 1 hora";
+ if(h<24)return "hace "+Math.round(h)+" horas";
+ return "hace "+Math.round(h/24)+" días";
+}
+
+async function api(ruta,params){
+ const url="https://www.googleapis.com/youtube/v3/"+ruta+"?"+
+  new URLSearchParams(params);
+ const respuesta=await fetch(url);
+ let datos;
+ try{datos=await respuesta.json();}
+ catch(e){throw new Error("YouTube devolvió una respuesta no válida.");}
+ if(!respuesta.ok){
+  throw new Error(datos?.error?.message||"Error HTTP "+respuesta.status);
+ }
+ return datos;
+}
+
+function dibujar(){
+ const lista=$("lista");
+ if(!videos.length){
+  lista.innerHTML="";
+  $("total").textContent="0";
+  $("alertas").textContent="0";
+  return;
+ }
+
+ const maxV=Math.max(1,...videos.map(v=>v.velocidad));
+
+ lista.innerHTML=videos.map((v,i)=>`
+  <a class="video" href="https://www.youtube.com/watch?v=${encodeURIComponent(v.id)}"
+     target="_blank" rel="noopener noreferrer">
+   <div class="thumb">
+    <img src="https://i.ytimg.com/vi/${encodeURIComponent(v.id)}/mqdefault.jpg"
+     alt="" loading="lazy">
+    <span class="rank">${i+1}</span>
+    ${despega(v)?'<span class="pill">🔥 DESPEGANDO</span>':""}
+   </div>
+   <div class="body">
+    <div class="video-title">${esc(v.titulo)}</div>
+    <div class="video-info">${esc(v.canal)} · ${hace(v.horas)}</div>
+    <div class="meta">
+     <span>👁 ${fmt(v.vistas)} vistas</span>
+     <span>👍 ${v.likes.toFixed(2)}% de likes/vistas</span>
+    </div>
+    <div class="tag" style="margin-top:10px">
+     ⚡ ${fmt(v.velocidad)} vistas/hora (estimadas)
+    </div>
+    <div class="bar">
+     <i style="width:${Math.max(3,v.velocidad/maxV*100)}%"></i>
+    </div>
+   </div>
+  </a>
+ `).join("");
+
+ $("total").textContent=videos.length;
+ $("alertas").textContent=videos.filter(despega).length;
+}
+
+async function buscar(){
+ const key=$("clave").value.trim();
+ const tema=$("tema").value.trim();
+ const formato=$("formato").value;
+
+ if(!key){
+  estado("Falta la clave de API. Ingresala antes de buscar.",true);
+  $("clave").focus();
+  return;
+ }
+
+ $("btn").disabled=true;
+ $("btn").textContent="Buscando videos...";
+ estado("Conectando con YouTube Data API...");
+ 
+ try{
+  try{
+   localStorage.setItem("yt_tema",tema);
+   localStorage.setItem("yt_formato",formato);
+   localStorage.setItem("yt_clave",key);
+  }catch(e){}
+
+  let items=[];
+
+  if(tema){
+   const params={
+    part:"snippet",
+    type:"video",
+    q:tema,
+    order:"viewCount",
+    publishedAfter:new Date(Date.now()-7*86400000).toISOString(),
+    maxResults:"25",
+    regionCode:"AR",
+    relevanceLanguage:"es",
+    key:key
+   };
+
+   if(formato==="shorts"){
+    params.videoDuration="short";
+   }else if(formato==="largos"){
+    params.videoDuration="long";
+   }
+
+   const s=await api("search",params);
+   const ids=(s.items||[])
+    .map(x=>x.id?.videoId)
+    .filter(Boolean);
+
+   if(ids.length){
+    const d=await api("videos",{
+     part:"snippet,statistics,contentDetails",
+     id:ids.join(","),
+     key:key
     });
+    items=d.items||[];
+   }
+  }else{
+   const d=await api("videos",{
+    part:"snippet,statistics,contentDetails",
+    chart:"mostPopular",
+    regionCode:"AR",
+    maxResults:"25",
+    key:key
+   });
+   items=d.items||[];
   }
-} catch (e) {}
 
-function estado(texto, esError) {
-  const el = $("estado");
-  el.textContent = texto;
-  el.className = "notice" + (esError ? " error" : "");
-}
+  const ahora=Date.now();
 
-async function api(ruta, params) {
-  const url = "https://www.googleapis.com/youtube/v3/" + ruta + "?" + new URLSearchParams(params);
-  const r = await fetch(url);
-  const d = await r.json();
-  if (!r.ok) throw new Error((d.error && d.error.message) || ("Error " + r.status));
-  return d;
-}
+  videos=items.map(i=>{
+   const publicado=new Date(i.snippet.publishedAt).getTime();
+   const horas=Math.max(1,(ahora-publicado)/3600000);
+   const vistas=Number(i.statistics.viewCount)||0;
+   const likes=Number(i.statistics.likeCount)||0;
 
-function hace(horas) {
-  if (horas < 1) return "menos de 1 hora";
-  if (horas < 48) return "hace " + Math.round(horas) + " h";
-  return "hace " + Math.round(horas / 24) + " días";
-}
+   return {
+    id:i.id,
+    titulo:i.snippet.title,
+    canal:i.snippet.channelTitle,
+    vistas:vistas,
+    horas:horas,
+    velocidad:Math.round(vistas/horas),
+    likes:vistas?likes/vistas*100:0,
+    duracion:i.contentDetails?.duration||""
+   };
+  });
 
-function contar(el, hasta) {
-  const desde = Number(el.textContent) || 0;
-  if (desde === hasta || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-    el.textContent = hasta;
-    return;
+  if(formato==="shorts" && tema){
+   videos=videos.filter(v=>esCorto(v.duracion));
   }
-  const t0 = performance.now();
-  (function paso(t) {
-    const p = Math.min((t - t0) / 600, 1);
-    el.textContent = Math.round(desde + (hasta - desde) * p);
-    if (p < 1) requestAnimationFrame(paso);
-  })(t0);
-}
-
-function dibujar() {
-  const maxV = Math.max(1, ...videos.map(v => v.velocidad));
-  $("lista").innerHTML = videos.map((v, i) => `
-    <a class="video${despega(v) ? " hot" : ""}" style="--i:${Math.min(i, 12)}"
-       href="https://www.youtube.com/watch?v=${esc(v.id)}" target="_blank" rel="noopener">
-      <div class="thumb">
-        <img src="https://i.ytimg.com/vi/${esc(v.id)}/mqdefault.jpg" alt="" loading="lazy">
-        <span class="rank">${i + 1}</span>
-        ${despega(v) ? '<span class="pill">🔥 DESPEGANDO</span>' : ""}
-      </div>
-      <div class="body">
-        <div class="video-title">${esc(v.titulo)}</div>
-        <div class="video-info">${esc(v.canal)} · ${hace(v.horas)}</div>
-        <div class="meta"><span>👁 ${fmt(v.vistas)}</span><span>👍 ${v.likes.toFixed(1)}%</span></div>
-        <div class="vel"><span class="tag">⚡ ${fmt(v.velocidad)} vistas/hora</span></div>
-        <div class="bar"><i style="width:${Math.max(4, (v.velocidad / maxV) * 100)}%"></i></div>
-      </div>
-    </a>`).join("");
-
-  contar($("total"), videos.length);
-  contar($("alertas"), videos.filter(despega).length);
-}
-
-async function buscar() {
-  const key = $("clave").value.trim();
-  const tema = $("tema").value.trim();
-  if (!key) { estado("Falta la clave de API.", true); return; }
-
-  try {
-    localStorage.setItem("yt_clave", key);
-    localStorage.setItem("yt_tema", tema);
-  } catch (e) {}
-
-  $("btn").disabled = true;
-  $("btn").textContent = "Buscando…";
-  $("lista").innerHTML = '<div class="sk"></div>'.repeat(3);
-  estado("Buscando…");
-
-  try {
-    let items;
-    if (tema) {
-      const desde = new Date(Date.now() - 3 * 24 * 3600 * 1000).toISOString();
-      const s = await api("search", {
-        part: "id", type: "video", q: tema, order: "viewCount",
-        publishedAfter: desde, maxResults: 20,
-        relevanceLanguage: "es", regionCode: "AR", key
-      });
-      const ids = s.items.map(i => i.id.videoId).join(",");
-      items = ids
-        ? (await api("videos", { part: "snippet,statistics", id: ids, key })).items
-        : [];
-    } else {
-      items = (await api("videos", {
-        part: "snippet,statistics", chart: "mostPopular",
-        regionCode: "AR", maxResults: 20, key
-      })).items;
-    }
-
-    const ahora = Date.now();
-    videos = items.map(i => {
-      const horas = Math.max((ahora - new Date(i.snippet.publishedAt)) / 3600000, 1);
-      const vistas = Number(i.statistics.viewCount) || 0;
-      const likes = Number(i.statistics.likeCount) || 0;
-      return {
-        id: i.id,
-        titulo: i.snippet.title,
-        canal: i.snippet.channelTitle,
-        vistas,
-        horas,
-        velocidad: Math.round(vistas / horas),
-        likes: vistas ? (likes / vistas) * 100 : 0
-      };
-    }).sort((a, b) => b.velocidad - a.velocidad);
-
-    dibujar();
-    try { localStorage.setItem("yt_cache", JSON.stringify({ t: Date.now(), videos })); } catch (e) {}
-    estado(videos.length
-      ? "Ordenados por velocidad de crecimiento."
-      : "No encontré videos para ese tema.");
-  } catch (e) {
-    dibujar();
-    estado("No se pudo consultar YouTube: " + e.message, true);
-  } finally {
-    $("btn").disabled = false;
-    $("btn").textContent = "Buscar videos";
+  if(formato==="largos" && tema){
+   videos=videos.filter(v=>!esCorto(v.duracion));
   }
+
+  videos.sort((a,b)=>b.velocidad-a.velocidad);
+  dibujar();
+
+  try{
+   localStorage.setItem("yt_cache",JSON.stringify({
+    t:Date.now(),videos:videos,tema:tema,formato:formato
+   }));
+  }catch(e){}
+
+  estado(videos.length
+   ?"Consulta terminada. Ordenados por vistas estimadas por hora."
+   :"No se encontraron resultados con esos filtros.");
+
+ }catch(e){
+  estado("Error al consultar YouTube: "+e.message+
+   ". Revisá la clave, sus permisos y la cuota de API.",true);
+ }finally{
+  $("btn").disabled=false;
+  $("btn").textContent="Actualizar Radar";
+ }
 }
 
-$("btn").addEventListener("click", buscar);
+function esCorto(duracion){
+ const m=String(duracion).match(
+  /^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/
+ );
+ if(!m)return false;
+ const segundos=(Number(m[1]||0)*3600)+
+  (Number(m[2]||0)*60)+Number(m[3]||0);
+ return segundos>0 && segundos<=60;
+}
 
-if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
-  navigator.serviceWorker.register("sw.js").catch(() => {});
+$("btn").addEventListener("click",buscar);
+
+$("borrar").addEventListener("click",()=>{
+ videos=[];
+ dibujar();
+ estado("Resultados borrados. Podés hacer una nueva búsqueda.");
+ try{localStorage.removeItem("yt_cache");}catch(e){}
+});
+
+try{
+ $("clave").value=localStorage.getItem("yt_clave")||"";
+ $("tema").value=localStorage.getItem("yt_tema")||"";
+ $("formato").value=localStorage.getItem("yt_formato")||"todos";
+
+ const cache=JSON.parse(localStorage.getItem("yt_cache")||"null");
+ if(cache && Array.isArray(cache.videos)){
+  videos=cache.videos;
+  dibujar();
+  estado("Resultados guardados de la última consulta. Tocá Actualizar Radar para buscar de nuevo.");
+ }
+}catch(e){
+ estado("La página funciona, pero no se pudo recuperar el historial guardado.",true);
 }
 </script>
 </body>
