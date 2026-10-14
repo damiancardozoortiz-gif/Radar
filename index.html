@@ -1110,5 +1110,32 @@ document.querySelector('nav [data-view="studio"]').addEventListener("click",()=>
 fillRef();an();pub();
 })();
 </script>
+  <script>
+// Corrección y activación del Studio de Edición de Video
+document.addEventListener("DOMContentLoaded", () => {
+    const fileInput = document.querySelector('input[type="file"]');
+    const videoElement = document.querySelector('video');
+    
+    if (!fileInput || !videoElement) return;
+
+    fileInput.addEventListener('change', function(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        const videoURL = URL.createObjectURL(file);
+        videoElement.src = videoURL;
+        videoElement.load();
+        videoElement.play().catch(() => {}); // Intenta reproducir o queda listo para los controles
+    });
+
+    // Conectar control de velocidad si existe
+    const speedSelect = document.querySelector('select');
+    if (speedSelect) {
+        speedSelect.addEventListener('change', function() {
+            videoElement.playbackRate = parseFloat(this.value) || 1.0;
+        });
+    }
+});
+  </script>
 </body>
 </html>
