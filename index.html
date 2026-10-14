@@ -1137,5 +1137,42 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 });
   </script>
+  <script>
+// Solución definitiva para el reproductor del Studio
+document.addEventListener("DOMContentLoaded", () => {
+    const fileInput = document.querySelector('input[type="file"]');
+    const videoElement = document.querySelector('video');
+    
+    if (!fileInput || !videoElement) {
+        console.warn("No se encontró el input o el video en el DOM.");
+        return;
+    }
+
+    // Asegurar que el video muestre controles y dimensiones correctas
+    videoElement.setAttribute('controls', 'true');
+    videoElement.style.width = '100%';
+    videoElement.style.maxHeight = '280px';
+    videoElement.style.backgroundColor = '#000';
+
+    fileInput.addEventListener('change', function(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        console.log("Cargando video:", file.name);
+        const videoURL = URL.createObjectURL(file);
+        
+        videoElement.src = videoURL;
+        videoElement.load();
+
+        // Forzar reproducción inicial para destrabar el primer frame
+        videoElement.play().then(() => {
+            // Si arranca bien, lo pausamos en el inicio para que el usuario controle
+            videoElement.pause();
+        }).catch(err => {
+            console.log("Reproducción automática bloqueada o pendiente de interacción:", err);
+        });
+    });
+});
+  </script>
 </body>
 </html>
