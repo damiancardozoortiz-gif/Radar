@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>J.A.R.V.I.S.</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<canvas id="graph" aria-label="Mapa de notas"></canvas>
+
+<header id="topbar">
+  <span class="brand">J.A.R.V.I.S.</span>
+  <span id="mode" class="chip">…</span>
+  <span id="counts" class="dim"></span>
+  <span class="spacer"></span>
+  <span id="st-brain" class="chip st">cerebro …</span>
+  <span id="st-mic" class="chip st">micrófono …</span>
+  <span id="st-voice" class="chip st">voz …</span>
+</header>
+
+<aside id="left" class="panel">
+  <section id="note" class="card hidden">
+    <div class="card-head">
+      <span id="note-type" class="tag"></span>
+      <button id="note-close" class="icon-btn" title="Cerrar">×</button>
+    </div>
+    <h2 id="note-title"></h2>
+    <div id="note-body" class="note-body"></div>
+    <div id="note-backlinks" class="backlinks"></div>
+  </section>
+  <section class="card">
+    <h3>Más conectadas</h3>
+    <ol id="top-list" class="top-list"></ol>
+  </section>
+</aside>
+
+<aside id="right" class="panel">
+  <section class="card reactor-card">
+    <canvas id="reactor" width="220" height="220" aria-label="Estado de JARVIS"></canvas>
+    <div id="reactor-state" class="reactor-state">en espera</div>
+  </section>
+  <section class="card">
+    <h3>Tipos</h3>
+    <div id="filters" class="filters"></div>
+  </section>
+  <section id="answer" class="card hidden">
+    <div class="card-head">
+      <span id="answer-meta" class="tag"></span>
+      <button id="answer-close" class="icon-btn" title="Cerrar">×</button>
+    </div>
+    <p id="answer-say" class="say"></p>
+    <div id="answer-card" class="answer-card"></div>
+  </section>
+</aside>
+
+<footer id="bar">
+  <button id="btn-mic" class="round" title="Micrófono (Espacio)" aria-label="Micrófono">
+    <svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12z"/></svg>
+  </button>
+  <div id="listen" class="listen hidden"><div id="bars" class="bars"></div><span id="listen-time">0,0 s</span></div>
+  <form id="ask" autocomplete="off">
+    <input id="q" type="text" placeholder="Pregúntame algo…" aria-label="Pregunta">
+  </form>
+  <button id="btn-mute" class="pill" title="Silenciar la voz">silencio</button>
+  <button id="btn-brief" class="pill">parte del día</button>
+  <button id="btn-plan" class="pill">plan</button>
+  <button id="btn-memory" class="pill">memoria</button>
+</footer>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="/graph.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
