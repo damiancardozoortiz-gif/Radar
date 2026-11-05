@@ -125,3 +125,4 @@ a.wl.missing { color: var(--dim); border-bottom-style: dashed; cursor: default; 
   .pill { padding: 0 8px; }
   #topbar .chip.st { display: none; }
 }
+.answer-card h3 { margin: 10px 0 6px; }

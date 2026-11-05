@@ -13,7 +13,9 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import cerebro  # noqa: E402
 import data  # noqa: E402
+import tools  # noqa: E402
 from vault import VAULT  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -73,6 +75,11 @@ class Handler(BaseHTTPRequestHandler):
                 nid = VAULT.resolve(q["name"][0]) or ""
             n = VAULT.note(nid)
             return self.send_json(n) if n else self.send_json({"error": "nota no encontrada"}, 404)
+        if p == "/api/route":
+            tool, why = tools.route((q.get("q") or [""])[0])
+            return self.send_json({"tool": tool, "why": why})
+        if p == "/api/memory":
+            return self.send_json({"card": tools.memory_card()})
         if p == "/api/top":
             return self.send_json([{"id": n["id"], "title": n["title"], "type": n["type"],
                                     "degree": n["degree"]} for n in VAULT.top(15)])
@@ -91,6 +98,26 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---------- POST ----------
     def do_POST(self):
+        p = urlparse(self.path).path
+        try:
+            if p == "/api/ask":
+                body = json.loads(self.read_body(64 * 1024) or b"{}")
+                text = str(body.get("text", "")).strip()[:2000]
+                forced = body.get("tool")
+                if forced not in (None, "parte_del_dia", "planear_el_dia", "leer_correo"):
+                    forced = None
+                if not text:
+                    text = {"parte_del_dia": "Dame el parte del día", "planear_el_dia": "Planéame el día",
+                            "leer_correo": "¿Quién me ha escrito?"}.get(forced, "")
+                if not text:
+                    return self.send_json({"error": "texto vacío"}, 400)
+                return self.send_json(cerebro.answer(str(body.get("conv", "anon"))[:64], text, forced))
+            if p == "/api/reset":
+                body = json.loads(self.read_body(4096) or b"{}")
+                cerebro.reset(str(body.get("conv", ""))[:64])
+                return self.send_json({"ok": True})
+        except Exception as e:  # que se vea
+            return self.send_json({"error": f"{e.__class__.__name__}: {e}"}, 500)
         return self.send_json({"error": "ruta desconocida"}, 404)
 
 
@@ -98,7 +125,8 @@ def status():
     s = VAULT.summary()
     return {"mode": data.mode(), "today": data.today().isoformat(), "notes": s["notes"],
             "edges": s["edges"], "by_type": s["by_type"], "skipped": s["skipped"],
-            "mail": data.inbox() is not None, "calendar": data.calendar() is not None}
+            "mail": data.inbox() is not None, "calendar": data.calendar() is not None,
+            "brain": cerebro.STATUS}
 
 
 def main():
@@ -108,6 +136,7 @@ def main():
           f"http://localhost:{PORT}", flush=True)
     for path, why in s["skipped"]:
         print(f"  saltado: {path} ({why})", flush=True)
+    cerebro.warmup()
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     srv.daemon_threads = True
     try:

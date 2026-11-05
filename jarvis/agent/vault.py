@@ -36,8 +36,17 @@ def norm(s):
     return "".join(c for c in s if unicodedata.category(c) != "Mn")
 
 
+def stem(t):
+    """Singular sencillo: siniestros -> siniestro, renovaciones -> renovacion."""
+    if len(t) > 5 and t.endswith("ones"):
+        return t[:-2]
+    if len(t) > 4 and t.endswith("s") and not t.endswith("ss"):
+        return t[:-1]
+    return t
+
+
 def tokens(s):
-    return [t for t in re.findall(r"[a-z0-9]+", norm(s)) if len(t) > 1 and t not in STOPWORDS]
+    return [stem(t) for t in re.findall(r"[a-z0-9]+", norm(s)) if len(t) > 1 and t not in STOPWORDS]
 
 
 # ---------------- PDF con la librería estándar ----------------

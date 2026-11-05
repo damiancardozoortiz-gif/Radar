@@ -11,7 +11,7 @@ const EXAMPLES = [
   "Busca en internet cuánto sube el IPC y qué me supone",
 ];
 
-const App = { state: "idle", status: null };
+const App = { state: "idle", status: null, conv: (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2)), busy: false };
 
 // ---------------- avisos ----------------
 let toastTimer = null;
@@ -133,6 +133,94 @@ function drawReactor() {
   requestAnimationFrame(drawReactor);
 }
 
+// ---------------- conversación ----------------
+const TOOL_LABEL = { conversacion: "conversación", buscar_en_mi_cerebro: "mis archivos", investigar_en_la_web: "internet",
+  leer_correo: "correo", parte_del_dia: "parte del día", recordar: "memoria", planear_el_dia: "plan" };
+
+function renderCard(card) {
+  if (!card) return "";
+  let h = `<h3>${esc(card.title || "")}</h3>`;
+  for (const n of card.notes || []) h += `<div class="warnline">${esc(n)}</div>`;
+  if (card.rows && card.rows.length) {
+    h += "<table>" + card.rows.map(r => {
+      const main = r.id ? `<a class="wl" data-id="${esc(r.id)}">${esc(r.main)}</a>` : esc(r.main);
+      return `<tr><td>${main}${r.sub ? `<div class="dim">${esc(r.sub)}</div>` : ""}${r.src ? `<div class="src">${esc(r.src)}</div>` : ""}</td></tr>`;
+    }).join("") + "</table>";
+  }
+  return h;
+}
+
+function showAnswer(o, question) {
+  const secs = (o.ms / 1000).toFixed(1).replace(".", ",");
+  const who = o.brain === "claude" ? "claude" : "RESPALDO · sin cerebro";
+  $("#answer-meta").textContent = `${TOOL_LABEL[o.tool] || o.tool} · ${who} · ${secs} s`;
+  $("#answer-meta").style.color = o.brain === "claude" ? (o.ms > 6000 && o.tool !== "investigar_en_la_web" ? "var(--warn)" : "") : "var(--bad)";
+  $("#answer-say").textContent = o.say || "";
+  let html = "";
+  if (question) html += `<div class="src">Tú: ${esc(question)}</div>`;
+  if (o.saved) html += `<div class="warnline">Guardado en ${esc(o.saved.file)}</div>`;
+  if (o.detail) html += `<div class="note-body">${renderMarkdown(o.detail, [])}</div>`;
+  html += renderCard(o.card);
+  $("#answer-card").innerHTML = html;
+  $("#answer").classList.remove("hidden");
+  if (o.warning) toast(o.warning, o.brain !== "claude", 9000);
+}
+$("#answer-close").onclick = () => $("#answer").classList.add("hidden");
+
+async function ask(text, tool) {
+  if (App.busy) return;
+  App.busy = true; setState("thinking");
+  try {
+    if (text && !tool) {
+      const r = await (await fetch("/api/route?q=" + encodeURIComponent(text))).json();
+      if (r.tool === "investigar_en_la_web") toast("Buscando en internet: tarda entre 15 y 40 segundos.", false, 40000);
+    }
+    const res = await fetch("/api/ask", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: text || "", tool: tool || null, conv: App.conv }) });
+    const o = await res.json();
+    if (!res.ok) throw new Error(o.error || res.status);
+    if (o.tool === "investigar_en_la_web" && !o.warning) $("#toast").classList.add("hidden");
+    showAnswer(o, text);
+    if (o.saved) refreshStatus();
+    App.last = o;
+    if (window.onAnswer) await window.onAnswer(o); // voz (paso 4)
+  } catch (e) {
+    toast("Error del servidor: " + e.message, true);
+  } finally {
+    App.busy = false;
+    if (App.state === "thinking") setState("idle");
+  }
+}
+
+$("#ask").addEventListener("submit", e => {
+  e.preventDefault();
+  const t = $("#q").value.trim(); if (!t) return;
+  $("#q").value = ""; ask(t);
+});
+$("#btn-brief").onclick = () => ask(null, "parte_del_dia");
+$("#btn-plan").onclick = () => ask(null, "planear_el_dia");
+$("#btn-memory").onclick = async () => {
+  const o = await (await fetch("/api/memory")).json();
+  $("#answer-meta").textContent = "memoria · memory/"; $("#answer-meta").style.color = "";
+  $("#answer-say").textContent = ""; $("#answer-card").innerHTML = renderCard(o.card);
+  $("#answer").classList.remove("hidden");
+};
+
+async function refreshStatus() {
+  try {
+    const st = await (await fetch("/api/status")).json();
+    const b = st.brain || {};
+    const map = { listo: ["cerebro: listo", "ok"], calentando: ["cerebro: calentando…", "warn"], arrancando: ["cerebro: arrancando…", "warn"],
+                  respaldo: ["cerebro: RESPALDO", "bad"], "no disponible": ["cerebro: NO DISPONIBLE", "bad"] };
+    const [txt, cls] = map[b.brain] || ["cerebro: " + b.brain, ""];
+    chip("#st-brain", txt + (b.last_ms ? ` · ${(b.last_ms / 1000).toFixed(1).replace(".", ",")} s` : ""), cls);
+    $("#st-brain").title = b.detail || "";
+    if (b.brain === "no disponible" && !App.warnedBrain) { App.warnedBrain = true; toast("El cerebro no está disponible: " + (b.detail || "") + ". Funciono en modo respaldo.", true, 0); }
+    if (b.brain === "listo" && App.warnedBrain) { App.warnedBrain = false; $("#toast").classList.add("hidden"); }
+  } catch (e) { chip("#st-brain", "servidor: sin conexión", "bad"); }
+}
+setInterval(refreshStatus, 5000);
+
 // ---------------- ejemplos que rotan ----------------
 let exI = 0;
 setInterval(() => { if (document.activeElement !== $("#q")) { exI = (exI + 1) % EXAMPLES.length; $("#q").placeholder = EXAMPLES[exI]; } }, 4000);
@@ -155,7 +243,8 @@ async function boot() {
   } catch (e) {
     toast("No hay conexión con el servidor de JARVIS. ¿Está arrancado ./jarvis.sh?", true, 0);
   }
-  chip("#st-brain", "cerebro: paso 3", "");
+  fetch("/api/reset", { method: "POST", body: JSON.stringify({ conv: App.conv }) }).catch(() => {});
+  refreshStatus();
   chip("#st-mic", "micrófono: paso 4", "");
   chip("#st-voice", "voz: paso 4", "");
   requestAnimationFrame(drawReactor);

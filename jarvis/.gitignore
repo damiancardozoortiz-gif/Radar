@@ -4,3 +4,5 @@ data/real/*
 !data/real/.gitkeep
 __pycache__/
 *.pyc
+memory/*
+!memory/.gitkeep
