@@ -126,3 +126,16 @@ a.wl.missing { color: var(--dim); border-bottom-style: dashed; cursor: default; 
   #topbar .chip.st { display: none; }
 }
 .answer-card h3 { margin: 10px 0 6px; }
+
+/* ---- pausa y autorizaciones ---- */
+.pill.pause { color: var(--bad); border-color: rgba(214, 106, 92, 0.45); }
+.pill.pause.on { background: rgba(214, 106, 92, 0.15); }
+.pause-banner { position: fixed; top: 48px; left: 50%; transform: translateX(-50%); z-index: 5; display: flex; align-items: center;
+  gap: 12px; padding: 8px 10px 8px 16px; background: #1a100f; border: 1px solid rgba(214, 106, 92, 0.6); border-radius: var(--r);
+  color: var(--bad); font-size: 12.5px; max-width: calc(100vw - 32px); }
+.pause-banner .pill { color: var(--text); }
+body.paused #graph { filter: saturate(0.2) brightness(0.6); }
+.approval { margin-top: 10px; padding: 10px; border: 1px solid rgba(214, 163, 92, 0.45); border-radius: var(--r); }
+.approval .row { display: flex; gap: 8px; margin-top: 8px; }
+.approval .state { font: 11px var(--mono); color: var(--warn); }
+.approval.done .state { color: var(--text-2); }

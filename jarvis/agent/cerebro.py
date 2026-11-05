@@ -32,7 +32,17 @@ MAX_TURNS = 10
 MAX_SAY_WORDS = 25
 DRAFT_RE = re.compile(r"borrador", re.I)
 
-STATUS = {"brain": "arrancando", "detail": "", "warm_ms": None, "last_ms": None, "claude": None}
+STATUS = {"brain": "arrancando", "detail": "", "warm_ms": None, "last_ms": None, "claude": None, "calls": 0}
+
+# ---- PAUSA: interruptor de emergencia. Mientras está activa no se llama a Claude,
+# no se ejecutan herramientas, no se escribe memoria y la voz queda bloqueada.
+PAUSE = {"on": False, "since": None, "by": None}
+PAUSE_WORDS = {"pausa", "jarvis pausa", "pausa jarvis", "para", "jarvis para", "detente", "stop", "alto"}
+
+# ---- Autorizaciones humanas: cada borrador espera tu sí, que solo se da con un clic.
+APPROVALS = {}
+YES_WORDS = {"si", "sí", "vale", "adelante", "envialo", "envíalo", "mandalo", "mándalo", "apruebo", "aprobado", "ok",
+             "dale", "hazlo", "si envialo", "sí, envíalo", "si mandalo", "correcto"}
 _convs = {}
 _convs_lock = threading.Lock()
 
@@ -76,6 +86,9 @@ def call_claude(message, web=False, session=None, timeout=None):
         cmd += ["--allowedTools", "WebSearch,WebFetch"]
     if session:
         cmd += ["--resume", session]
+    if PAUSE["on"]:
+        raise BrainError("JARVIS está en pausa")
+    STATUS["calls"] += 1
     try:
         p = subprocess.run(cmd, cwd=str(ROOT), env=_env(), stdin=subprocess.DEVNULL, capture_output=True,
                            text=True, timeout=timeout or (TIMEOUT_WEB if web else TIMEOUT))
@@ -168,9 +181,54 @@ def compose(question, res, conv_state):
     return "\n".join(lines)
 
 
+def set_pause(on, by="botón"):
+    PAUSE.update(on=bool(on), since=time.strftime("%H:%M:%S") if on else None, by=by if on else None)
+    return dict(PAUSE)
+
+
+def is_pause_command(text):
+    return re.sub(r"[^a-zñ ]+", "", norm(text)).strip() in PAUSE_WORDS
+
+
+def _short(cid, question, say, tool, extra=None):
+    out = {"tool": tool, "why": tool, "card": None, "brain": "servidor", "warning": None, "say": say,
+           "detail": "", "saved": None, "ms": 0}
+    out.update(extra or {})
+    return out
+
+
+def pending_for(cid):
+    return [a for a in APPROVALS.values() if a["conv"] == cid and a["state"] == "pendiente"]
+
+
+def decide(aid, decision):
+    a = APPROVALS.get(aid)
+    if not a:
+        return None
+    if a["state"] != "pendiente":
+        return a
+    a["state"] = "aprobado" if decision == "aprobar" else "descartado"
+    a["decided"] = time.strftime("%H:%M:%S")
+    # Aprobar NUNCA envía: JARVIS no tiene ninguna conexión para enviar. Lo envías tú.
+    a["result"] = ("Aprobado por ti. No se ha enviado nada: cópialo y envíalo tú." if a["state"] == "aprobado"
+                   else "Descartado. No se ha enviado nada.")
+    return a
+
+
 def answer(cid, question, forced_tool=None):
     t0 = time.perf_counter()
+    if PAUSE["on"]:
+        return _short(cid, question, "Estoy en pausa. Quita la pausa en pantalla para seguir.", "pausa",
+                      {"paused": True, "brain": "pausa"})
+    if is_pause_command(question):
+        set_pause(True, by="voz")
+        return _short(cid, question, "En pausa. No hago nada hasta que la quites en pantalla.", "pausa",
+                      {"paused": True, "brain": "pausa"})
     c = conv(cid)
+    pend = pending_for(cid)
+    if pend and re.sub(r"[^a-zñ ,]+", "", norm(question)).strip(" ,") in {norm(w) for w in YES_WORDS}:
+        return _short(cid, question, "Para aprobar el borrador, pulsa Aprobar en pantalla. Yo no envío nada.",
+                      "autorizacion", {"approval": pend[-1]})
     with c["lock"]:
         if forced_tool:
             tool, why = forced_tool, "botón"
@@ -192,6 +250,11 @@ def answer(cid, question, forced_tool=None):
                 det = ""
             out.update(say=say, detail=det, saved=saved, api_ms=raw.get("duration_api_ms"),
                        formato=rep["formato"])
+            if det and DRAFT_RE.search(det + " " + rep["decir"]):
+                aid = f"a{len(APPROVALS) + 1}"
+                APPROVALS[aid] = {"id": aid, "conv": cid, "kind": "borrador", "text": det, "state": "pendiente",
+                                  "created": time.strftime("%H:%M:%S"), "question": question}
+                out["approval"] = APPROVALS[aid]
             if not rep["formato"]:
                 out["warning"] = "Claude no devolvió el formato pedido; muestro su texto tal cual."
         except BrainError as e:

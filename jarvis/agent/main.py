@@ -98,9 +98,32 @@ class Handler(BaseHTTPRequestHandler):
         return self.send_bytes(target.read_bytes(), ctype)
 
     # ---------- POST ----------
+    def same_origin(self):
+        """Solo esta página puede usar la API: frena a otras webs que intenten llamar a localhost."""
+        ok_hosts = {f"localhost:{PORT}", f"127.0.0.1:{PORT}"}
+        if self.headers.get("Host", "") not in ok_hosts:
+            return False
+        origin = self.headers.get("Origin")
+        return origin is None or origin.split("://", 1)[-1] in ok_hosts
+
     def do_POST(self):
         p = urlparse(self.path).path
+        if not self.same_origin():
+            return self.send_json({"error": "origen no permitido"}, 403)
         try:
+            if p == "/api/pause":
+                body = json.loads(self.read_body(4096) or b"{}")
+                st = cerebro.set_pause(body.get("on"), by="botón")
+                return self.send_json(st)
+            if p == "/api/approve":
+                body = json.loads(self.read_body(4096) or b"{}")
+                if body.get("decision") not in ("aprobar", "descartar"):
+                    return self.send_json({"error": "decisión no válida"}, 400)
+                a = cerebro.decide(str(body.get("id", "")), body["decision"])
+                return self.send_json(a) if a else self.send_json({"error": "no existe"}, 404)
+            if p in ("/api/speak", "/api/listen") and cerebro.PAUSE["on"]:
+                self.read_body(10 * 1024 * 1024)
+                return self.send_json({"error": "JARVIS está en pausa"}, 423)
             if p == "/api/ask":
                 body = json.loads(self.read_body(64 * 1024) or b"{}")
                 text = str(body.get("text", "")).strip()[:2000]
@@ -141,7 +164,8 @@ def status():
     return {"mode": data.mode(), "today": data.today().isoformat(), "notes": s["notes"],
             "edges": s["edges"], "by_type": s["by_type"], "skipped": s["skipped"],
             "mail": data.inbox() is not None, "calendar": data.calendar() is not None,
-            "brain": cerebro.STATUS,
+            "brain": cerebro.STATUS, "pause": cerebro.PAUSE,
+            "approvals": [a for a in cerebro.APPROVALS.values() if a["state"] == "pendiente"],
             "voice": {"configured": voice.configured(), **voice.STATUS}}
 
 

@@ -99,7 +99,7 @@ async function buildTop() {
 }
 
 // ---------------- reactor ----------------
-const REACTOR_LABEL = { idle: "en espera", listening: "escuchando", thinking: "pensando", speaking: "hablando" };
+const REACTOR_LABEL = { idle: "en espera", listening: "escuchando", thinking: "pensando", speaking: "hablando", paused: "en pausa" };
 function setState(s) {
   App.state = s;
   $("#reactor-state").textContent = REACTOR_LABEL[s] || s;
@@ -167,15 +167,61 @@ function showAnswer(o, question) {
   if (question) html += `<div class="src">Tú: ${esc(question)}</div>`;
   if (o.saved) html += `<div class="warnline">Guardado en ${esc(o.saved.file)}</div>`;
   if (o.detail) html += `<div class="note-body">${renderMarkdown(o.detail, [])}</div>`;
+  if (o.approval) html += approvalHtml(o.approval);
   html += renderCard(o.card);
   $("#answer-card").innerHTML = html;
   $("#answer").classList.remove("hidden");
   if (o.warning) toast(o.warning, o.brain !== "claude", 9000);
 }
+// ---------------- autorizaciones humanas ----------------
+function approvalHtml(a) {
+  const done = a.state !== "pendiente";
+  return `<div class="approval ${done ? "done" : ""}" data-aid="${esc(a.id)}">
+    <div class="state">${done ? esc(a.state.toUpperCase() + " · " + (a.result || "")) : "BORRADOR · espera tu sí. JARVIS nunca envía nada."}</div>
+    ${done ? "" : `<div class="row"><button class="pill" data-decision="aprobar">Aprobar</button><button class="pill" data-decision="descartar">Descartar</button></div>`}
+  </div>`;
+}
+document.addEventListener("click", async e => {
+  const b = e.target.closest(".approval button[data-decision]"); if (!b) return;
+  const box = b.closest(".approval");
+  const r = await fetch("/api/approve", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id: box.dataset.aid, decision: b.dataset.decision }) });
+  const a = await r.json();
+  if (!r.ok) { toast("No se pudo registrar: " + (a.error || r.status), true); return; }
+  box.outerHTML = approvalHtml(a);
+  if (a.state === "aprobado") {
+    try { await navigator.clipboard.writeText(a.text); toast("Aprobado y copiado. No se ha enviado nada: envíalo tú."); }
+    catch (_) { toast("Aprobado. No se ha enviado nada: copia el borrador y envíalo tú."); }
+  }
+});
+
+// ---------------- PAUSA ----------------
+function showPause(on) {
+  App.paused = !!on;
+  document.body.classList.toggle("paused", App.paused);
+  $("#pause-banner").classList.toggle("hidden", !App.paused);
+  $("#btn-pause").classList.toggle("on", App.paused);
+  $("#btn-pause").textContent = App.paused ? "en pausa" : "pausa";
+  if (App.paused) {
+    if (typeof stopSpeaking === "function") { stopSpeaking(); stopConversation(); }
+    setState("paused");
+  } else if (App.state === "paused") setState("idle");
+}
+async function setPause(on) {
+  if (on) showPause(true); // corta en el navegador ya, sin esperar al servidor
+  try {
+    const r = await fetch("/api/pause", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on }) });
+    const st = await r.json(); showPause(st.on);
+  } catch (e) { toast("No pude hablar con el servidor para cambiar la pausa.", true); }
+}
+$("#btn-pause").onclick = () => setPause(!App.paused);
+$("#btn-unpause").onclick = () => setPause(false);
+
 $("#answer-close").onclick = () => $("#answer").classList.add("hidden");
 
 async function ask(text, tool) {
   if (App.busy) return;
+  if (App.paused && !(text && /^\s*pausa\s*$/i.test(text))) { toast("JARVIS está en pausa. Quítala para seguir."); return; }
   App.busy = true; setState("thinking");
   try {
     if (text && !tool) {
@@ -189,9 +235,10 @@ async function ask(text, tool) {
     if (o.tool === "investigar_en_la_web" && !o.warning) $("#toast").classList.add("hidden");
     showAnswer(o, text);
     if (o.saved) refreshStatus();
+    if (o.paused) showPause(true);
     App.last = o;
     App.busy = false;
-    if (window.onAnswer) await window.onAnswer(o); // voz
+    if (window.onAnswer && !o.paused) await window.onAnswer(o); // voz
   } catch (e) {
     toast("Error del servidor: " + e.message, true);
   } finally {
@@ -217,6 +264,7 @@ $("#btn-memory").onclick = async () => {
 async function refreshStatus() {
   try {
     const st = await (await fetch("/api/status")).json();
+    if (st.pause && !!st.pause.on !== !!App.paused) showPause(st.pause.on);
     const b = st.brain || {};
     const map = { listo: ["cerebro: listo", "ok"], calentando: ["cerebro: calentando…", "warn"], arrancando: ["cerebro: arrancando…", "warn"],
                   respaldo: ["cerebro: RESPALDO", "bad"], "no disponible": ["cerebro: NO DISPONIBLE", "bad"] };
@@ -274,7 +322,7 @@ function level() {
 }
 
 function startListening() {
-  if (!Mic.stream || App.state === "speaking" || App.busy) return;
+  if (!Mic.stream || App.state === "speaking" || App.busy || App.paused) return;
   if (Mic.ctx.state === "suspended") Mic.ctx.resume();
   Mic.chunks = []; Mic.heard = false; Mic.voiceMs = 0; Mic.t0 = performance.now(); Mic.lastVoice = 0;
   Mic.rec = new MediaRecorder(Mic.stream, Mic.mime ? { mimeType: Mic.mime } : undefined);
@@ -316,7 +364,7 @@ async function onRecorded() {
   const speech = Mic.voiceMs, heard = Mic.heard;
   Mic.rec = null;
   $("#listen").classList.add("hidden");
-  if (!Mic.conversation) { finishTurn(); return; }
+  if (!Mic.conversation || App.paused) { finishTurn(); return; }
   if (!heard || speech < MIN_SPEECH_MS) { startListening(); return; } // ruido: no se manda
   setState("thinking");
   chip("#st-mic", "micrófono: transcribiendo…", "");
@@ -339,6 +387,7 @@ function finishTurn() {
 }
 
 async function startConversation() {
+  if (App.paused) { toast("JARVIS está en pausa. Quítala para hablar."); return; }
   if (!(await micInit())) return;
   Mic.conversation = true;
   startListening();
@@ -360,12 +409,12 @@ function markVoice(err) {
 }
 
 function stopSpeaking() {
-  if (Voice.audio) { Voice.audio.onended = null; Voice.audio.pause(); Voice.audio = null; }
+  if (Voice.audio) { const a = Voice.audio; Voice.audio = null; const done = a.onended; a.onended = a.onerror = null; a.pause(); if (done) done(); }
   if (App.state === "speaking") setState("idle");
 }
 
 async function speak(text) {
-  if (!text || Voice.muted) return false;
+  if (!text || Voice.muted || App.paused) return false;
   if (App.status && App.status.voice && !App.status.voice.configured) return false;
   let r;
   try { r = await fetch("/api/speak", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) }); }
@@ -373,18 +422,25 @@ async function speak(text) {
   if (!r.ok) { const o = await r.json().catch(() => ({})); markVoice(o.error); return false; }
   if (!Voice.ok) { Voice.ok = true; chip("#st-voice", "voz: lista", "ok"); }
   const url = URL.createObjectURL(await r.blob());
+  if (App.paused) { URL.revokeObjectURL(url); return false; }
   stopRecording(); Mic.deaf = true;                // sordo mientras habla
   if (Mic.stream) chip("#st-mic", "micrófono: sordo mientras hablo", "warn");
   return new Promise(resolve => {
     const a = Voice.audio = new Audio(url);
     a.onended = a.onerror = () => { URL.revokeObjectURL(url); Voice.audio = null; resolve(true); };
     setState("speaking");
-    a.play().catch(() => { Voice.audio = null; toast("El navegador no dejó reproducir el audio. Pulsa en la página y repite.", true); resolve(false); });
+    a.play().catch(err => {
+      const interrupted = err && err.name === "AbortError" || Voice.audio !== a; // lo cortaste tú (Esc, Espacio, pausa)
+      if (Voice.audio === a) Voice.audio = null;
+      if (!interrupted) toast("El navegador no dejó reproducir el audio. Pulsa en la página y repite.", true);
+      resolve(false);
+    });
   });
 }
 
 window.onAnswer = async o => {
   await speak(o.say);
+  if (App.paused) return;
   setState("idle");                                // siempre vuelve a "en espera"
   if (Mic.conversation) startListening();           // modo conversación: vuelve a escuchar solo
 };
@@ -402,7 +458,8 @@ $("#btn-mute").onclick = () => {
 };
 document.addEventListener("keydown", e => {
   if (e.target.tagName === "INPUT" && e.key !== "Escape") return;
-  if (e.key === "Escape") { stopSpeaking(); stopConversation(); setState("idle"); }
+  if (e.key === "p" || e.key === "P") { setPause(!App.paused); return; }
+  if (e.key === "Escape") { stopSpeaking(); stopConversation(); if (!App.paused) setState("idle"); }
   else if (e.code === "Space") {
     e.preventDefault();
     if (App.state === "speaking") { stopSpeaking(); if (Mic.conversation) startListening(); else startConversation(); }
@@ -420,6 +477,7 @@ async function boot() {
   try {
     const st = await (await fetch("/api/status")).json();
     App.status = st;
+    if (st.pause && st.pause.on) showPause(true);
     $("#mode").textContent = st.mode === "demo" ? "DEMO · hoy " + st.today : "DATOS REALES";
     $("#mode").className = "chip " + (st.mode === "demo" ? "demo" : "");
     $("#counts").textContent = `${st.notes} notas · ${st.edges} enlaces`;

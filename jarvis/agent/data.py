@@ -119,6 +119,9 @@ def _parse_ics(text):
             elif name in ("DTSTART", "DTEND"):
                 v = val.rstrip("Z")
                 iso = f"{v[0:4]}-{v[4:6]}-{v[6:8]}" + (f"T{v[9:11]}:{v[11:13]}" if "T" in v else "T00:00")
+                if val.endswith("Z"):  # hora UTC -> tu hora local
+                    from datetime import datetime, timezone
+                    iso = datetime.fromisoformat(iso).replace(tzinfo=timezone.utc).astimezone().strftime("%Y-%m-%dT%H:%M")
                 if name == "DTSTART":
                     cur["start"] = iso
                 else:

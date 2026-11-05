@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "defaultMode": "dontAsk",
+    "allow": [
+      "WebSearch",
+      "WebFetch"
+    ],
+    "deny": [
+      "Bash",
+      "Edit",
+      "Write",
+      "Read(./.env)"
+    ]
+  }
+}
