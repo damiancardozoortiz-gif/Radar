@@ -3,7 +3,7 @@
 Asistente de voz local que conoce tus archivos, tu correo y tu agenda. Piensa con **Claude Code (`claude -p`) usando tu suscripción**, habla y escucha con **ElevenLabs**, y enseña tus notas como un mapa.
 
 - Servidor: solo librería estándar de Python. Navegador: JavaScript sin frameworks. Nada que instalar ni compilar.
-- Solo lectura sobre tus carpetas. Lo único que se escribe es `memory/`.
+- Solo lectura sobre tus carpetas. JARVIS solo escribe en dos carpetas suyas: `memory/` (lo que le pides recordar) y `estado/` (la PAUSA y los borradores pendientes).
 - Nunca envía nada: hace borradores y espera tu sí, que se da con un clic.
 
 ---
@@ -33,6 +33,13 @@ No hace falta `ANTHROPIC_API_KEY`. Si la tienes en el entorno, JARVIS la quita a
 ```
 
 Genera los datos de demo si faltan y sirve en **http://localhost:8790**. Para cambiar el puerto: `JARVIS_PORT=9000 ./jarvis.sh`.
+
+Si el puerto ya está ocupado (por ejemplo, porque ya tienes otro JARVIS abierto), no arranca y lo dice así:
+```
+No puedo arrancar: el puerto 8790 ya está en uso.
+  ¿Tienes otro JARVIS abierto? Ciérralo, o arranca en otro puerto:
+  JARVIS_PORT=8791 ./jarvis.sh
+```
 
 Al arrancar hace una llamada de calentamiento a Claude (unos 4 s), para que la primera pregunta no sea la lenta.
 
@@ -107,27 +114,55 @@ Cada respuesta dice cuánto tardó y si respondió Claude o el modo respaldo.
 | Límite | Cómo se garantiza |
 |---|---|
 | No ejecuta nada | Las herramientas las ejecuta el servidor en Python. Claude recibe `--tools ""` (sin herramientas) salvo en la búsqueda en internet, donde solo tiene `WebSearch` y `WebFetch`. |
-| No escribe en tus carpetas | `data.py` solo abre archivos dentro de tus carpetas y en modo lectura. Lo único que se escribe es `memory/`, y lo escribe `memory.py`. |
+| No escribe en tus carpetas | `data.py` solo abre archivos dentro de tus carpetas y en modo lectura. Solo se escribe en `memory/` (lo escribe `memory.py`) y en `estado/` (lo escribe `estado.py`), las dos dentro de `jarvis/`. |
 | No lee `.env` ni escribe | `.claude/settings.json`: `defaultMode: dontAsk`, `allow: WebSearch, WebFetch`, `deny: Bash, Edit, Write, Read(./.env)`. |
 | No guarda en silencio | Si Claude devuelve `recordar`, el servidor guarda y obliga a que la frase hablada diga exactamente qué guardó. |
 | No envía nada | No existe ninguna conexión para enviar. Los borradores quedan **pendientes de tu sí**. |
 | Tu sí es un clic | Decir "sí" no aprueba: JARVIS contesta "pulsa Aprobar en pantalla". Aprobar no envía nada: copia el texto para que lo envíes tú. |
 | No inventa | El servidor le pasa los totales calculados con el archivo de origen, y el prompt prohíbe contar o inventar. |
 | Instrucciones en tus archivos o correos | Van marcadas como `<datos_no_confiables>` y la tarjeta avisa: "contiene instrucciones; no se obedecen". |
-| Otras webs no pueden usar JARVIS | El servidor solo escucha en 127.0.0.1 y rechaza peticiones con otro `Origin` o `Host`. |
-| PAUSA | Mientras está activa no se llama a Claude, no se ejecutan herramientas, no se escribe memoria y `/api/speak` y `/api/listen` devuelven 423. |
+| Otras webs no pueden usar ni leer JARVIS | El servidor solo escucha en 127.0.0.1. **Todas** las rutas, también las de lectura (GET) y los archivos de la página, comprueban la cabecera `Host` contra una lista explícita (`localhost:PUERTO` y `127.0.0.1:PUERTO`) antes de entregar nada; si llega `Origin`, también tiene que ser uno de esos. Así se frena el ataque de "DNS rebinding", en el que una web maliciosa apunta su dominio a 127.0.0.1 para leer tus notas. Lo demás recibe 403. |
+| PAUSA | Ver abajo. |
+| Registros sin datos privados | El servidor no registra cada petición; de los errores solo apunta el método y la ruta, sin la consulta (`?name=…`) ni cabeceras. Las pruebas comprueban que la clave de ElevenLabs no aparece en los registros. |
+
+### PAUSA: qué hace exactamente
+
+- **Bloquea lo nuevo.** Mientras está activa: no se llama a Claude (ni siquiera para calentar al arrancar), no se ejecutan herramientas, no se escribe memoria, no se crean ni se deciden borradores, y `/api/speak` y `/api/listen` devuelven 423.
+- **Corta lo que está en marcha.** Al activarla se matan las llamadas a `claude` en curso.
+- **Descarta lo que llegue tarde.** Si una respuesta ya estaba llegando y no se pudo cortar, se descarta sin efectos: ni memoria, ni borrador, ni voz.
+- **Tiene prioridad sobre todo.** Ninguna escritura empieza con la pausa activa, y activarla solo espera a la escritura que esté en curso en ese instante, como mucho unos milisegundos. Cuando el botón de pausa responde, ya no se escribirá nada más.
+- **Sobrevive a un reinicio**, también si el proceso muere de golpe (`kill -9`). Se guarda en `estado/pausa.json` y al arrancar JARVIS sigue en pausa hasta que la quites con el botón.
+- **Falla cerrado.** Si `estado/pausa.json` o `estado/borradores.json` están dañados, JARVIS arranca **en pausa**, aparta el archivo como `*.ilegible-FECHA` (no lo borra) y lo avisa en pantalla.
+
+### Borradores pendientes de tu sí
+
+- Se guardan en `estado/borradores.json` (carpeta 700, archivo 600, fuera de git). La escritura es atómica: un corte a mitad no deja un archivo roto.
+- **Sobreviven a un reinicio** y vuelven a aparecer en pantalla con sus botones Aprobar y Descartar.
+- **Recuperarlos no ejecuta nada**: no se vuelve a llamar a Claude, no se habla y no se envía nada.
+- Cada borrador tiene un identificador único, así que no se duplican. Una decisión tomada no cambia.
+- Se guarda el historial de los últimos 200 borradores ya decididos.
 
 **Importante sobre `settings.json`.** Si nunca abriste Claude Code de forma interactiva en esta carpeta, Claude Code la considera "no de confianza" y **ignora las reglas `allow`**, aunque sigue aplicando las `deny`. Por eso JARVIS pasa además `--allowedTools WebSearch,WebFetch` en el comando de búsqueda web. Si quieres que el `allow` del archivo cuente, abre `claude` una vez dentro de `jarvis/` y acepta el aviso de confianza.
 
 ### Pruebas
 
+Todas de una vez, desde `jarvis/`:
 ```bash
-bash tests/prueba_bloqueo.sh        # claude -p intenta leer .env, escribir y usar Bash: todo bloqueado
-./jarvis.sh &                       # luego, con el servidor arrancado:
-python3 tests/test_limites.py       # PAUSA, autorizaciones, origen, memoria, solo lectura (10 pruebas)
+bash tests/ejecutar_todo.sh
 ```
 
-`prueba_bloqueo.sh` no se fía del texto de la respuesta, que a veces dice que lo hizo: mira las denegaciones del JSON y si el archivo existe en disco.
+O una a una:
+
+| Comando | Qué prueba | Necesita |
+|---|---|---|
+| `python3 tests/test_criticos.py` | Host/DNS rebinding en todas las rutas; PAUSA inmediata (llamada en curso, concurrencia, respuesta tardía, voz tardía, carrera de escrituras); PAUSA y borradores tras reinicio y `kill -9`; estado dañado; puerto ocupado; flags de `claude` (20 pruebas) | Solo Python. Sin internet ni suscripción: usa `tests/fake_claude.py` y `tests/mock_elevenlabs.py` |
+| `node tests/navegador.js` | Mapa (y 2.500 notas a ≥30 fps), voz con micrófono falso, Esc y Espacio, PAUSA (también tras reiniciar), borradores tras reiniciar y aprobación con clic (38 comprobaciones) | Node 18+ y Playwright: `npm install --no-save playwright && npx playwright install chromium` |
+| `python3 tests/test_limites.py` | Lo mismo con `claude -p` **real**: PAUSA, autorizaciones, origen, memoria, solo lectura (10 pruebas) | `claude` con sesión iniciada y un JARVIS arrancado (`ejecutar_todo.sh` lo arranca solo, con estado y memoria temporales) |
+| `bash tests/prueba_bloqueo.sh` | `claude -p` real intenta leer `.env`, escribir y usar Bash: todo bloqueado | `claude` con sesión iniciada |
+
+Todas las pruebas usan `estado/` y `memory/` temporales, así que no tocan los tuyos, y no envían ni publican nada. `prueba_bloqueo.sh` no se fía del texto de la respuesta, que a veces dice que lo hizo: mira las denegaciones del JSON y si el archivo existe en disco.
+
+Variables solo para las pruebas: `JARVIS_STATE_DIR` y `JARVIS_MEMORY_DIR` (carpetas temporales) y `JARVIS_CLAUDE_BIN` (el `claude` simulado). En uso normal no hace falta ponerlas.
 
 ## 7. Cuánto cuesta al mes
 
@@ -150,7 +185,12 @@ Precios consultados el 5 de noviembre de 2026. Compruébalos en [elevenlabs.io/p
 ## 8. Lo que no está comprobado o hay que saber
 
 - **La voz real de ElevenLabs no se ha probado de punta a punta.** El entorno donde se construyó no podía salir a `api.elevenlabs.io`. Todo el circuito (grabar, transcribir, hablar, turnos, sordo mientras habla) se probó con un servidor ElevenLabs simulado que devuelve audio y texto fijos. La primera prueba real es la tuya.
-- **Tiempos.** Desde que llega el texto, las respuestas tardan 4–6 s y a veces llegan a 7–9 s, sobre todo los borradores largos. Unos 2,5 s de cada respuesta son el arranque del programa `claude`. Si pasa de 6 s, el tiempo sale en naranja. La búsqueda en internet tarda 15–40 s y avisa en pantalla.
+- **Tiempos (medidos con 8 llamadas reales).** Las respuestas cortas tardan 4,3–6,6 s; los borradores, 6,7–7,3 s. Hay dos causas:
+  1. **Un coste fijo de unos 2–4 s por llamada** que no es el modelo: `claude -p` arranca, prepara la sesión (unos 0,9 s hasta empezar) y, cuando la respuesta ya está lista, todavía tarda alrededor de 1 s en un resumen final (`post_turn_summary`) antes de devolverla.
+  2. **El tiempo del modelo crece con la longitud de la respuesta.** De 0,7 s para un saludo a 6,3 s para un borrador de 300–380 tokens.
+
+  Mejoras posibles, **no aplicadas**: leer la respuesta en streaming y contestar en cuanto termina el texto (ahorraría alrededor de 1 s), o mantener un proceso `claude` abierto entre preguntas (ahorraría el arranque). Si pasa de 6 s, el tiempo sale en naranja. La búsqueda en internet tarda 15–40 s y avisa en pantalla.
+- **Cuelgue intermitente en `prueba_bloqueo.sh`.** En 2 de unas 10 ejecuciones, la llamada con Bash no terminó y se cortó a los 90 s. En 8 intentos posteriores terminó siempre en 3–4 s. Bash ni siquiera se le ofrece al modelo (está en `deny`): escribe un "invoke" falso como texto y no ejecuta nada. No se ha encontrado la causa; la prueba avisa del corte y comprueba igualmente que no se creó ningún archivo.
 - **Modo respaldo.** Si Claude no responde en 25 s (60 en la búsqueda web), JARVIS busca en tus archivos o enseña la tarjeta de la herramienta, con un aviso rojo de que **no** ha hablado Claude.
 - El mapa de la demo sale como una bola bastante uniforme; con notas reales suele agruparse mejor.
 
@@ -161,7 +201,8 @@ jarvis/
 ├── jarvis.sh               arranque en un comando
 ├── agent/
 │   ├── main.py             servidor y API (solo 127.0.0.1)
-│   ├── cerebro.py          claude -p, sesión, calentamiento, respaldo, PAUSA, autorizaciones
+│   ├── cerebro.py          claude -p (cancelable), sesión, calentamiento, respaldo, PAUSA, autorizaciones
+│   ├── estado.py           PAUSA y borradores persistentes; candado de escritura
 │   ├── vault.py            tus carpetas convertidas en un mapa que se puede buscar
 │   ├── tools.py            las 6 herramientas y la elección de herramienta
 │   ├── data.py             EL ÚNICO ARCHIVO QUE TOCA TUS DATOS REALES (REAL_FOLDERS, JARVIS_DEMO)
@@ -171,7 +212,9 @@ jarvis/
 ├── ui/                     index.html, app.js, graph.js, styles.css
 ├── data/                   generate_demo.py, importar_correo.py, demo/ (generada), real/ (tus exportaciones)
 ├── memory/                 un .md con fecha por cada cosa que recuerda (fuera de git)
-├── tests/                  prueba_bloqueo.sh, test_limites.py
+├── estado/                 pausa.json y borradores.json (fuera de git, se crea al usarse)
+├── tests/                  ejecutar_todo.sh, test_criticos.py, navegador.js, test_limites.py,
+│                           prueba_bloqueo.sh, fake_claude.py, mock_elevenlabs.py
 ├── .claude/settings.json   los permisos
 ├── CLAUDE.md               quién eres
 ├── .env                    tus claves (fuera de git, permisos 600)

@@ -3,6 +3,7 @@
 Arranque:  ./jarvis.sh   (o: python3 agent/main.py)
 Puerto:    JARVIS_PORT (por defecto 8790). Solo escucha en 127.0.0.1.
 """
+import errno
 import json
 import mimetypes
 import os
@@ -15,6 +16,7 @@ from urllib.parse import parse_qs, urlparse
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import cerebro  # noqa: E402
 import data  # noqa: E402
+import estado  # noqa: E402
 import tools  # noqa: E402
 import voice  # noqa: E402
 from vault import VAULT  # noqa: E402
@@ -22,6 +24,12 @@ from vault import VAULT  # noqa: E402
 ROOT = Path(__file__).resolve().parent.parent
 UI = ROOT / "ui"
 PORT = int(os.environ.get("JARVIS_PORT", "8790"))
+
+# Lista EXPLÍCITA de hosts permitidos. Cualquier otra cabecera Host (p. ej. una web maliciosa que
+# apunta su dominio a 127.0.0.1: "DNS rebinding") se rechaza en TODAS las rutas, también en GET,
+# antes de entregar ningún dato.
+ALLOWED_HOSTS = frozenset({f"localhost:{PORT}", f"127.0.0.1:{PORT}"})
+ALLOWED_ORIGINS = frozenset({f"http://{h}" for h in ALLOWED_HOSTS})
 
 FAVICON = (b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
            b'<circle cx="16" cy="16" r="13" fill="none" stroke="#5cc8d6" stroke-width="2"/>'
@@ -31,9 +39,24 @@ FAVICON = (b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
 class Handler(BaseHTTPRequestHandler):
     server_version = "JARVIS/1"
 
-    def log_message(self, fmt, *args):  # silencio salvo errores
-        if args and str(args[1])[:1] in "45":
-            sys.stderr.write("%s %s\n" % (self.address_string(), fmt % args))
+    def log_message(self, fmt, *args):
+        pass  # sin registro por petición: las URLs pueden llevar nombres de clientes
+
+    def log_request(self, code="-", size="-"):
+        # Solo errores, y sin consulta (?name=...) ni cabeceras: no se registran datos privados.
+        if str(code)[:1] in "45":
+            sys.stderr.write(f"{self.command} {urlparse(self.path).path} -> {code}\n")
+
+    # ---------- control de acceso (todas las rutas) ----------
+    def host_ok(self):
+        host = (self.headers.get("Host") or "").strip().lower()
+        if host not in ALLOWED_HOSTS:
+            return False
+        origin = self.headers.get("Origin")
+        return origin is None or origin.strip().lower() in ALLOWED_ORIGINS
+
+    def reject(self):
+        self.send_json({"error": "host u origen no permitido"}, 403)
 
     # ---------- utilidades ----------
     def send_json(self, obj, code=200):
@@ -61,6 +84,8 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---------- GET ----------
     def do_GET(self):
+        if not self.host_ok():
+            return self.reject()
         url = urlparse(self.path)
         p = url.path
         q = parse_qs(url.query)
@@ -98,18 +123,10 @@ class Handler(BaseHTTPRequestHandler):
         return self.send_bytes(target.read_bytes(), ctype)
 
     # ---------- POST ----------
-    def same_origin(self):
-        """Solo esta página puede usar la API: frena a otras webs que intenten llamar a localhost."""
-        ok_hosts = {f"localhost:{PORT}", f"127.0.0.1:{PORT}"}
-        if self.headers.get("Host", "") not in ok_hosts:
-            return False
-        origin = self.headers.get("Origin")
-        return origin is None or origin.split("://", 1)[-1] in ok_hosts
-
     def do_POST(self):
+        if not self.host_ok():
+            return self.reject()
         p = urlparse(self.path).path
-        if not self.same_origin():
-            return self.send_json({"error": "origen no permitido"}, 403)
         try:
             if p == "/api/pause":
                 body = json.loads(self.read_body(4096) or b"{}")
@@ -119,9 +136,12 @@ class Handler(BaseHTTPRequestHandler):
                 body = json.loads(self.read_body(4096) or b"{}")
                 if body.get("decision") not in ("aprobar", "descartar"):
                     return self.send_json({"error": "decisión no válida"}, 400)
-                a = cerebro.decide(str(body.get("id", "")), body["decision"])
+                try:
+                    a = cerebro.decide(str(body.get("id", "")), body["decision"])
+                except estado.Paused:
+                    return self.send_json({"error": "JARVIS está en pausa: quita la pausa para decidir"}, 423)
                 return self.send_json(a) if a else self.send_json({"error": "no existe"}, 404)
-            if p in ("/api/speak", "/api/listen") and cerebro.PAUSE["on"]:
+            if p in ("/api/speak", "/api/listen") and estado.paused():
                 self.read_body(10 * 1024 * 1024)
                 return self.send_json({"error": "JARVIS está en pausa"}, 423)
             if p == "/api/ask":
@@ -142,6 +162,8 @@ class Handler(BaseHTTPRequestHandler):
                     audio, ctype = voice.speak(str(body.get("text", "")))
                 except voice.VoiceError as e:
                     return self.send_json({"error": str(e)}, 503)
+                if estado.paused():  # la pausa llegó mientras ElevenLabs respondía: no se entrega el audio
+                    return self.send_json({"error": "JARVIS está en pausa"}, 423)
                 return self.send_bytes(audio, ctype)
             if p == "/api/listen":
                 audio = self.read_body(10 * 1024 * 1024)
@@ -149,11 +171,15 @@ class Handler(BaseHTTPRequestHandler):
                     text = voice.listen(audio, self.headers.get("Content-Type", "audio/webm"))
                 except voice.VoiceError as e:
                     return self.send_json({"error": str(e)}, 503)
+                if estado.paused():
+                    return self.send_json({"error": "JARVIS está en pausa"}, 423)
                 return self.send_json({"text": text})
             if p == "/api/reset":
                 body = json.loads(self.read_body(4096) or b"{}")
                 cerebro.reset(str(body.get("conv", ""))[:64])
                 return self.send_json({"ok": True})
+        except estado.Paused:
+            return self.send_json({"error": "JARVIS está en pausa"}, 423)
         except Exception as e:  # que se vea
             return self.send_json({"error": f"{e.__class__.__name__}: {e}"}, 500)
         return self.send_json({"error": "ruta desconocida"}, 404)
@@ -164,21 +190,36 @@ def status():
     return {"mode": data.mode(), "today": data.today().isoformat(), "notes": s["notes"],
             "edges": s["edges"], "by_type": s["by_type"], "skipped": s["skipped"],
             "mail": data.inbox() is not None, "calendar": data.calendar() is not None,
-            "brain": cerebro.STATUS, "pause": cerebro.PAUSE,
-            "approvals": [a for a in cerebro.APPROVALS.values() if a["state"] == "pendiente"],
+            "brain": cerebro.STATUS, "pause": dict(estado.PAUSE), "state_warnings": list(estado.WARNINGS),
+            "approvals": estado.pending(),
             "voice": {"configured": voice.configured(), **voice.STATUS}}
 
 
 def main():
+    try:  # primero el puerto: si está ocupado, se dice claro y no se llama a Claude
+        srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    except OSError as e:
+        if e.errno in (errno.EADDRINUSE, getattr(errno, "WSAEADDRINUSE", -1)):
+            print(f"No puedo arrancar: el puerto {PORT} ya está en uso.\n"
+                  f"  ¿Tienes otro JARVIS abierto? Ciérralo, o arranca en otro puerto:\n"
+                  f"  JARVIS_PORT={PORT + 1} ./jarvis.sh", file=sys.stderr, flush=True)
+            sys.exit(1)
+        raise
+    srv.daemon_threads = True
+    st = estado.load()
     VAULT.load()
     s = VAULT.summary()
     print(f"JARVIS · modo {data.mode()} · {s['notes']} notas · {s['edges']} enlaces · "
           f"http://localhost:{PORT}", flush=True)
     for path, why in s["skipped"]:
         print(f"  saltado: {path} ({why})", flush=True)
+    for w in st["warnings"]:
+        print(f"  AVISO: {w}", flush=True)
+    if st["pause"]["on"]:
+        print(f"  EN PAUSA desde {st['pause']['since']} ({st['pause']['by']}). Quítala en pantalla.", flush=True)
+    if st["drafts"]:
+        print(f"  {len(estado.pending())} borradores pendientes de tu sí (no se ejecuta nada).", flush=True)
     cerebro.warmup()
-    srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-    srv.daemon_threads = True
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

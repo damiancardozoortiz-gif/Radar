@@ -139,3 +139,4 @@ body.paused #graph { filter: saturate(0.2) brightness(0.6); }
 .approval .row { display: flex; gap: 8px; margin-top: 8px; }
 .approval .state { font: 11px var(--mono); color: var(--warn); }
 .approval.done .state { color: var(--text-2); }
+.answer-card hr { border: 0; border-top: 1px solid var(--line); margin: 12px 0; }

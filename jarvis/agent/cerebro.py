@@ -9,6 +9,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import threading
 import time
@@ -16,6 +17,7 @@ from collections import deque
 from pathlib import Path
 
 import data
+import estado
 import memory
 import tools
 from vault import VAULT, norm
@@ -32,15 +34,20 @@ MAX_TURNS = 10
 MAX_SAY_WORDS = 25
 DRAFT_RE = re.compile(r"borrador", re.I)
 
-STATUS = {"brain": "arrancando", "detail": "", "warm_ms": None, "last_ms": None, "claude": None, "calls": 0}
+STATUS = {"brain": "arrancando", "detail": "", "warm_ms": None, "last_ms": None, "claude": None, "calls": 0,
+          "cancelled": 0, "last_wall_ms": None, "last_api_ms": None}
 
-# ---- PAUSA: interruptor de emergencia. Mientras está activa no se llama a Claude,
-# no se ejecutan herramientas, no se escribe memoria y la voz queda bloqueada.
-PAUSE = {"on": False, "since": None, "by": None}
+# ---- PAUSA: interruptor de emergencia (estado persistente en estado.py).
+# Mientras está activa no se llama a Claude, no se ejecutan herramientas, no se escribe memoria
+# ni borradores y la voz queda bloqueada. Activarla mata las llamadas a Claude en curso, y una
+# respuesta que llegue tarde se descarta sin producir ningún efecto.
+PAUSE = estado.PAUSE
+RUNNING = set()            # procesos claude en curso (para poder matarlos)
+_running_lock = threading.Lock()
 PAUSE_WORDS = {"pausa", "jarvis pausa", "pausa jarvis", "para", "jarvis para", "detente", "stop", "alto"}
 
-# ---- Autorizaciones humanas: cada borrador espera tu sí, que solo se da con un clic.
-APPROVALS = {}
+# ---- Autorizaciones humanas: cada borrador espera tu sí, que solo se da con un clic (persistentes en estado.py).
+APPROVALS = estado.APPROVALS
 YES_WORDS = {"si", "sí", "vale", "adelante", "envialo", "envíalo", "mandalo", "mándalo", "apruebo", "aprobado", "ok",
              "dale", "hazlo", "si envialo", "sí, envíalo", "si mandalo", "correcto"}
 _convs = {}
@@ -75,8 +82,39 @@ def _env():
     return env
 
 
+def claude_exe():
+    # JARVIS_CLAUDE_BIN solo sirve para las pruebas automáticas (un claude simulado); por defecto, `claude`.
+    return os.environ.get("JARVIS_CLAUDE_BIN") or shutil.which("claude")
+
+
+def _kill(p):
+    """Mata el proceso claude y sus hijos."""
+    try:
+        os.killpg(p.pid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
+    try:
+        p.wait(timeout=1.5)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+
+
+def cancel_running():
+    """La PAUSA llama a esto: corta todas las llamadas a Claude en curso."""
+    with _running_lock:
+        procs = list(RUNNING)
+    for p in procs:
+        p.jarvis_cancelled = True
+        _kill(p)
+    STATUS["cancelled"] += len(procs)
+    return len(procs)
+
+
 def call_claude(message, web=False, session=None, timeout=None):
-    exe = shutil.which("claude")
+    exe = claude_exe()
     if not exe:
         raise BrainError("no encuentro el comando claude")
     cmd = [exe, "-p", message, "--output-format", "json", "--model", MODEL, "--effort", EFFORT,
@@ -86,20 +124,38 @@ def call_claude(message, web=False, session=None, timeout=None):
         cmd += ["--allowedTools", "WebSearch,WebFetch"]
     if session:
         cmd += ["--resume", session]
-    if PAUSE["on"]:
-        raise BrainError("JARVIS está en pausa")
-    STATUS["calls"] += 1
+    limit = timeout or (TIMEOUT_WEB if web else TIMEOUT)
+    # Comprobar la pausa y lanzar el proceso bajo el mismo candado que set_pause:
+    # o el proceso existe antes de la pausa (y la pausa lo mata) o la pausa ya está y no se lanza.
+    with estado.LOCK:
+        if estado.paused():
+            raise estado.Paused("JARVIS está en pausa")
+        t0 = time.perf_counter()
+        p = subprocess.Popen(cmd, cwd=str(ROOT), env=_env(), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True, start_new_session=True)
+        p.jarvis_cancelled = False
+        with _running_lock:
+            RUNNING.add(p)
+        STATUS["calls"] += 1
     try:
-        p = subprocess.run(cmd, cwd=str(ROOT), env=_env(), stdin=subprocess.DEVNULL, capture_output=True,
-                           text=True, timeout=timeout or (TIMEOUT_WEB if web else TIMEOUT))
+        stdout, stderr = p.communicate(timeout=limit)
     except subprocess.TimeoutExpired:
-        raise BrainError(f"no respondió en {timeout or (TIMEOUT_WEB if web else TIMEOUT)} s")
+        _kill(p)
+        p.communicate()
+        raise BrainError(f"no respondió en {limit} s")
+    finally:
+        with _running_lock:
+            RUNNING.discard(p)
+    if p.jarvis_cancelled or estado.paused():
+        raise estado.Paused("cancelado por la pausa")
+    STATUS["last_wall_ms"] = int((time.perf_counter() - t0) * 1000)
     try:
-        out = json.loads(p.stdout)
+        out = json.loads(stdout)
     except json.JSONDecodeError:
-        raise BrainError((p.stderr or p.stdout or f"salida vacía (código {p.returncode})").strip()[:200])
+        raise BrainError((stderr or stdout or f"salida vacía (código {p.returncode})").strip()[:200])
     if out.get("is_error") or out.get("subtype", "success") != "success":
         raise BrainError(str(out.get("result") or out.get("subtype") or "error")[:200])
+    STATUS["last_api_ms"] = out.get("duration_api_ms")
     return out
 
 
@@ -182,12 +238,25 @@ def compose(question, res, conv_state):
 
 
 def set_pause(on, by="botón"):
-    PAUSE.update(on=bool(on), since=time.strftime("%H:%M:%S") if on else None, by=by if on else None)
-    return dict(PAUSE)
+    """Prioridad máxima: no espera a ninguna conversación. Activa la pausa (persistente) y corta lo que esté en marcha."""
+    st = estado.set_pause(on, by)
+    if on:
+        cancel_running()
+        STATUS["brain"], STATUS["detail"] = "en pausa", ""
+    elif STATUS["brain"] == "en pausa":
+        warmup()
+    return st
 
 
 def is_pause_command(text):
     return re.sub(r"[^a-zñ ]+", "", norm(text)).strip() in PAUSE_WORDS
+
+
+PAUSED_SAY = "Estoy en pausa. Quita la pausa en pantalla para seguir."
+
+
+def _paused_reply(cid, question, say=PAUSED_SAY):
+    return _short(cid, question, say, "pausa", {"paused": True, "brain": "pausa"})
 
 
 def _short(cid, question, say, tool, extra=None):
@@ -198,28 +267,26 @@ def _short(cid, question, say, tool, extra=None):
 
 
 def pending_for(cid):
-    return [a for a in APPROVALS.values() if a["conv"] == cid and a["state"] == "pendiente"]
+    return estado.pending(cid)
 
 
 def decide(aid, decision):
-    a = APPROVALS.get(aid)
-    if not a:
-        return None
-    if a["state"] != "pendiente":
-        return a
-    a["state"] = "aprobado" if decision == "aprobar" else "descartado"
-    a["decided"] = time.strftime("%H:%M:%S")
     # Aprobar NUNCA envía: JARVIS no tiene ninguna conexión para enviar. Lo envías tú.
-    a["result"] = ("Aprobado por ti. No se ha enviado nada: cópialo y envíalo tú." if a["state"] == "aprobado"
-                   else "Descartado. No se ha enviado nada.")
-    return a
+    return estado.decide(aid, decision)
 
 
 def answer(cid, question, forced_tool=None):
+    try:
+        return _answer(cid, question, forced_tool)
+    except estado.Paused:
+        # La pausa llegó en mitad: se descarta todo lo que hubiera producido la respuesta.
+        return _paused_reply(cid, question)
+
+
+def _answer(cid, question, forced_tool=None):
     t0 = time.perf_counter()
-    if PAUSE["on"]:
-        return _short(cid, question, "Estoy en pausa. Quita la pausa en pantalla para seguir.", "pausa",
-                      {"paused": True, "brain": "pausa"})
+    if estado.paused():
+        return _paused_reply(cid, question)
     if is_pause_command(question):
         set_pause(True, by="voz")
         return _short(cid, question, "En pausa. No hago nada hasta que la quites en pantalla.", "pausa",
@@ -230,6 +297,8 @@ def answer(cid, question, forced_tool=None):
         return _short(cid, question, "Para aprobar el borrador, pulsa Aprobar en pantalla. Yo no envío nada.",
                       "autorizacion", {"approval": pend[-1]})
     with c["lock"]:
+        if estado.paused():
+            raise estado.Paused()
         if forced_tool:
             tool, why = forced_tool, "botón"
         else:
@@ -239,10 +308,12 @@ def answer(cid, question, forced_tool=None):
         out = {"tool": tool, "why": why, "card": res.get("card"), "brain": "claude", "warning": None}
         try:
             raw = call_claude(compose(question, res, c), web=web, session=c["session"])
+            if estado.paused():  # respuesta tardía: la pausa llegó mientras pensaba
+                raise estado.Paused()
             c["session"] = raw.get("session_id") or c["session"]
             rep = parse_reply(raw.get("result", ""))
             say = clean_speech(rep["decir"])
-            saved = memory.save(rep["recordar"]) if rep["recordar"] else None
+            saved = memory.save(rep["recordar"]) if rep["recordar"] else None  # lanza Paused si hay pausa
             if saved and norm(saved["text"])[:40] not in norm(say):
                 say = f"He guardado: {saved['text']}"
             det = rep["detalle"].strip()
@@ -251,10 +322,7 @@ def answer(cid, question, forced_tool=None):
             out.update(say=say, detail=det, saved=saved, api_ms=raw.get("duration_api_ms"),
                        formato=rep["formato"])
             if det and DRAFT_RE.search(det + " " + rep["decir"]):
-                aid = f"a{len(APPROVALS) + 1}"
-                APPROVALS[aid] = {"id": aid, "conv": cid, "kind": "borrador", "text": det, "state": "pendiente",
-                                  "created": time.strftime("%H:%M:%S"), "question": question}
-                out["approval"] = APPROVALS[aid]
+                out["approval"] = estado.add_draft(cid, det, question)  # lanza Paused si hay pausa
             if not rep["formato"]:
                 out["warning"] = "Claude no devolvió el formato pedido; muestro su texto tal cual."
         except BrainError as e:
@@ -263,6 +331,8 @@ def answer(cid, question, forced_tool=None):
             out["warning"] = f"Cerebro no disponible ({e}). Modo respaldo: esto NO lo ha dicho Claude."
         else:
             STATUS["brain"], STATUS["detail"] = "listo", ""
+        if estado.paused():  # última comprobación: nada sale (ni se dice) si la pausa ya está
+            raise estado.Paused()
         ms = int((time.perf_counter() - t0) * 1000)
         out["ms"] = ms
         STATUS["last_ms"] = ms
@@ -276,7 +346,7 @@ def fallback(question, tool, res):
     if tool == "recordar":
         txt = re.sub(r"^\W*(oye\W+|jarvis\W+)*(recuerda(me)?|apunta|anota|guarda|no olvides|memoriza)\s+(que\s+)?",
                      "", question.strip(), flags=re.I).strip(" .?!¿¡")
-        saved = memory.save(txt, source="respaldo") if txt else None
+        saved = memory.save(txt, source="respaldo") if txt else None  # lanza Paused si hay pausa
         o["saved"] = saved
         o["say"] = f"Sin cerebro. He guardado: {saved['text']}" if saved else "Sin cerebro. No he guardado nada."
         return o
@@ -303,15 +373,21 @@ def reset(cid):
 
 # ------------------------------------------------------------------ calentamiento
 def warmup():
+    if estado.paused():  # en pausa no se llama a Claude ni para calentar
+        STATUS["brain"], STATUS["detail"] = "en pausa", ""
+        return
+
     def run():
         STATUS["brain"] = "calentando"
-        STATUS["claude"] = shutil.which("claude")
+        STATUS["claude"] = claude_exe()
         t0 = time.perf_counter()
         try:
             raw = call_claude('Calentamiento. Responde solo {"decir": "listo", "detalle": "", "recordar": null}', timeout=40)
             STATUS["brain"], STATUS["detail"] = "listo", ""
             STATUS["warm_ms"] = int((time.perf_counter() - t0) * 1000)
             print(f"  cerebro listo · calentamiento {STATUS['warm_ms']} ms", flush=True)
+        except estado.Paused:
+            STATUS["brain"], STATUS["detail"] = "en pausa", ""
         except BrainError as e:
             STATUS["brain"], STATUS["detail"] = "no disponible", str(e)
             print(f"  cerebro NO disponible: {e}", flush=True)

@@ -174,6 +174,17 @@ function showAnswer(o, question) {
   if (o.warning) toast(o.warning, o.brain !== "claude", 9000);
 }
 // ---------------- autorizaciones humanas ----------------
+// Borradores que siguen pendientes (también los que sobreviven a un reinicio). No se ejecuta nada.
+function showPendingDrafts(list) {
+  if (!list.length) return;
+  $("#answer-meta").textContent = `borradores pendientes · ${list.length}`; $("#answer-meta").style.color = "var(--warn)";
+  $("#answer-say").textContent = "";
+  $("#answer-card").innerHTML = list.map(a =>
+    `<div class="src">Pediste: ${esc(a.question || "")} · ${esc(a.created || "")}</div>` +
+    `<div class="note-body">${renderMarkdown(a.text || "", [])}</div>` + approvalHtml(a)).join("<hr>");
+  $("#answer").classList.remove("hidden");
+}
+
 function approvalHtml(a) {
   const done = a.state !== "pendiente";
   return `<div class="approval ${done ? "done" : ""}" data-aid="${esc(a.id)}">
@@ -187,7 +198,7 @@ document.addEventListener("click", async e => {
   const r = await fetch("/api/approve", { method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ id: box.dataset.aid, decision: b.dataset.decision }) });
   const a = await r.json();
-  if (!r.ok) { toast("No se pudo registrar: " + (a.error || r.status), true); return; }
+  if (!r.ok) { toast(r.status === 423 ? "JARVIS está en pausa: quita la pausa para aprobar o descartar." : "No se pudo registrar: " + (a.error || r.status), true); return; }
   box.outerHTML = approvalHtml(a);
   if (a.state === "aprobado") {
     try { await navigator.clipboard.writeText(a.text); toast("Aprobado y copiado. No se ha enviado nada: envíalo tú."); }
@@ -266,7 +277,7 @@ async function refreshStatus() {
     const st = await (await fetch("/api/status")).json();
     if (st.pause && !!st.pause.on !== !!App.paused) showPause(st.pause.on);
     const b = st.brain || {};
-    const map = { listo: ["cerebro: listo", "ok"], calentando: ["cerebro: calentando…", "warn"], arrancando: ["cerebro: arrancando…", "warn"],
+    const map = { "en pausa": ["cerebro: en pausa", "warn"], listo: ["cerebro: listo", "ok"], calentando: ["cerebro: calentando…", "warn"], arrancando: ["cerebro: arrancando…", "warn"],
                   respaldo: ["cerebro: RESPALDO", "bad"], "no disponible": ["cerebro: NO DISPONIBLE", "bad"] };
     const [txt, cls] = map[b.brain] || ["cerebro: " + b.brain, ""];
     chip("#st-brain", txt + (b.last_ms ? ` · ${(b.last_ms / 1000).toFixed(1).replace(".", ",")} s` : ""), cls);
@@ -478,6 +489,8 @@ async function boot() {
     const st = await (await fetch("/api/status")).json();
     App.status = st;
     if (st.pause && st.pause.on) showPause(true);
+    for (const w of st.state_warnings || []) toast(w, true, 0);
+    showPendingDrafts(st.approvals || []);
     $("#mode").textContent = st.mode === "demo" ? "DEMO · hoy " + st.today : "DATOS REALES";
     $("#mode").className = "chip " + (st.mode === "demo" ? "demo" : "");
     $("#counts").textContent = `${st.notes} notas · ${st.edges} enlaces`;
