@@ -3,10 +3,13 @@
 Arranque:  ./jarvis.sh   (o: python3 agent/main.py)
 Puerto:    JARVIS_PORT (por defecto 8790). Solo escucha en 127.0.0.1.
 """
+import base64
 import errno
+import hmac
 import json
 import mimetypes
 import os
+import re
 import signal
 import sys
 import threading
@@ -17,11 +20,15 @@ from urllib.parse import parse_qs, urlparse
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import cerebro  # noqa: E402
 import data  # noqa: E402
+import dispositivo  # noqa: E402
 import estado  # noqa: E402
 import sesiones  # noqa: E402
 import tools  # noqa: E402
 import voice  # noqa: E402
 from vault import VAULT  # noqa: E402
+
+mimetypes.add_type("application/manifest+json", ".webmanifest")
+mimetypes.add_type("text/javascript", ".js")
 
 ROOT = Path(__file__).resolve().parent.parent
 UI = ROOT / "ui"
@@ -32,6 +39,16 @@ PORT = int(os.environ.get("JARVIS_PORT", "8790"))
 # antes de entregar ningún dato.
 ALLOWED_HOSTS = frozenset({f"localhost:{PORT}", f"127.0.0.1:{PORT}"})
 ALLOWED_ORIGINS = frozenset({f"http://{h}" for h in ALLOWED_HOSTS})
+
+# Acceso desde el teléfono (DESACTIVADO por defecto). Solo si TÚ defines las dos variables en .env:
+#   JARVIS_REMOTE_HOST=mi-ordenador.mi-red.ts.net   (el nombre HTTPS de tu túnel, sin https://)
+#   JARVIS_ACCESS_TOKEN=<32+ caracteres aleatorios>
+# El servidor sigue escuchando solo en 127.0.0.1: el túnel (p. ej. Tailscale serve) pone el HTTPS.
+# Para emparejar el teléfono se abre una vez https://HOST/?token=TOKEN, que deja una cookie segura.
+REMOTE_HOST = (os.environ.get("JARVIS_REMOTE_HOST") or "").strip().lower().removeprefix("https://").rstrip("/")
+ACCESS_TOKEN = (os.environ.get("JARVIS_ACCESS_TOKEN") or "").strip()
+REMOTE_ON = bool(REMOTE_HOST) and len(ACCESS_TOKEN) >= 32
+COOKIE = "jarvis_acceso"
 
 FAVICON = (b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
            b'<circle cx="16" cy="16" r="13" fill="none" stroke="#5cc8d6" stroke-width="2"/>'
@@ -52,10 +69,37 @@ class Handler(BaseHTTPRequestHandler):
     # ---------- control de acceso (todas las rutas) ----------
     def host_ok(self):
         host = (self.headers.get("Host") or "").strip().lower()
-        if host not in ALLOWED_HOSTS:
-            return False
         origin = self.headers.get("Origin")
-        return origin is None or origin.strip().lower() in ALLOWED_ORIGINS
+        if host in ALLOWED_HOSTS:
+            return origin is None or origin.strip().lower() in ALLOWED_ORIGINS
+        if REMOTE_ON and host == REMOTE_HOST:  # teléfono por el túnel HTTPS: además exige el token
+            if origin is not None and origin.strip().lower() != f"https://{REMOTE_HOST}":
+                return False
+            return self.token_ok()
+        return False
+
+    def token_ok(self):
+        for part in (self.headers.get("Cookie") or "").split(";"):
+            k, _, v = part.strip().partition("=")
+            if k == COOKIE and hmac.compare_digest(v.encode(), ACCESS_TOKEN.encode()):
+                return True
+        return False
+
+    def try_pair(self):
+        """https://HOST/?token=TOKEN deja una cookie segura (HttpOnly, Secure, SameSite=Strict) y redirige a /."""
+        host = (self.headers.get("Host") or "").strip().lower()
+        if not (REMOTE_ON and host == REMOTE_HOST):
+            return False
+        tok = (parse_qs(urlparse(self.path).query).get("token") or [""])[0]
+        if not tok or not hmac.compare_digest(tok.encode(), ACCESS_TOKEN.encode()):
+            return False
+        self.send_response(303)
+        self.send_header("Set-Cookie", f"{COOKIE}={ACCESS_TOKEN}; Path=/; Max-Age=31536000; HttpOnly; Secure; SameSite=Strict")
+        self.send_header("Location", "/")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+        dispositivo.log("permiso", "teléfono emparejado por el acceso remoto")
+        return True
 
     def reject(self):
         self.send_json({"error": "host u origen no permitido"}, 403)
@@ -87,6 +131,8 @@ class Handler(BaseHTTPRequestHandler):
     # ---------- GET ----------
     def do_GET(self):
         if not self.host_ok():
+            if self.try_pair():
+                return None
             return self.reject()
         url = urlparse(self.path)
         p = url.path
@@ -106,6 +152,10 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/route":
             tool, why = tools.route((q.get("q") or [""])[0])
             return self.send_json({"tool": tool, "why": why})
+        if p == "/api/dispositivo":
+            return self.send_json({"permisos": dispositivo.PERMISOS, "integraciones": dispositivo.INTEGRACIONES,
+                                   "acciones": dispositivo.last_actions(60),
+                                   "remoto": {"activo": REMOTE_ON, "host": REMOTE_HOST if REMOTE_ON else None}})
         if p == "/api/memory":
             return self.send_json({"card": tools.memory_card()})
         if p == "/api/top":
@@ -143,6 +193,29 @@ class Handler(BaseHTTPRequestHandler):
                 except estado.Paused:
                     return self.send_json({"error": "JARVIS está en pausa: quita la pausa para decidir"}, 423)
                 return self.send_json(a) if a else self.send_json({"error": "no existe"}, 404)
+            if p == "/api/dispositivo/evento":  # registro de auditoría (también en pausa)
+                body = json.loads(self.read_body(4096) or b"{}")
+                return self.send_json(dispositivo.log(str(body.get("tipo", "")), str(body.get("detalle", ""))))
+            if p in ("/api/vision", "/api/archivo"):
+                body = json.loads(self.read_body(12 * 1024 * 1024) or b"{}")
+                if estado.paused():
+                    return self.send_json({"error": "JARVIS está en pausa"}, 423)
+                try:
+                    if p == "/api/vision":
+                        m = re.match(r"^data:(image/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$", str(body.get("image", "")))
+                        if not m:
+                            return self.send_json({"error": "imagen no válida (jpeg, png o webp en base64)"}, 400)
+                        base64.b64decode(m.group(2), validate=True)
+                        o = cerebro.vision(str(body.get("question", ""))[:500], image_b64=m.group(2), media_type=m.group(1))
+                        dispositivo.log("vision", f"imagen analizada ({len(m.group(2)) * 3 // 4 // 1024} KB)")
+                    else:
+                        text = str(body.get("text", ""))
+                        name = str(body.get("name", ""))[:120]
+                        o = cerebro.vision(str(body.get("question", ""))[:500], text=text, name=name)
+                        dispositivo.log("archivo", f"documento analizado ({len(text)} caracteres)")
+                except cerebro.BrainError as e:
+                    return self.send_json({"error": f"el cerebro no pudo analizarlo: {e}"}, 503)
+                return self.send_json(o)
             if p in ("/api/speak", "/api/listen") and estado.paused():
                 self.read_body(10 * 1024 * 1024)
                 return self.send_json({"error": "JARVIS está en pausa"}, 423)
@@ -193,6 +266,7 @@ def status():
             "edges": s["edges"], "by_type": s["by_type"], "skipped": s["skipped"],
             "mail": data.inbox() is not None, "calendar": data.calendar() is not None,
             "brain": cerebro.STATUS, "pause": dict(estado.PAUSE), "state_warnings": list(estado.WARNINGS),
+            "remote": REMOTE_ON,
             "approvals": estado.pending(),
             "voice": {"configured": voice.configured(), **voice.STATUS}}
 
@@ -219,6 +293,10 @@ def main():
         print(f"  AVISO: {w}", flush=True)
     if st["pause"]["on"]:
         print(f"  EN PAUSA desde {st['pause']['since']} ({st['pause']['by']}). Quítala en pantalla.", flush=True)
+    if REMOTE_ON:
+        print(f"  ACCESO REMOTO ACTIVO para https://{REMOTE_HOST} (con token). Desactívalo quitando JARVIS_REMOTE_HOST.", flush=True)
+    elif os.environ.get("JARVIS_REMOTE_HOST"):
+        print("  AVISO: JARVIS_REMOTE_HOST definido pero JARVIS_ACCESS_TOKEN falta o tiene menos de 32 caracteres: acceso remoto DESACTIVADO.", flush=True)
     if st["drafts"]:
         print(f"  {len(estado.pending())} borradores pendientes de tu sí (no se ejecuta nada).", flush=True)
     cerebro.warmup()

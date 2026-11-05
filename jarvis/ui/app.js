@@ -189,16 +189,31 @@ function approvalHtml(a) {
   const done = a.state !== "pendiente";
   return `<div class="approval ${done ? "done" : ""}" data-aid="${esc(a.id)}">
     <div class="state">${done ? esc(a.state.toUpperCase() + " · " + (a.result || "")) : "BORRADOR · espera tu sí. JARVIS nunca envía nada."}</div>
-    ${done ? "" : `<div class="row"><button class="pill" data-decision="aprobar">Aprobar</button><button class="pill" data-decision="descartar">Descartar</button></div>`}
+    ${done ? (a.state === "aprobado" ? `<div class="row">
+        <a class="pill" href="mailto:?body=${encodeURIComponent(a.text || "")}" target="_blank" rel="noopener" data-draft-open="gmail">Abrir en Gmail</a>
+        <button class="pill" data-draft-share="${esc(a.id)}">Compartir (WhatsApp…)</button></div>
+        <div class="src">Se abre la app con el texto escrito; lo envías tú.</div>` : "")
+      : `<div class="row"><button class="pill" data-decision="aprobar">Aprobar</button><button class="pill" data-decision="descartar">Descartar</button></div>`}
   </div>`;
 }
 document.addEventListener("click", async e => {
+  const g = e.target.closest("[data-draft-open]");
+  if (g && window.devLog) devLog("app", "borrador aprobado abierto en Gmail por el usuario");
+  const sh = e.target.closest("[data-draft-share]");
+  if (sh) {
+    const text = (App.lastApproved && App.lastApproved.text) || "";
+    if (!navigator.share) { toast("Este navegador no tiene el menú Compartir. Usa «Abrir en Gmail» o copia el texto."); return; }
+    try { await navigator.share({ text }); if (window.devLog) devLog("compartir", "borrador compartido por el usuario"); }
+    catch (err) { if (err.name !== "AbortError") toast("No se pudo compartir: " + err.name, true); }
+    return;
+  }
   const b = e.target.closest(".approval button[data-decision]"); if (!b) return;
   const box = b.closest(".approval");
   const r = await fetch("/api/approve", { method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ id: box.dataset.aid, decision: b.dataset.decision }) });
   const a = await r.json();
   if (!r.ok) { toast(r.status === 423 ? "JARVIS está en pausa: quita la pausa para aprobar o descartar." : "No se pudo registrar: " + (a.error || r.status), true); return; }
+  if (a.state === "aprobado") App.lastApproved = a;
   box.outerHTML = approvalHtml(a);
   if (a.state === "aprobado") {
     try { await navigator.clipboard.writeText(a.text); toast("Aprobado y copiado. No se ha enviado nada: envíalo tú."); }
@@ -215,6 +230,7 @@ function showPause(on) {
   $("#btn-pause").textContent = App.paused ? "en pausa" : "pausa";
   if (App.paused) {
     if (typeof stopSpeaking === "function") { stopSpeaking(); stopConversation(); }
+    if (typeof Camera !== "undefined" && Dev.cam.stream) Camera.close("pausa");  // la pausa también apaga la cámara
     setState("paused");
   } else if (App.state === "paused") setState("idle");
 }
@@ -231,6 +247,8 @@ $("#btn-unpause").onclick = () => setPause(false);
 $("#answer-close").onclick = () => $("#answer").classList.add("hidden");
 
 async function ask(text, tool) {
+  // «JARVIS, detener todo»: se aplica aquí al instante, sin esperar al servidor
+  if (text && /\bdet[eé]n(er)?\s+todo\b|\bpara(r)?\s+todo\b/i.test(text) && window.stopAll) { stopAll("voz"); return; }
   if (App.busy) return;
   if (App.paused && !(text && /^\s*pausa\s*$/i.test(text))) { toast("JARVIS está en pausa. Quítala para seguir."); return; }
   App.busy = true; setState("thinking");
@@ -247,6 +265,7 @@ async function ask(text, tool) {
     showAnswer(o, text);
     if (o.saved) refreshStatus();
     if (o.paused) showPause(true);
+    if (o.device && window.runDevice) runDevice(o.device);  // orden del teléfono (abrir apps: siempre con tu clic)
     App.last = o;
     App.busy = false;
     if (window.onAnswer && !o.paused) await window.onAnswer(o); // voz

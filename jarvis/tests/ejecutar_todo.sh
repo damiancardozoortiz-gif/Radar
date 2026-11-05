@@ -25,6 +25,13 @@ else
   record "navegador.js" "OMITIDA"
 fi
 
+echo; echo "=== 2b navegador_dispositivo.js (teléfono: permisos, cámara, apps, archivos)"
+if command -v node >/dev/null && node -e "require('playwright')" 2>/dev/null; then
+  if node tests/navegador_dispositivo.js; then record "navegador_dispositivo.js" "PASA"; else record "navegador_dispositivo.js" "FALLA"; fi
+else
+  echo "OMITIDA: falta Node o Playwright"; record "navegador_dispositivo.js" "OMITIDA"
+fi
+
 echo; echo "=== 3/4 test_limites.py (claude real)"
 if command -v claude >/dev/null; then
   TMPD=$(mktemp -d)

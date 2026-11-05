@@ -215,6 +215,17 @@ def main():
         mark(12, "PASA" if st and st["pause"]["on"] and aid in pend and st["brain"]["brain"] == "en pausa" else "FALLA",
              f"tras ./jarvis.sh reiniciar: pausa={st and st['pause']['on']} · borrador {aid} pendiente={aid in pend} · cerebro={st and st['brain']['brain']} (sin llamar a Claude)")
         j("POST", "/api/pause", {"on": False})
+        # 15 --------------------------------------------------------------- visión real (cámara / fotos)
+        import base64, struct, zlib
+        def png(w, h, rgb):
+            raw = b"".join(b"\x00" + bytes(rgb) * w for _ in range(h))
+            chunk = lambda t, d: struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+            return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
+        img = "data:image/png;base64," + base64.b64encode(png(64, 64, (220, 20, 20))).decode()
+        t0 = time.time(); code, o = j("POST", "/api/vision", {"image": img, "question": "¿De qué color es esta imagen? Una palabra."}); tv = time.time() - t0
+        said = (o.get("say", "") if isinstance(o, dict) else "").lower()
+        mark(15, "PASA" if code == 200 and o.get("brain") == "claude" and "roj" in said else "FALLA",
+             f"visión con Claude real: imagen roja generada → «{o.get('say') if isinstance(o, dict) else o}» en {tv:.1f} s")
         # 13 --------------------------------------------------------------- credenciales
         problems = []
         page = b"".join(http("GET", p)[1] for p in ["/", "/app.js", "/api/status", "/api/graph", "/api/memory"])

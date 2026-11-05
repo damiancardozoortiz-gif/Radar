@@ -164,6 +164,7 @@ O una a una:
 | `python3 tests/test_limites.py` | Lo mismo con `claude -p` **real**: PAUSA, autorizaciones, origen, memoria, solo lectura (10 pruebas) | `claude` con sesión iniciada y un JARVIS arrancado (`ejecutar_todo.sh` lo arranca solo, con estado y memoria temporales) |
 | `bash tests/prueba_bloqueo.sh` | `claude -p` real intenta leer `.env`, escribir y usar Bash: todo bloqueado | `claude` con sesión iniciada |
 | `python3 tests/integral.py` | Prueba integral con `claude` real arrancando con `./jarvis.sh`: inicio, conversación seguida con contexto, memoria tras reiniciar, PAUSA durante una llamada real, reanudación solo con el botón, recuperación tras matar `claude` y el servidor, reinicio con PAUSA y borradores, credenciales, apagado limpio. La voz la prueba REAL si hay red y clave; si no, la marca **PENDIENTE** | `claude` con sesión iniciada |
+| `node tests/navegador_dispositivo.js` | Teléfono: el panel muestra los permisos reales; cámara denegada; cámara (vista previa, foto, cambiar, describir con visión, guardar solo tras confirmar, se apaga en segundo plano, al revocar el permiso, con P y con «detener todo»); abrir apps solo con clic; selectores de fotos y documentos; ubicación; notificaciones; registro sin datos privados. Lo que solo se puede probar en el teléfono sale como PENDIENTE | Node 18+ y Playwright |
 | `python3 tests/prueba_voz_real.py` | **Voz REAL**: texto a voz con tu clave, guarda el audio para que lo escuches y lo vuelve a pasar a texto con Scribe. Gasta unos 100 créditos | `ELEVENLABS_API_KEY` en `.env` y conexión a `api.elevenlabs.io` |
 | `python3 tests/estabilidad_jarvis.py 20` | 20 rondas con `claude` real: petición que provoca la generación degenerada y pregunta normal (¿se recupera?) | `claude` con sesión iniciada |
 | `bash tests/estabilidad_bash.sh 20` | 20 llamadas directas a `claude -p` con Bash denegado: nunca se ejecuta y no quedan huérfanos. Los cortes por tiempo salen como AVISO | `claude` con sesión iniciada |
@@ -228,20 +229,102 @@ Con `claude` real, 20 de 20 rondas pidiendo Bash a JARVIS se recuperaron. Ningú
 - **Modo respaldo.** Si Claude no responde en 25 s (60 en la búsqueda web), JARVIS busca en tus archivos o enseña la tarjeta de la herramienta, con un aviso rojo de que **no** ha hablado Claude.
 - **Recuperación.** Si un proceso `claude` muere, el siguiente turno abre otro y retoma la conversación. Si el servidor se cae, `./jarvis.sh iniciar` lo vuelve a levantar. Si el servidor muere de golpe, los procesos `claude` terminan solos, sin quedar huérfanos.
 
-### Usarlo desde el teléfono (Android): PENDIENTE de tu decisión
+## 9. JARVIS en el teléfono (Android)
 
-JARVIS está hecho para usarse **en el mismo ordenador** donde corre, en `http://localhost:8790`. Desde el teléfono hoy **no funciona**, por diseño de seguridad:
-- El servidor solo escucha en `127.0.0.1` y rechaza cualquier otro `Host`. Es lo que frena el ataque de "DNS rebinding".
-- Los navegadores solo dan acceso al micrófono en `https://` o en `localhost`. Desde el teléfono, `http://IP-del-ordenador` no tendría micrófono.
+### Cómo funciona
 
-Para usarlo desde Android hace falta elegir una de estas opciones. Todas abren JARVIS fuera del ordenador y necesitan tu autorización expresa:
-1. **Un túnel con HTTPS y contraseña** hasta tu ordenador (por ejemplo, una VPN privada como Tailscale con HTTPS), añadiendo ese nombre a la lista de hosts permitidos y una autenticación.
-2. **Ejecutarlo dentro del teléfono** (Termux con Python y Claude Code). Sin probar.
+JARVIS **no es una app nativa de Android**: es una aplicación web. En el teléfono se abre en **Chrome**, y desde el menú ⋮ → «Instalar aplicación» queda como una app más. Usa las API estándar del navegador, y Android pide su permiso con sus propios diálogos. **No se simula ningún permiso**: el panel muestra lo que dice el navegador.
 
-Hasta que elijas, no se ha abierto nada fuera de tu ordenador.
-- El mapa de la demo sale como una bola bastante uniforme; con notas reales suele agruparse mejor.
+El cerebro (`claude`) y tus archivos siguen en tu ordenador. El teléfono se conecta a tu ordenador por un túnel HTTPS privado. Android solo da cámara y micrófono a páginas `https://`.
 
-## 9. Estructura
+### Activarlo (una vez)
+
+**Por defecto está DESACTIVADO.** Nada sale de tu ordenador hasta que hagas esto:
+
+1. **Crea un túnel HTTPS privado** entre tu teléfono y tu ordenador. Por ejemplo, con [Tailscale](https://tailscale.com):
+   - Instálalo en los dos dispositivos con la misma cuenta.
+   - En el ordenador, ejecuta `tailscale serve --bg 8790` (o `--https=443 http://127.0.0.1:8790`, según tu versión).
+   - Tailscale te da un nombre del tipo `mi-ordenador.tu-red.ts.net`. Solo lo ven tus dispositivos.
+2. **Pon en `jarvis/.env`:**
+   ```
+   JARVIS_REMOTE_HOST=mi-ordenador.tu-red.ts.net
+   JARVIS_ACCESS_TOKEN=<pega aquí el resultado de: python3 -c "import secrets;print(secrets.token_urlsafe(32))">
+   ```
+   Con un token de menos de 32 caracteres no se activa.
+3. **Reinicia JARVIS:** `./jarvis.sh reiniciar`. La consola dirá `ACCESO REMOTO ACTIVO`.
+4. **Empareja el teléfono:** abre en él una vez `https://mi-ordenador.tu-red.ts.net/?token=TU_TOKEN`. Queda una cookie segura (HttpOnly, Secure, SameSite=Strict) y ya no hace falta el token.
+5. **En Chrome, ⋮ → «Instalar aplicación».**
+
+Cómo se protege:
+- El servidor sigue escuchando **solo en 127.0.0.1**.
+- Desde fuera solo entra el nombre exacto que configuraste, **con** el token. Cualquier otro `Host` u `Origin` recibe 403.
+- Para desactivarlo, borra esas dos líneas y reinicia.
+
+### Permisos (botón «teléfono» → panel)
+
+| Permiso | Para qué | Cuándo se usa | Cómo se activa en Android |
+|---|---|---|---|
+| Cámara | Ver lo que le enseñes, leer documentos, sacar fotos | Solo cuando dices «abre la cámara». Indicador rojo visible. Se apaga al cerrarla, al pausar, con DETENER TODO y al pasar a segundo plano | Chrome ⋮ → Configuración → Configuración de sitios → Cámara |
+| Micrófono | Escucharte | Solo en modo conversación, con la pantalla abierta. Nunca en segundo plano | Configuración de sitios → Micrófono |
+| Ubicación | «¿Dónde estoy?», rutas | Una lectura cada vez que lo pides. **No se envía a Claude** | Configuración de sitios → Ubicación (y Ubicación activada en Android) |
+| Notificaciones | Avisos de JARVIS | Solo si las activas. **No puede leer las de otras apps** | Chrome → Configuración → Notificaciones |
+| Archivos, fotos y vídeos | Que JARVIS lea o describa lo que elijas | Solo el archivo que eliges en el selector de Android | No necesita permiso |
+| Bluetooth | Identificar un dispositivo cercano | Solo al pulsar «Buscar» en el selector de Android. No empareja ni controla | Bluetooth y Ubicación activados |
+| Compartir | Pasar una foto o un texto a otra app | Solo al pulsar «Compartir» y elegir tú la app | No necesita permiso |
+
+Una página web **no puede abrir directamente la pantalla de ajustes de Android**. Por eso cada permiso del panel tiene «Cómo activarlo», con el camino exacto. Si retiras un permiso mientras se usa, JARVIS lo detecta: cierra la cámara o deja de escuchar, y lo apunta en el registro.
+
+### Órdenes de voz del teléfono
+
+No gastan Claude y responden al instante. Abrir apps, guardar o compartir **siempre espera a que pulses un botón**.
+
+| Dices | Qué hace |
+|---|---|
+| «abre la cámara» / «… frontal» | Enciende la cámara con vista previa |
+| «hazme una foto» | Saca una foto. Guardar o Compartir piden confirmación |
+| «cambia de cámara» | Frontal ↔ trasera |
+| «¿qué ves?» / «lee este documento» | Manda la imagen a Claude (visión) y te lo dice |
+| «cierra la cámara» | Apaga la cámara |
+| «¿dónde estoy?» | Lee la ubicación una vez y ofrece verla en Maps |
+| «elige un archivo» / «abre una foto de la galería» | Abre el selector de Android; JARVIS lee o describe lo que elijas |
+| «busca X en YouTube» | Botón para abrir la búsqueda en YouTube |
+| «¿cómo llego a X?» / «busca X en Google Maps» | Botón para abrir la ruta o la búsqueda en Maps |
+| «escribe por WhatsApp diciendo …» | Botón para abrir WhatsApp con ese texto. **Lo envías tú** |
+| «abre Instagram de usuario», «abre Gmail», «abre la web X» | Botón para abrirlos |
+| **«JARVIS, detener todo»** | PAUSA de emergencia: cámara, micrófono, voz y cerebro parados al instante. También hay botón en el panel |
+
+Un borrador **aprobado** ofrece además «Abrir en Gmail» (enlace `mailto:` con el texto) y «Compartir» (menú de Android, para WhatsApp u otra app). El envío lo haces siempre tú.
+
+### Integraciones: lo que de verdad se puede
+
+| App | Cómo se conecta | Puede | No puede |
+|---|---|---|---|
+| WhatsApp | Enlace oficial `wa.me` y menú Compartir | Abrir WhatsApp con un mensaje ya escrito | Leer chats o enviar por su cuenta. La API oficial solo existe para números de empresa |
+| Instagram | Enlaces y menú Compartir | Abrir un perfil; pasarle una foto, que publicas tú | Leer mensajes directos o publicar solo. La API es solo para cuentas de empresa, con revisión de Meta |
+| YouTube | Enlaces oficiales | Buscar y abrir vídeos | Tu historial (haría falta la API YouTube Data con clave: no conectada) |
+| Gmail | `mailto:` y correo exportado | Abrir un borrador escrito; leer lo que exportes | Leer la bandeja en directo (API de Gmail con OAuth: no conectada) o enviar |
+| Google Maps | Maps URLs oficiales | Buscar sitios y abrir rutas | — |
+| Cámara | API de cámara del navegador | Vista previa, fotos, frontal/trasera, visión con Claude | Grabar vídeo o funcionar en segundo plano |
+| Galería, archivos | Selector de Android | Elegir fotos y documentos para que los lea o describa | Ver o tocar el resto de tu almacenamiento |
+| Navegador | Enlace https | Abrir páginas | Tus pestañas o tu historial |
+
+### Registro de acciones
+
+`estado/acciones.jsonl` (permisos 600, fuera de git) guarda cada acción: permisos concedidos o retirados, cámara abierta o cerrada, fotos, análisis, apps abiertas, archivos elegidos, ubicación, DETENER TODO. Solo guarda el tipo y un detalle corto: **nunca fotos, audio, textos de documentos ni mensajes**. Las últimas acciones se ven en el panel.
+
+### Lo que necesitaría una app nativa (no existe)
+
+Ni una página web ni ninguna app sin permisos especiales de Android puede: leer las notificaciones o los mensajes de otras apps, controlar otras apps, abrir directamente la pantalla de ajustes, o escuchar con la pantalla apagada.
+
+Para eso haría falta una app Android nativa en Kotlin, con:
+- Un servicio en primer plano con notificación visible, para el micrófono en segundo plano.
+- `NotificationListenerService`, para leer notificaciones (Android pide activarlo a mano).
+- Un `AccessibilityService`, para controlar otras apps. Google Play lo restringe mucho.
+- Intents de ajustes, para abrirlos directamente.
+
+No se ha construido: este entorno no tiene el SDK de Android, su servidor de descarga está bloqueado y no hay teléfono para probarla. Además, leer mensajes de WhatsApp o Instagram seguiría sin ser posible por vía oficial.
+
+## 10. Estructura
 
 ```
 jarvis/
@@ -255,14 +338,17 @@ jarvis/
 │   ├── tools.py            las 6 herramientas y la elección de herramienta
 │   ├── data.py             EL ÚNICO ARCHIVO QUE TOCA TUS DATOS REALES (REAL_FOLDERS, JARVIS_DEMO)
 │   ├── voice.py            ElevenLabs: texto a voz y Scribe
+│   ├── dispositivo.py      teléfono: permisos, integraciones, órdenes de voz, registro de acciones
 │   ├── memory.py           escribe en memory/ y en ningún otro sitio
 │   └── prompt.md           las instrucciones del asistente
-├── ui/                     index.html, app.js, graph.js, styles.css
+├── ui/                     index.html, app.js, graph.js, styles.css, dispositivo.js (permisos, cámara,
+│                           apps, panel), manifest.webmanifest y sw.js (instalable en Android)
 ├── data/                   generate_demo.py, importar_correo.py, demo/ (generada), real/ (tus exportaciones)
 ├── memory/                 un .md con fecha por cada cosa que recuerda (fuera de git)
 ├── estado/                 pausa.json y borradores.json (fuera de git, se crea al usarse)
 ├── tests/                  ejecutar_todo.sh, test_criticos.py, navegador.js (+ package.json), test_limites.py,
 │                           prueba_bloqueo.sh, integral.py, prueba_voz_real.py, estabilidad_jarvis.py,
+│                           navegador_dispositivo.js,
 │                           estabilidad_bash.sh, fake_claude.py (claude simulado), mock_elevenlabs.py
 ├── .claude/settings.json   los permisos
 ├── CLAUDE.md               quién eres

@@ -581,5 +581,128 @@ class C6_Recuperacion(Base):
         self.assertEqual(alive, [], "si el servidor muere de golpe, los claude deben terminar solos")
 
 
+# =====================================================================  C7
+PNG_1x1 = ("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+
+
+class C7_Dispositivo(Base):
+    def test_ordenes_del_telefono_no_llaman_a_claude(self):
+        s = self.server().start()
+        time.sleep(0.5)
+        n0 = sum(l.startswith("start") for l in s.claude_lines())
+        cases = {"abre la cámara": "camera_open", "hazme una foto": "camera_capture", "¿dónde estoy?": "location",
+                 "busca recetas en youtube": "open_app", "escribe por whatsapp diciendo hola": "open_app"}
+        for text, action in cases.items():
+            code, o = s.jpost("/api/ask", {"text": text, "conv": "d"})
+            self.assertEqual(o["tool"], "dispositivo", text)
+            self.assertEqual(o["device"]["action"], action, text)
+        self.assertEqual(sum(l.startswith("start") for l in s.claude_lines()), n0, "una orden del teléfono no gasta Claude")
+        o = s.jpost("/api/ask", {"text": "escribe por whatsapp diciendo hola", "conv": "d"})[1]
+        self.assertTrue(o["device"]["url"].startswith("https://wa.me/"), "solo enlace oficial; nada se envía solo")
+
+    def test_detener_todo_pausa_el_servidor(self):
+        s = self.server().start()
+        code, o = s.jpost("/api/ask", {"text": "JARVIS, detener todo", "conv": "d"})
+        self.assertTrue(o.get("paused"))
+        self.assertEqual(o["device"]["action"], "stop_all")
+        st = s.jget("/api/status")
+        self.assertTrue(st["pause"]["on"])
+        self.assertEqual(st["pause"]["by"], "detener todo")
+
+    def test_vision_valida_y_respeta_la_pausa(self):
+        s = self.server().start()
+        code, o = s.jpost("/api/vision", {"image": "data:text/html;base64,PGgxPg==", "question": "x"})
+        self.assertEqual(code, 400, "solo imágenes")
+        code, o = s.jpost("/api/vision", {"image": PNG_1x1, "question": "¿Qué ves?"})
+        self.assertEqual(code, 200, o)
+        self.assertEqual(o["brain"], "claude")
+        s.jpost("/api/pause", {"on": True})
+        code, o = s.jpost("/api/vision", {"image": PNG_1x1, "question": "¿Qué ves?"})
+        self.assertEqual(code, 423, "en pausa no se analiza nada")
+        code, o = s.jpost("/api/archivo", {"name": "a.txt", "text": "hola", "question": "resume"})
+        self.assertEqual(code, 423)
+
+    def test_pausa_corta_una_vision_en_curso(self):
+        s = self.server(sleep=5).start()
+        time.sleep(5.5)
+        res = {}
+        th = threading.Thread(target=lambda: res.update(r=s.jpost("/api/vision", {"image": PNG_1x1, "question": "¿Qué ves?"}, timeout=60)))
+        th.start()
+        self.assertTrue(s.wait_claude_start(2))
+        time.sleep(0.5)
+        t0 = time.time()
+        s.jpost("/api/pause", {"on": True})
+        self.assertLess(time.time() - t0, 3)
+        th.join(30)
+        self.assertEqual(res["r"][0], 423, res)
+
+    def test_registro_de_acciones_sin_contenido_privado(self):
+        s = self.server().start()
+        s.jpost("/api/dispositivo/evento", {"tipo": "foto", "detalle": "capturada 640x480"})
+        s.jpost("/api/archivo", {"name": "secreto.txt", "text": "CONTRASEÑA-SUPERSECRETA-123", "question": "resume"})
+        s.jpost("/api/vision", {"image": PNG_1x1, "question": "¿Qué ves?"})
+        f = s.work / "estado" / "acciones.jsonl"
+        raw = f.read_text()
+        self.assertNotIn("SUPERSECRETA", raw)
+        self.assertNotIn("iVBOR", raw, "nunca se guarda la imagen")
+        self.assertEqual(oct(f.stat().st_mode & 0o777), "0o600")
+        acts = s.jget("/api/dispositivo")["acciones"]
+        self.assertTrue(any(a["tipo"] == "vision" for a in acts) and any(a["tipo"] == "archivo" for a in acts))
+        cat = s.jget("/api/dispositivo")
+        self.assertFalse(cat["remoto"]["activo"], "el acceso remoto está desactivado por defecto")
+        for k in ("camera", "microphone", "geolocation", "notifications", "files"):
+            self.assertTrue(cat["permisos"][k]["para"] and cat["permisos"][k]["android"], k)
+        wa = [i for i in cat["integraciones"] if i["id"] == "whatsapp"][0]
+        self.assertTrue(any("Leer tus mensajes" in x for x in wa["no_puede"]), "no se promete leer WhatsApp")
+
+
+class C8_AccesoRemoto(Base):
+    HOST = "mi-ordenador.ejemplo.ts.net"
+    TOKEN = "t" * 20 + "0123456789abcdefABCDEF"  # 42 caracteres
+
+    def remote(self, token=None):
+        s = self.server()
+        s.env.update(JARVIS_REMOTE_HOST=self.HOST, JARVIS_ACCESS_TOKEN=token or self.TOKEN)
+        return s.start()
+
+    def test_sin_token_rechaza(self):
+        s = self.remote()
+        code, raw = s.get("/api/status", host=self.HOST)
+        self.assertEqual(code, 403)
+        code, raw = s.get("/?token=incorrecto", host=self.HOST)
+        self.assertEqual(code, 403)
+
+    def test_emparejar_y_usar_con_cookie(self):
+        s = self.remote()
+        c = http.client.HTTPConnection("127.0.0.1", s.port, timeout=10)
+        c.putrequest("GET", "/?token=" + self.TOKEN, skip_host=True); c.putheader("Host", self.HOST); c.endheaders()
+        r = c.getresponse(); r.read()
+        self.assertEqual(r.status, 303)
+        ck = r.getheader("Set-Cookie")
+        for attr in ("HttpOnly", "Secure", "SameSite=Strict"):
+            self.assertIn(attr, ck)
+        cookie = ck.split(";")[0]
+        c = http.client.HTTPConnection("127.0.0.1", s.port, timeout=10)
+        c.putrequest("GET", "/api/status", skip_host=True); c.putheader("Host", self.HOST); c.putheader("Cookie", cookie); c.endheaders()
+        r = c.getresponse(); body = r.read()
+        self.assertEqual(r.status, 200)
+        self.assertTrue(json.loads(body)["remote"])
+        for origin, expect in ((f"https://{self.HOST}", 200), (f"http://{self.HOST}", 403), ("https://web-mala.example", 403)):
+            c = http.client.HTTPConnection("127.0.0.1", s.port, timeout=10)
+            c.putrequest("POST", "/api/pause", skip_host=True); c.putheader("Host", self.HOST); c.putheader("Cookie", cookie)
+            c.putheader("Origin", origin); c.putheader("Content-Type", "application/json"); data = b'{"on": false}'
+            c.putheader("Content-Length", str(len(data))); c.endheaders(); c.send(data)
+            r = c.getresponse(); r.read()
+            self.assertEqual(r.status, expect, origin)
+        code, raw = s.get("/api/status", host="otro.ts.net")
+        self.assertEqual(code, 403, "solo el host configurado")
+
+    def test_token_corto_no_activa_el_acceso(self):
+        s = self.remote(token="corto")
+        code, raw = s.get("/?token=corto", host=self.HOST)
+        self.assertEqual(code, 403)
+        self.assertFalse(s.jget("/api/status")["remote"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

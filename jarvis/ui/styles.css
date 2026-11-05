@@ -130,7 +130,7 @@ a.wl.missing { color: var(--dim); border-bottom-style: dashed; cursor: default; 
 /* ---- pausa y autorizaciones ---- */
 .pill.pause { color: var(--bad); border-color: rgba(214, 106, 92, 0.45); }
 .pill.pause.on { background: rgba(214, 106, 92, 0.15); }
-.pause-banner { position: fixed; top: 48px; left: 50%; transform: translateX(-50%); z-index: 5; display: flex; align-items: center;
+.pause-banner { position: fixed; top: 48px; left: 50%; transform: translateX(-50%); z-index: 9; display: flex; align-items: center;
   gap: 12px; padding: 8px 10px 8px 16px; background: #1a100f; border: 1px solid rgba(214, 106, 92, 0.6); border-radius: var(--r);
   color: var(--bad); font-size: 12.5px; max-width: calc(100vw - 32px); }
 .pause-banner .pill { color: var(--text); }
@@ -140,3 +140,28 @@ body.paused #graph { filter: saturate(0.2) brightness(0.6); }
 .approval .state { font: 11px var(--mono); color: var(--warn); }
 .approval.done .state { color: var(--text-2); }
 .answer-card hr { border: 0; border-top: 1px solid var(--line); margin: 12px 0; }
+
+/* ---- teléfono: cámara, apps, panel ---- */
+.camera { position: fixed; z-index: 6; right: 12px; top: 52px; width: min(420px, calc(100vw - 24px)); background: var(--panel);
+  border: 1px solid var(--bad); border-radius: var(--r); padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.camera video, .camera img { width: 100%; border-radius: 4px; background: #000; max-height: 45vh; object-fit: contain; }
+.cam-head { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.cam-head .icon-btn { margin-left: auto; }
+.rec { color: var(--bad); font: 600 11px var(--mono); letter-spacing: 0.08em; }
+.camera .row, .app-card .row, .perm .row { display: flex; flex-wrap: wrap; gap: 6px; }
+.app-card { position: fixed; z-index: 6; left: 50%; bottom: 76px; transform: translateX(-50%); width: min(460px, calc(100vw - 24px));
+  background: var(--panel); border: 1px solid var(--accent); border-radius: var(--r); padding: 12px 14px; }
+.app-card a.pill { display: inline-flex; align-items: center; text-decoration: none; }
+.panel-device { position: fixed; z-index: 7; top: 52px; bottom: 76px; right: 12px; width: min(460px, calc(100vw - 24px)); overflow-y: auto;
+  background: #0b0e12; border: 1px solid var(--line-2); border-radius: var(--r); padding: 12px 14px; }
+.panel-device h3 { font: 600 10px/1 var(--mono); letter-spacing: 0.16em; text-transform: uppercase; color: var(--dim); margin: 14px 0 8px; }
+.perm { border-top: 1px solid var(--line); padding: 8px 0; display: flex; flex-direction: column; gap: 4px; }
+.perm-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.small { font-size: 12px; }
+.bad-text { color: var(--bad); }
+body.cam-on #topbar { border-bottom-color: var(--bad); }
+@media (max-width: 700px) {
+  #left, #right { display: none; }
+  #bar { flex-wrap: wrap; height: auto; padding: 6px; }
+  #ask { order: -1; flex-basis: 100%; }
+}
