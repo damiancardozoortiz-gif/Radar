@@ -1,6 +1,13 @@
 /* JARVIS · interfaz. JavaScript sin frameworks. */
 "use strict";
 
+// ---- Turnos de palabra: ajusta aquí ----
+const SILENCE_MS = 900;        // silencio que cierra tu turno
+const LEVEL_THRESHOLD = 0.03;  // volumen (RMS 0..1) a partir del cual cuenta como voz
+const MIN_SPEECH_MS = 500;     // menos de medio segundo de voz = ruido, no se manda
+const MAX_TURN_MS = 30000;     // un turno no dura más de esto
+const VAD_INTERVAL_MS = 50;    // bucle del volumen: setInterval (rAF se para en segundo plano)
+
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -183,7 +190,8 @@ async function ask(text, tool) {
     showAnswer(o, text);
     if (o.saved) refreshStatus();
     App.last = o;
-    if (window.onAnswer) await window.onAnswer(o); // voz (paso 4)
+    App.busy = false;
+    if (window.onAnswer) await window.onAnswer(o); // voz
   } catch (e) {
     toast("Error del servidor: " + e.message, true);
   } finally {
@@ -221,6 +229,187 @@ async function refreshStatus() {
 }
 setInterval(refreshStatus, 5000);
 
+// ---------------- voz: escuchar ----------------
+const Mic = { stream: null, ctx: null, analyser: null, buf: null, rec: null, chunks: [], timer: null,
+  conversation: false, deaf: true, t0: 0, voiceMs: 0, lastVoice: 0, heard: false, mime: "" };
+
+function buildBars() { $("#bars").innerHTML = "<i></i>".repeat(14); }
+buildBars();
+
+async function micInit() {
+  if (Mic.stream) return true;
+  if (!navigator.mediaDevices || !window.MediaRecorder) {
+    chip("#st-mic", "micrófono: navegador sin soporte", "bad");
+    toast("Este navegador no puede grabar audio (MediaRecorder). Usa Chrome, Edge, Firefox o Safari recientes.", true, 0);
+    return false;
+  }
+  try {
+    Mic.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+  } catch (e) {
+    const blocked = e.name === "NotAllowedError" || e.name === "SecurityError";
+    chip("#st-mic", blocked ? "micrófono: BLOQUEADO" : "micrófono: no encontrado", "bad");
+    $("#btn-mic").classList.add("blocked");
+    toast(blocked ? "El micrófono está bloqueado. Permítelo en el candado de la barra de direcciones y vuelve a pulsar el micrófono."
+                  : "No encuentro ningún micrófono (" + e.name + ").", true, 0);
+    return false;
+  }
+  Mic.ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const src = Mic.ctx.createMediaStreamSource(Mic.stream);
+  Mic.analyser = Mic.ctx.createAnalyser(); Mic.analyser.fftSize = 1024;
+  Mic.buf = new Float32Array(Mic.analyser.fftSize);
+  src.connect(Mic.analyser);
+  Mic.mime = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"].find(m => MediaRecorder.isTypeSupported(m)) || "";
+  $("#btn-mic").classList.remove("blocked");
+  Mic.stream.getAudioTracks()[0].addEventListener("ended", () => {
+    chip("#st-mic", "micrófono: desconectado", "bad"); toast("El micrófono se ha desconectado.", true, 0);
+    Mic.stream = null; stopConversation();
+  });
+  return true;
+}
+
+function level() {
+  Mic.analyser.getFloatTimeDomainData(Mic.buf);
+  let sum = 0; for (let i = 0; i < Mic.buf.length; i++) sum += Mic.buf[i] * Mic.buf[i];
+  return Math.sqrt(sum / Mic.buf.length);
+}
+
+function startListening() {
+  if (!Mic.stream || App.state === "speaking" || App.busy) return;
+  if (Mic.ctx.state === "suspended") Mic.ctx.resume();
+  Mic.chunks = []; Mic.heard = false; Mic.voiceMs = 0; Mic.t0 = performance.now(); Mic.lastVoice = 0;
+  Mic.rec = new MediaRecorder(Mic.stream, Mic.mime ? { mimeType: Mic.mime } : undefined);
+  Mic.rec.ondataavailable = e => { if (e.data.size) Mic.chunks.push(e.data); };
+  Mic.rec.onstop = onRecorded;
+  Mic.rec.start(250);
+  Mic.deaf = false;
+  setState("listening");
+  chip("#st-mic", "micrófono: escuchando", "ok");
+  $("#btn-mic").classList.add("on");
+  $("#listen").classList.remove("hidden");
+  clearInterval(Mic.timer);
+  Mic.timer = setInterval(vadTick, VAD_INTERVAL_MS);
+}
+
+function vadTick() {
+  if (Mic.deaf || !Mic.rec || Mic.rec.state !== "recording") return;
+  const now = performance.now(), lv = level();
+  App.level = Math.min(1, lv * 8);
+  const bars = $("#bars").children;
+  for (let i = 0; i < bars.length; i++) bars[i].style.height = Math.max(2, Math.min(24, lv * 260 * (0.5 + Math.random()))) + "px";
+  $("#listen-time").textContent = ((now - Mic.t0) / 1000).toFixed(1).replace(".", ",") + " s";
+  if (lv > LEVEL_THRESHOLD) {
+    if (Mic.lastVoice) Mic.voiceMs += now - Mic.lastVoice > VAD_INTERVAL_MS * 3 ? VAD_INTERVAL_MS : now - Mic.lastVoice;
+    Mic.heard = true; Mic.lastVoice = now;
+  }
+  const silentFor = Mic.lastVoice ? now - Mic.lastVoice : 0;
+  if ((Mic.heard && silentFor > SILENCE_MS) || now - Mic.t0 > MAX_TURN_MS) stopRecording();
+  // En modo conversación, si no has dicho nada en 30 s, se reinicia el turno sin mandar nada.
+}
+
+function stopRecording() {
+  clearInterval(Mic.timer); Mic.deaf = true; App.level = 0;
+  if (Mic.rec && Mic.rec.state === "recording") Mic.rec.stop();
+}
+
+async function onRecorded() {
+  const blob = new Blob(Mic.chunks, { type: (Mic.rec && Mic.rec.mimeType) || "audio/webm" });
+  const speech = Mic.voiceMs, heard = Mic.heard;
+  Mic.rec = null;
+  $("#listen").classList.add("hidden");
+  if (!Mic.conversation) { finishTurn(); return; }
+  if (!heard || speech < MIN_SPEECH_MS) { startListening(); return; } // ruido: no se manda
+  setState("thinking");
+  chip("#st-mic", "micrófono: transcribiendo…", "");
+  let text = "";
+  try {
+    const r = await fetch("/api/listen", { method: "POST", headers: { "Content-Type": blob.type.split(";")[0] }, body: blob });
+    const o = await r.json();
+    if (r.ok) text = (o.text || "").trim();
+    else markVoice(o.error);
+  } catch (e) { /* sin error en pantalla: seguimos escuchando */ }
+  if (!text || !Mic.conversation) { setState("idle"); if (Mic.conversation) startListening(); return; }
+  $("#q").value = ""; $("#q").placeholder = "«" + text + "»";
+  setState("idle");
+  await ask(text);
+}
+
+function finishTurn() {
+  $("#listen").classList.add("hidden");
+  if (App.state === "listening") setState("idle");
+}
+
+async function startConversation() {
+  if (!(await micInit())) return;
+  Mic.conversation = true;
+  startListening();
+}
+function stopConversation() {
+  Mic.conversation = false;
+  stopRecording();
+  $("#btn-mic").classList.remove("on");
+  if (Mic.stream) chip("#st-mic", "micrófono: listo", "");
+  finishTurn();
+}
+
+// ---------------- voz: hablar ----------------
+const Voice = { audio: null, muted: false, ok: true };
+function markVoice(err) {
+  Voice.ok = false;
+  chip("#st-voice", "voz: NO DISPONIBLE", "bad"); $("#st-voice").title = err || "";
+  toast("La voz no está disponible: " + (err || "error") + ". Sigo por escrito.", true, 9000);
+}
+
+function stopSpeaking() {
+  if (Voice.audio) { Voice.audio.onended = null; Voice.audio.pause(); Voice.audio = null; }
+  if (App.state === "speaking") setState("idle");
+}
+
+async function speak(text) {
+  if (!text || Voice.muted) return false;
+  if (App.status && App.status.voice && !App.status.voice.configured) return false;
+  let r;
+  try { r = await fetch("/api/speak", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) }); }
+  catch (e) { markVoice("sin conexión con el servidor"); return false; }
+  if (!r.ok) { const o = await r.json().catch(() => ({})); markVoice(o.error); return false; }
+  if (!Voice.ok) { Voice.ok = true; chip("#st-voice", "voz: lista", "ok"); }
+  const url = URL.createObjectURL(await r.blob());
+  stopRecording(); Mic.deaf = true;                // sordo mientras habla
+  if (Mic.stream) chip("#st-mic", "micrófono: sordo mientras hablo", "warn");
+  return new Promise(resolve => {
+    const a = Voice.audio = new Audio(url);
+    a.onended = a.onerror = () => { URL.revokeObjectURL(url); Voice.audio = null; resolve(true); };
+    setState("speaking");
+    a.play().catch(() => { Voice.audio = null; toast("El navegador no dejó reproducir el audio. Pulsa en la página y repite.", true); resolve(false); });
+  });
+}
+
+window.onAnswer = async o => {
+  await speak(o.say);
+  setState("idle");                                // siempre vuelve a "en espera"
+  if (Mic.conversation) startListening();           // modo conversación: vuelve a escuchar solo
+};
+
+// ---------------- botones y teclas ----------------
+$("#btn-mic").onclick = () => {
+  if (App.state === "speaking") { stopSpeaking(); if (!Mic.conversation) startConversation(); else startListening(); return; }
+  if (Mic.conversation) stopConversation(); else startConversation();
+};
+$("#btn-mute").onclick = () => {
+  Voice.muted = !Voice.muted;
+  $("#btn-mute").classList.toggle("on", Voice.muted);
+  $("#btn-mute").textContent = Voice.muted ? "sin voz" : "silencio";
+  if (Voice.muted) stopSpeaking();
+};
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT" && e.key !== "Escape") return;
+  if (e.key === "Escape") { stopSpeaking(); stopConversation(); setState("idle"); }
+  else if (e.code === "Space") {
+    e.preventDefault();
+    if (App.state === "speaking") { stopSpeaking(); if (Mic.conversation) startListening(); else startConversation(); }
+    else if (App.state === "idle" && !App.busy) { if (Mic.conversation) startListening(); else startConversation(); }
+  }
+});
+
 // ---------------- ejemplos que rotan ----------------
 let exI = 0;
 setInterval(() => { if (document.activeElement !== $("#q")) { exI = (exI + 1) % EXAMPLES.length; $("#q").placeholder = EXAMPLES[exI]; } }, 4000);
@@ -245,8 +434,10 @@ async function boot() {
   }
   fetch("/api/reset", { method: "POST", body: JSON.stringify({ conv: App.conv }) }).catch(() => {});
   refreshStatus();
-  chip("#st-mic", "micrófono: paso 4", "");
-  chip("#st-voice", "voz: paso 4", "");
+  chip("#st-mic", window.MediaRecorder ? "micrófono: pulsa para hablar" : "micrófono: sin soporte", window.MediaRecorder ? "" : "bad");
+  const v = (App.status && App.status.voice) || {};
+  if (!v.configured) { Voice.ok = false; chip("#st-voice", "voz: sin clave", "bad"); toast("La voz no está configurada: falta ELEVENLABS_API_KEY en .env. Funciono por escrito.", true, 9000); }
+  else chip("#st-voice", "voz: lista", "");
   requestAnimationFrame(drawReactor);
 }
 boot();

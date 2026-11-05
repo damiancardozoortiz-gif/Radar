@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import cerebro  # noqa: E402
 import data  # noqa: E402
 import tools  # noqa: E402
+import voice  # noqa: E402
 from vault import VAULT  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -112,6 +113,20 @@ class Handler(BaseHTTPRequestHandler):
                 if not text:
                     return self.send_json({"error": "texto vacío"}, 400)
                 return self.send_json(cerebro.answer(str(body.get("conv", "anon"))[:64], text, forced))
+            if p == "/api/speak":
+                body = json.loads(self.read_body(64 * 1024) or b"{}")
+                try:
+                    audio, ctype = voice.speak(str(body.get("text", "")))
+                except voice.VoiceError as e:
+                    return self.send_json({"error": str(e)}, 503)
+                return self.send_bytes(audio, ctype)
+            if p == "/api/listen":
+                audio = self.read_body(10 * 1024 * 1024)
+                try:
+                    text = voice.listen(audio, self.headers.get("Content-Type", "audio/webm"))
+                except voice.VoiceError as e:
+                    return self.send_json({"error": str(e)}, 503)
+                return self.send_json({"text": text})
             if p == "/api/reset":
                 body = json.loads(self.read_body(4096) or b"{}")
                 cerebro.reset(str(body.get("conv", ""))[:64])
@@ -126,7 +141,8 @@ def status():
     return {"mode": data.mode(), "today": data.today().isoformat(), "notes": s["notes"],
             "edges": s["edges"], "by_type": s["by_type"], "skipped": s["skipped"],
             "mail": data.inbox() is not None, "calendar": data.calendar() is not None,
-            "brain": cerebro.STATUS}
+            "brain": cerebro.STATUS,
+            "voice": {"configured": voice.configured(), **voice.STATUS}}
 
 
 def main():
