@@ -231,6 +231,8 @@ Con `claude` real, 20 de 20 rondas pidiendo Bash a JARVIS se recuperaron. Ningú
 
 ## 9. JARVIS en el teléfono (Android)
 
+> **¿Sin ordenador?** Para instalar y ejecutar JARVIS entero dentro del teléfono con Termux, sigue [TERMUX.md](TERMUX.md).
+
 ### Cómo funciona
 
 JARVIS **no es una app nativa de Android**: es una aplicación web. En el teléfono se abre en **Chrome**, y desde el menú ⋮ → «Instalar aplicación» queda como una app más. Usa las API estándar del navegador, y Android pide su permiso con sus propios diálogos. **No se simula ningún permiso**: el panel muestra lo que dice el navegador.
