@@ -37,6 +37,7 @@ MOCK = TESTS / "mock_elevenlabs.py"
 _INPROC = Path(tempfile.mkdtemp(prefix="jarvis-inproc-"))
 os.environ["JARVIS_STATE_DIR"] = str(_INPROC / "estado")
 os.environ["JARVIS_MEMORY_DIR"] = str(_INPROC / "memory")
+os.environ["JARVIS_CLAUDE_BIN"] = str(FAKE)  # en el mismo proceso, nunca el claude real
 sys.path.insert(0, str(ROOT / "agent"))
 
 
@@ -287,8 +288,10 @@ class C2_PausaInmediata(Base):
         time.sleep(7)  # el tiempo que habría tardado la respuesta
         self.assertEqual(s.memory_files(), [], "escritura tardía")
         lines = s.claude_lines()
-        pid = [l for l in lines if l.startswith("start") and "recuerda=True" in l][0].split()[1]
-        self.assertFalse(any(l.startswith("end") and pid in l for l in lines), "el proceso claude no se mató")
+        tag = [l for l in lines if l.startswith("start") and "recuerda=True" in l][0].split()[2]  # turn=pid:n
+        self.assertTrue(tag.startswith("turn="))
+        self.assertFalse(any(l.startswith("end") and l.split()[2] == tag for l in lines),
+                         "el turno de claude no se cortó: terminó igualmente")
         self.assertGreaterEqual(s.jget("/api/status")["brain"]["cancelled"], 1)
 
     def test_pausa_impide_borrador_tardio(self):
@@ -322,9 +325,11 @@ class C2_PausaInmediata(Base):
         time.sleep(5)
         self.assertEqual(s.memory_files(), [])
         self.assertEqual(s.jget("/api/status")["approvals"], [])
+        n_paused = sum(l.startswith("start") for l in s.claude_lines())
         code, o = s.jpost("/api/ask", {"text": "Recuerda que esto tampoco", "conv": "x"})
         self.assertTrue(o.get("paused"))
-        self.assertEqual(sum(l.startswith("start") for l in s.claude_lines()), 6, "en pausa no se lanza claude")
+        time.sleep(1)
+        self.assertEqual(sum(l.startswith("start") for l in s.claude_lines()), n_paused, "en pausa no se lanza claude")
 
     def test_voz_tardia_no_se_entrega(self):
         m = self.mock(delay=3)
@@ -354,12 +359,12 @@ class C2_PausaInmediata(Base):
             estado.set_pause(True, by="prueba")  # la pausa llega mientras "Claude" responde
             return {"result": json.dumps({"decir": "Guardado.", "detalle": "Borrador: hola",
                                           "recordar": "esto no debe guardarse"}), "session_id": "s", "duration_api_ms": 1}
-        orig = cerebro.call_claude
-        cerebro.call_claude = late_call
+        orig = cerebro.brain_ask
+        cerebro.brain_ask = lambda cid, c, message, web=False: late_call()
         try:
             o = cerebro.answer("tarde", "Recuerda que esto no debe guardarse y escribe un borrador")
         finally:
-            cerebro.call_claude = orig
+            cerebro.brain_ask = orig
             estado.set_pause(False)
         self.assertTrue(o.get("paused"), o)
         self.assertIsNone(o.get("saved"))
@@ -523,6 +528,57 @@ class C5_ComandoClaude(Base):
         for flag in ["--output-format", "--model", "--effort", "--system-prompt"]:
             self.assertIn(flag, line)
         self.assertNotIn("--json-schema", line)
+
+
+# =====================================================================================  C6
+class C6_Recuperacion(Base):
+    def test_respuesta_degenerada_se_corta_y_se_recupera(self):
+        s = self.server().start()
+        t0 = time.time()
+        code, o = s.jpost("/api/ask", {"text": "Haz un bucle con Bash", "conv": "g"})
+        secs = time.time() - t0
+        self.assertEqual(code, 200)
+        self.assertLess(secs, 10, "la respuesta degenerada no se cortó a tiempo")
+        self.assertEqual(o["brain"], "respaldo")
+        self.assertIn("degenerada", o["warning"])
+        self.assertNotIn("<invoke", o["say"])
+        code, o2 = s.jpost("/api/ask", {"text": "Hola", "conv": "g"})
+        self.assertEqual(o2["brain"], "claude", "tras el fallo, el siguiente turno funciona")
+        self.assertEqual(s.jget("/api/status")["brain"]["brain"], "listo")
+
+    def test_proceso_claude_muerto_se_recupera(self):
+        s = self.server().start()
+        s.jpost("/api/ask", {"text": "Hola", "conv": "k"})
+        pids = [l.split()[1] for l in s.claude_lines() if l.startswith("start")]
+        for pid in set(pids):  # matamos a mano los procesos claude, como si fallaran
+            try:
+                os.kill(int(pid.split("=")[1]), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        time.sleep(0.5)
+        code, o = s.jpost("/api/ask", {"text": "Hola otra vez", "conv": "k"})
+        if o["brain"] != "claude":  # el primer intento puede caer en respaldo; el siguiente debe funcionar
+            code, o = s.jpost("/api/ask", {"text": "Hola otra vez", "conv": "k"})
+        self.assertEqual(o["brain"], "claude")
+
+    def test_sin_huerfanos_tras_apagar(self):
+        s = self.server().start()
+        for i in range(3):
+            s.jpost("/api/ask", {"text": "Hola", "conv": f"o{i}"})
+        pids = {int(l.split()[1].split("=")[1]) for l in s.claude_lines() if l.startswith("start")}
+        s.stop(signal.SIGTERM)
+        time.sleep(1.5)
+        alive = [p for p in pids if os.path.exists(f"/proc/{p}")]
+        self.assertEqual(alive, [], "quedaron procesos claude vivos tras apagar")
+
+    def test_sin_huerfanos_tras_kill9_del_servidor(self):
+        s = self.server().start()
+        s.jpost("/api/ask", {"text": "Hola", "conv": "z"})
+        pids = {int(l.split()[1].split("=")[1]) for l in s.claude_lines() if l.startswith("start")}
+        s.stop(signal.SIGKILL)
+        time.sleep(2)
+        alive = [p for p in pids if os.path.exists(f"/proc/{p}")]
+        self.assertEqual(alive, [], "si el servidor muere de golpe, los claude deben terminar solos")
 
 
 if __name__ == "__main__":

@@ -115,6 +115,15 @@ async function main() {
     ok(!mlog.includes("clave-de-prueba"), "la clave no aparece en los registros");
     ok(!(await p.content()).includes("clave-de-prueba"), "la clave nunca llega al navegador");
 
+    // ------------------------------------------------------------ 2b. conversación por voz larga
+    const sttBefore = fs.readFileSync(mockLog, "utf8").split('"STT"').length - 1;
+    const t5 = Date.now();
+    while ((fs.readFileSync(mockLog, "utf8").split('"STT"').length - 1) - sttBefore < 5 && Date.now() - t5 < 90000) await sleep(500);
+    const turns = (fs.readFileSync(mockLog, "utf8").split('"STT"').length - 1) - sttBefore;
+    ok(turns >= 5, `5 turnos de voz seguidos sin reiniciar nada (${turns} turnos)`);
+    ok(await p.evaluate(() => Mic.conversation && !!Mic.stream), "el modo conversación sigue activo tras varios turnos");
+    ok(/claude/.test(await p.textContent("#answer-meta")), "la última respuesta sigue viniendo del cerebro");
+
     // ------------------------------------------------------------ 3. Esc y Espacio
     console.log("\n== Esc y Espacio");
     await p.waitForFunction(() => App.state === "speaking", null, { timeout: 30000 });

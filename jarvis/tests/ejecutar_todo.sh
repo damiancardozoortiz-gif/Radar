@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Ejecuta TODAS las pruebas de JARVIS y resume el resultado.
-#   bash tests/ejecutar_todo.sh
+# Ejecuta las pruebas de JARVIS y resume el resultado.
+#   bash tests/ejecutar_todo.sh              las 4 baterías (unos 4 minutos)
+#   bash tests/ejecutar_todo.sh --completo   además: integral, estabilidad x20 y voz real (unos 15 minutos)
 #
 # 1. test_criticos.py   sin internet ni suscripción (claude y ElevenLabs simulados)      ~1 min
 # 2. navegador.js       Playwright + Chromium (opcional; si falta se marca OMITIDA)       ~40 s
@@ -44,6 +45,18 @@ if command -v claude >/dev/null; then
   if bash tests/prueba_bloqueo.sh; then record "prueba_bloqueo.sh" "PASA"; else record "prueba_bloqueo.sh" "FALLA"; fi
 else
   echo "OMITIDA: no encuentro el comando claude"; record "prueba_bloqueo.sh" "OMITIDA"
+fi
+
+if [ "${1:-}" = "--completo" ]; then
+  for t in "integral.py" "estabilidad_jarvis.py 20" "estabilidad_bash.sh 20" "prueba_voz_real.py"; do
+    name=${t%% *}; args=${t#"$name"}
+    echo; echo "=== extra: $t"
+    if ! command -v claude >/dev/null && [ "$name" != "prueba_voz_real.py" ]; then echo "OMITIDA: no encuentro claude"; record "$t" "OMITIDA"; continue; fi
+    case "$name" in *.sh) cmd=(bash "tests/$name");; *) cmd=(python3 "tests/$name");; esac
+    # shellcheck disable=SC2086
+    "${cmd[@]}" $args; rc=$?
+    if [ $rc = 0 ]; then record "$t" "PASA"; elif [ $rc = 2 ]; then record "$t" "PENDIENTE"; else record "$t" "FALLA"; fi
+  done
 fi
 
 echo; echo "=== RESUMEN"

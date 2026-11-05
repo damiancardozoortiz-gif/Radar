@@ -19,6 +19,7 @@ from pathlib import Path
 import data
 import estado
 import memory
+import sesiones
 import tools
 from vault import VAULT, norm
 
@@ -31,11 +32,12 @@ EFFORT = "low"
 TIMEOUT = 25
 TIMEOUT_WEB = 60
 MAX_TURNS = 10
+ROTATE_TURNS = 20  # cada 20 turnos, proceso nuevo con los últimos 10 como texto: el contexto no crece sin fin
 MAX_SAY_WORDS = 25
 DRAFT_RE = re.compile(r"borrador", re.I)
 
 STATUS = {"brain": "arrancando", "detail": "", "warm_ms": None, "last_ms": None, "claude": None, "calls": 0,
-          "cancelled": 0, "last_wall_ms": None, "last_api_ms": None}
+          "cancelled": 0, "last_wall_ms": None, "last_api_ms": None, "mode": "persistente", "sessions": 0}
 
 # ---- PAUSA: interruptor de emergencia (estado persistente en estado.py).
 # Mientras está activa no se llama a Claude, no se ejecutan herramientas, no se escribe memoria
@@ -103,14 +105,76 @@ def _kill(p):
 
 
 def cancel_running():
-    """La PAUSA llama a esto: corta todas las llamadas a Claude en curso."""
+    """La PAUSA llama a esto: corta todas las llamadas a Claude en curso y cierra los procesos persistentes."""
+    busy = sesiones.busy_count()
     with _running_lock:
         procs = list(RUNNING)
     for p in procs:
         p.jarvis_cancelled = True
         _kill(p)
-    STATUS["cancelled"] += len(procs)
-    return len(procs)
+    sesiones.kill_all()
+    STATUS["cancelled"] += len(procs) + busy
+    return len(procs) + busy
+
+
+def stream_cmd():
+    """Las mismas opciones de seguridad que la llamada normal, en modo conversación persistente."""
+    return [claude_exe(), "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+            "--include-partial-messages", "--model", MODEL, "--effort", EFFORT, "--safe-mode", "--tools", ""]
+
+
+def _prewarm_quiet():
+    try:
+        sesiones.prewarm(stream_cmd(), system_prompt(), _env(), str(ROOT),
+                         'Calentamiento. Responde solo {"decir": "listo", "detalle": "", "recordar": null}')
+    except Exception:
+        pass
+
+
+def brain_ask(cid, c, message, web=False):
+    """Pregunta a Claude. Normal: proceso persistente de la conversación. Web: llamada aparte con WebSearch/WebFetch."""
+    if web:
+        raw = call_claude(message, web=True, session=c["session"])
+        sesiones.mark_stale(cid)  # el proceso persistente no vio este turno: se reabre retomando la sesión
+        return raw
+    if not claude_exe():
+        raise BrainError("no encuentro el comando claude")
+    if c["turns"] >= ROTATE_TURNS:  # rotación: sesión nueva; compose() ya incluye los últimos 10 turnos
+        sesiones.drop(cid)
+        c["session"], c["turns"] = None, 0
+        message = compose_rotated(c, message)
+    t0 = time.perf_counter()
+    with estado.LOCK:  # pausa comprobada y mensaje enviado bajo el mismo candado que set_pause
+        if estado.paused():
+            raise estado.Paused()
+        try:
+            had_spare = sesiones.SPARE["s"] is not None
+            s = sesiones.get(cid, stream_cmd(), system_prompt(), _env(), str(ROOT), resume=c["session"])
+            turn = s.send(message)
+            if had_spare and sesiones.SPARE["s"] is None:  # se usó el precalentado: preparar otro
+                threading.Thread(target=_prewarm_quiet, daemon=True).start()
+        except (sesiones.SessionError, OSError) as e:
+            sesiones.drop(cid, kill=True)
+            raise BrainError(str(e))
+        STATUS["calls"] += 1
+    try:
+        raw = s.wait_reply(turn, TIMEOUT)
+    except sesiones.SessionError as e:
+        sesiones.drop(cid, kill=True)  # el siguiente turno abre otro proceso retomando la sesión
+        raise BrainError(str(e))
+    if s.cancelled or estado.paused():
+        raise estado.Paused("cancelado por la pausa")
+    STATUS["last_wall_ms"] = int((time.perf_counter() - t0) * 1000)
+    STATUS["sessions"] = sesiones.count()
+    c["turns"] += 1
+    return raw
+
+
+def compose_rotated(c, message):
+    if not c["history"]:
+        return message
+    hist = "\n".join(f"- Usuario: {h['q']}\n  JARVIS: {h['a']}" for h in c["history"])
+    return f"Conversación hasta ahora (últimos {len(c['history'])} turnos):\n{hist}\n\n{message}"
 
 
 def call_claude(message, web=False, session=None, timeout=None):
@@ -212,7 +276,8 @@ def conv(cid):
     with _convs_lock:
         c = _convs.get(cid)
         if not c:
-            c = _convs[cid] = {"session": None, "history": deque(maxlen=MAX_TURNS), "lock": threading.Lock()}
+            c = _convs[cid] = {"session": None, "history": deque(maxlen=MAX_TURNS), "lock": threading.Lock(),
+                               "turns": 0}
         return c
 
 
@@ -307,11 +372,13 @@ def _answer(cid, question, forced_tool=None):
         web = tool == "investigar_en_la_web"
         out = {"tool": tool, "why": why, "card": res.get("card"), "brain": "claude", "warning": None}
         try:
-            raw = call_claude(compose(question, res, c), web=web, session=c["session"])
+            raw = brain_ask(cid, c, compose(question, res, c), web=web)
             if estado.paused():  # respuesta tardía: la pausa llegó mientras pensaba
                 raise estado.Paused()
             c["session"] = raw.get("session_id") or c["session"]
             rep = parse_reply(raw.get("result", ""))
+            if not rep["formato"] and re.search(r"<\s*/?\s*(invoke|parameter|function_calls|tool_use)", rep["decir"]):
+                raise BrainError("respuesta inválida (marcado de herramienta): no se lee en voz alta")
             say = clean_speech(rep["decir"])
             saved = memory.save(rep["recordar"]) if rep["recordar"] else None  # lanza Paused si hay pausa
             if saved and norm(saved["text"])[:40] not in norm(say):
@@ -369,6 +436,7 @@ def fallback(question, tool, res):
 def reset(cid):
     with _convs_lock:
         _convs.pop(cid, None)
+    sesiones.drop(cid)
 
 
 # ------------------------------------------------------------------ calentamiento
@@ -382,13 +450,17 @@ def warmup():
         STATUS["claude"] = claude_exe()
         t0 = time.perf_counter()
         try:
-            raw = call_claude('Calentamiento. Responde solo {"decir": "listo", "detalle": "", "recordar": null}', timeout=40)
+            if not claude_exe():
+                raise BrainError("no encuentro el comando claude")
+            sesiones.prewarm(stream_cmd(), system_prompt(), _env(), str(ROOT),
+                             'Calentamiento. Responde solo {"decir": "listo", "detalle": "", "recordar": null}')
+            STATUS["sessions"] = sesiones.count()
             STATUS["brain"], STATUS["detail"] = "listo", ""
             STATUS["warm_ms"] = int((time.perf_counter() - t0) * 1000)
             print(f"  cerebro listo · calentamiento {STATUS['warm_ms']} ms", flush=True)
         except estado.Paused:
             STATUS["brain"], STATUS["detail"] = "en pausa", ""
-        except BrainError as e:
+        except (BrainError, sesiones.SessionError, OSError) as e:
             STATUS["brain"], STATUS["detail"] = "no disponible", str(e)
             print(f"  cerebro NO disponible: {e}", flush=True)
     threading.Thread(target=run, daemon=True).start()

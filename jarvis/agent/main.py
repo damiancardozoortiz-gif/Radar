@@ -7,6 +7,7 @@ import errno
 import json
 import mimetypes
 import os
+import signal
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -17,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import cerebro  # noqa: E402
 import data  # noqa: E402
 import estado  # noqa: E402
+import sesiones  # noqa: E402
 import tools  # noqa: E402
 import voice  # noqa: E402
 from vault import VAULT  # noqa: E402
@@ -220,10 +222,18 @@ def main():
     if st["drafts"]:
         print(f"  {len(estado.pending())} borradores pendientes de tu sí (no se ejecuta nada).", flush=True)
     cerebro.warmup()
+    sesiones.start_reaper()
+
+    def bye(*_):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, bye)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
         pass
+    finally:  # apagado limpio: cierra los procesos claude abiertos
+        sesiones.shutdown()
+        print("JARVIS apagado.", flush=True)
 
 
 if __name__ == "__main__":

@@ -420,7 +420,11 @@ function markVoice(err) {
 }
 
 function stopSpeaking() {
-  if (Voice.audio) { const a = Voice.audio; Voice.audio = null; const done = a.onended; a.onended = a.onerror = null; a.pause(); if (done) done(); }
+  if (Voice.audio) {
+    const a = Voice.audio; Voice.audio = null; const done = a.onended; a.onended = a.onerror = null;
+    a.pause(); a.removeAttribute("src"); a.load(); // desconecta el audio antes de liberar su dirección temporal
+    if (done) done();
+  }
   if (App.state === "speaking") setState("idle");
 }
 
@@ -438,7 +442,7 @@ async function speak(text) {
   if (Mic.stream) chip("#st-mic", "micrófono: sordo mientras hablo", "warn");
   return new Promise(resolve => {
     const a = Voice.audio = new Audio(url);
-    a.onended = a.onerror = () => { URL.revokeObjectURL(url); Voice.audio = null; resolve(true); };
+    a.onended = a.onerror = () => { setTimeout(() => URL.revokeObjectURL(url), 2000); if (Voice.audio === a) Voice.audio = null; resolve(true); };
     setState("speaking");
     a.play().catch(err => {
       const interrupted = err && err.name === "AbortError" || Voice.audio !== a; // lo cortaste tú (Esc, Espacio, pausa)

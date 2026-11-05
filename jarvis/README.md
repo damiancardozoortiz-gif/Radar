@@ -26,13 +26,17 @@ cp .env.example .env      # y pon tu ELEVENLABS_API_KEY (y si quieres ELEVENLABS
 
 No hace falta `ANTHROPIC_API_KEY`. Si la tienes en el entorno, JARVIS la quita antes de lanzar `claude`, para que use tu suscripción y no te cobre aparte.
 
-## 2. Arranque (un solo comando)
+## 2. Arranque y apagado
 
-```bash
-./jarvis.sh
-```
+| Comando | Qué hace |
+|---|---|
+| `./jarvis.sh` | Arranca en primer plano. Se apaga con Ctrl+C. |
+| `./jarvis.sh iniciar` | Arranca en segundo plano y **se vuelve a levantar solo si se cae**. Si falla 5 veces en un minuto, o el puerto está ocupado, se rinde y lo dice. |
+| `./jarvis.sh estado` | Dice si está en marcha, el estado del cerebro, si hay PAUSA, cuántos borradores esperan tu sí y si la voz está configurada. |
+| `./jarvis.sh parar` | Apagado limpio: cierra también los procesos `claude` abiertos. |
+| `./jarvis.sh reiniciar` | Parar e iniciar. La PAUSA y los borradores se conservan. |
 
-Genera los datos de demo si faltan y sirve en **http://localhost:8790**. Para cambiar el puerto: `JARVIS_PORT=9000 ./jarvis.sh`.
+Después abre **http://localhost:8790** en Chrome, Edge, Firefox o Safari. La primera vez, genera los datos de demo si faltan. Para cambiar el puerto: `JARVIS_PORT=9000 ./jarvis.sh iniciar`. El registro de errores está en `estado/jarvis.log` y no guarda datos privados.
 
 Si el puerto ya está ocupado (por ejemplo, porque ya tienes otro JARVIS abierto), no arranca y lo dice así:
 ```
@@ -41,7 +45,7 @@ No puedo arrancar: el puerto 8790 ya está en uso.
   JARVIS_PORT=8791 ./jarvis.sh
 ```
 
-Al arrancar hace una llamada de calentamiento a Claude (unos 4 s), para que la primera pregunta no sea la lenta.
+Al arrancar deja un proceso `claude` precalentado (unos 1,4 s), para que la primera pregunta no sea la lenta.
 
 ## 3. Modo demo y modo real
 
@@ -159,6 +163,14 @@ O una a una:
 | `node tests/navegador.js` | Mapa (y 2.500 notas a ≥30 fps), voz con micrófono falso, Esc y Espacio, PAUSA (también tras reiniciar), borradores tras reiniciar y aprobación con clic (38 comprobaciones) | Node 18+ y Playwright: `npm install --no-save playwright && npx playwright install chromium` |
 | `python3 tests/test_limites.py` | Lo mismo con `claude -p` **real**: PAUSA, autorizaciones, origen, memoria, solo lectura (10 pruebas) | `claude` con sesión iniciada y un JARVIS arrancado (`ejecutar_todo.sh` lo arranca solo, con estado y memoria temporales) |
 | `bash tests/prueba_bloqueo.sh` | `claude -p` real intenta leer `.env`, escribir y usar Bash: todo bloqueado | `claude` con sesión iniciada |
+| `python3 tests/integral.py` | Prueba integral con `claude` real arrancando con `./jarvis.sh`: inicio, conversación seguida con contexto, memoria tras reiniciar, PAUSA durante una llamada real, reanudación solo con el botón, recuperación tras matar `claude` y el servidor, reinicio con PAUSA y borradores, credenciales, apagado limpio. La voz la prueba REAL si hay red y clave; si no, la marca **PENDIENTE** | `claude` con sesión iniciada |
+| `python3 tests/prueba_voz_real.py` | **Voz REAL**: texto a voz con tu clave, guarda el audio para que lo escuches y lo vuelve a pasar a texto con Scribe. Gasta unos 100 créditos | `ELEVENLABS_API_KEY` en `.env` y conexión a `api.elevenlabs.io` |
+| `python3 tests/estabilidad_jarvis.py 20` | 20 rondas con `claude` real: petición que provoca la generación degenerada y pregunta normal (¿se recupera?) | `claude` con sesión iniciada |
+| `bash tests/estabilidad_bash.sh 20` | 20 llamadas directas a `claude -p` con Bash denegado: nunca se ejecuta y no quedan huérfanos. Los cortes por tiempo salen como AVISO | `claude` con sesión iniciada |
+
+Todo junto: `bash tests/ejecutar_todo.sh --completo` (unos 15 minutos).
+
+**Playwright** (solo para `navegador.js`, JARVIS no lo necesita): `cd tests && npm run instalar`. Instala la versión fijada en `tests/package.json` y Chromium.
 
 Todas las pruebas usan `estado/` y `memory/` temporales, así que no tocan los tuyos, y no envían ni publican nada. `prueba_bloqueo.sh` no se fía del texto de la respuesta, que a veces dice que lo hizo: mira las denegaciones del JSON y si el archivo existe en disco.
 
@@ -184,14 +196,49 @@ Precios consultados el 5 de noviembre de 2026. Compruébalos en [elevenlabs.io/p
 
 ## 8. Lo que no está comprobado o hay que saber
 
-- **La voz real de ElevenLabs no se ha probado de punta a punta.** El entorno donde se construyó no podía salir a `api.elevenlabs.io`. Todo el circuito (grabar, transcribir, hablar, turnos, sordo mientras habla) se probó con un servidor ElevenLabs simulado que devuelve audio y texto fijos. La primera prueba real es la tuya.
-- **Tiempos (medidos con 8 llamadas reales).** Las respuestas cortas tardan 4,3–6,6 s; los borradores, 6,7–7,3 s. Hay dos causas:
-  1. **Un coste fijo de unos 2–4 s por llamada** que no es el modelo: `claude -p` arranca, prepara la sesión (unos 0,9 s hasta empezar) y, cuando la respuesta ya está lista, todavía tarda alrededor de 1 s en un resumen final (`post_turn_summary`) antes de devolverla.
-  2. **El tiempo del modelo crece con la longitud de la respuesta.** De 0,7 s para un saludo a 6,3 s para un borrador de 300–380 tokens.
+- **La voz real de ElevenLabs no se ha probado de punta a punta (PENDIENTE).** El entorno donde se construyó no podía conectarse a `api.elevenlabs.io`. Todo el circuito (grabar, transcribir, hablar, turnos, sordo mientras habla, 5 turnos seguidos) se probó con un ElevenLabs simulado. La primera prueba real es la tuya: `python3 tests/prueba_voz_real.py` y después el micrófono en el navegador.
 
-  Mejoras posibles, **no aplicadas**: leer la respuesta en streaming y contestar en cuanto termina el texto (ahorraría alrededor de 1 s), o mantener un proceso `claude` abierto entre preguntas (ahorraría el arranque). Si pasa de 6 s, el tiempo sale en naranja. La búsqueda en internet tarda 15–40 s y avisa en pantalla.
-- **Cuelgue intermitente en `prueba_bloqueo.sh`.** En 2 de unas 10 ejecuciones, la llamada con Bash no terminó y se cortó a los 90 s. En 8 intentos posteriores terminó siempre en 3–4 s. Bash ni siquiera se le ofrece al modelo (está en `deny`): escribe un "invoke" falso como texto y no ejecuta nada. No se ha encontrado la causa; la prueba avisa del corte y comprueba igualmente que no se creó ningún archivo.
+### Velocidad: cómo funciona y tiempos medidos (Claude real)
+
+Cada conversación tiene **un proceso `claude` abierto entre preguntas** (`--input-format stream-json`), con las mismas opciones de seguridad (`--safe-mode`, `--tools ""`, modelo y esfuerzo fijos). JARVIS **devuelve la respuesta en cuanto llega el texto**, sin esperar al resumen interno que `claude` hace después (de 1 a 3 s). Al arrancar deja un proceso precalentado para la primera conversación.
+
+| | Antes (un `claude -p` por pregunta) | Ahora (con 3–4 s entre preguntas, como al hablar) |
+|---|---|---|
+| Respuesta corta | 4,3–6,6 s (media 4,7–5,5) | 0,8–1,6 s (media 1,5) |
+| Borrador | 6,7–7,3 s | 2,3–4,3 s (borradores de unas 90 palabras) |
+| Primera pregunta de una conversación | ~4,5 s | 0,8 s |
+
+Cuándo es más lento:
+- **Si preguntas en los 2–3 s siguientes a una respuesta**: `claude` todavía termina su resumen interno de la anterior. Con preguntas seguidas sin pausa, 2,5–6,5 s.
+- **La primera respuesta después de quitar la PAUSA, o después de guardar algo en memoria**: hay que reabrir el proceso y recuperar la conversación. Unos 5–8 s.
+- **Cada 20 turnos** JARVIS abre un proceso nuevo y le pasa los últimos 10 turnos, para que el contexto no crezca sin fin.
+- **La búsqueda en internet** sigue siendo una llamada aparte: 15–40 s, con aviso en pantalla.
+
+Si una respuesta pasa de 6 s, el tiempo sale en naranja.
+
+### Cuelgues de `claude -p` con Bash: causa encontrada
+
+En 20 llamadas directas a `claude -p` con Bash denegado, 2 no terminaron (se cortaron a los 90 s). El registro de depuración de `claude` muestra la causa: el modelo no tiene la herramienta y escribe **en bucle llamadas falsas `<invoke name="Bash">` como texto**. En el caso registrado fueron 120 llamadas y casi 15.000 caracteres, sin terminar. No ejecuta nada. `CLAUDE_CODE_MAX_OUTPUT_TOKENS` no lo limita en esta versión (comprobado).
+
+Cómo se protege JARVIS:
+- Lee la respuesta mientras llega y **la corta en cuanto ve marcado de herramienta o más de 4.000 caracteres**. El proceso se cierra, el siguiente turno abre otro y lo inválido nunca se lee en voz alta.
+- Además está el límite de 25 s.
+
+Con `claude` real, 20 de 20 rondas pidiendo Bash a JARVIS se recuperaron. Ningún cuelgue bloqueó a JARVIS y no quedaron procesos huérfanos.
 - **Modo respaldo.** Si Claude no responde en 25 s (60 en la búsqueda web), JARVIS busca en tus archivos o enseña la tarjeta de la herramienta, con un aviso rojo de que **no** ha hablado Claude.
+- **Recuperación.** Si un proceso `claude` muere, el siguiente turno abre otro y retoma la conversación. Si el servidor se cae, `./jarvis.sh iniciar` lo vuelve a levantar. Si el servidor muere de golpe, los procesos `claude` terminan solos, sin quedar huérfanos.
+
+### Usarlo desde el teléfono (Android): PENDIENTE de tu decisión
+
+JARVIS está hecho para usarse **en el mismo ordenador** donde corre, en `http://localhost:8790`. Desde el teléfono hoy **no funciona**, por diseño de seguridad:
+- El servidor solo escucha en `127.0.0.1` y rechaza cualquier otro `Host`. Es lo que frena el ataque de "DNS rebinding".
+- Los navegadores solo dan acceso al micrófono en `https://` o en `localhost`. Desde el teléfono, `http://IP-del-ordenador` no tendría micrófono.
+
+Para usarlo desde Android hace falta elegir una de estas opciones. Todas abren JARVIS fuera del ordenador y necesitan tu autorización expresa:
+1. **Un túnel con HTTPS y contraseña** hasta tu ordenador (por ejemplo, una VPN privada como Tailscale con HTTPS), añadiendo ese nombre a la lista de hosts permitidos y una autenticación.
+2. **Ejecutarlo dentro del teléfono** (Termux con Python y Claude Code). Sin probar.
+
+Hasta que elijas, no se ha abierto nada fuera de tu ordenador.
 - El mapa de la demo sale como una bola bastante uniforme; con notas reales suele agruparse mejor.
 
 ## 9. Estructura
@@ -201,7 +248,8 @@ jarvis/
 ├── jarvis.sh               arranque en un comando
 ├── agent/
 │   ├── main.py             servidor y API (solo 127.0.0.1)
-│   ├── cerebro.py          claude -p (cancelable), sesión, calentamiento, respaldo, PAUSA, autorizaciones
+│   ├── cerebro.py          llamada al cerebro, respaldo, PAUSA, autorizaciones
+│   ├── sesiones.py         procesos claude abiertos por conversación (rápidos, cancelables, sin huérfanos)
 │   ├── estado.py           PAUSA y borradores persistentes; candado de escritura
 │   ├── vault.py            tus carpetas convertidas en un mapa que se puede buscar
 │   ├── tools.py            las 6 herramientas y la elección de herramienta
@@ -213,8 +261,9 @@ jarvis/
 ├── data/                   generate_demo.py, importar_correo.py, demo/ (generada), real/ (tus exportaciones)
 ├── memory/                 un .md con fecha por cada cosa que recuerda (fuera de git)
 ├── estado/                 pausa.json y borradores.json (fuera de git, se crea al usarse)
-├── tests/                  ejecutar_todo.sh, test_criticos.py, navegador.js, test_limites.py,
-│                           prueba_bloqueo.sh, fake_claude.py, mock_elevenlabs.py
+├── tests/                  ejecutar_todo.sh, test_criticos.py, navegador.js (+ package.json), test_limites.py,
+│                           prueba_bloqueo.sh, integral.py, prueba_voz_real.py, estabilidad_jarvis.py,
+│                           estabilidad_bash.sh, fake_claude.py (claude simulado), mock_elevenlabs.py
 ├── .claude/settings.json   los permisos
 ├── CLAUDE.md               quién eres
 ├── .env                    tus claves (fuera de git, permisos 600)
