@@ -1,0 +1,6 @@
+.env
+data/demo/
+data/real/*
+!data/real/.gitkeep
+__pycache__/
+*.pyc
