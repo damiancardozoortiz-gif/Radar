@@ -235,6 +235,13 @@ public final class NeuralCore {
         else if ("desconectado".equals(m.get("estado"))) { m.put("estado", "inactivo"); m.put("nota", note); }
     }
 
+    /** Solo el estado de los nodos (barato: sin leer archivos), para el holograma. */
+    public synchronized Map<String, Object> nodeStates() {
+        Map<String, Object> ns = new LinkedHashMap<String, Object>();
+        for (Map.Entry<String, Map<String, Object>> e : nodes.entrySet()) ns.put(e.getKey(), Json.map("estado", e.getValue().get("estado")));
+        return ns;
+    }
+
     /** Copia del estado de los nodos y de la red, para el panel. */
     public synchronized Map<String, Object> status() {
         Map<String, Object> ns = new LinkedHashMap<String, Object>();

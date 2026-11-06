@@ -143,3 +143,13 @@ desinstalar la versión anterior antes de instalar la nueva.
   resultado del anterior. Herramienta nueva «redactar» (publicaciones, guiones, textos; nunca publica).
 - `core/NeuralMemory`: memoria en 8 niveles sobre lo que ya existe. La conversación reciente ahora persiste al cerrar.
 - Corregida una regla vieja: «redactá un mensaje…» iba a leer correo.
+
+## 3.3.0-holo · NEURAL CORE, etapa 3: interfaz holográfica (fotos de referencia)
+- `Hologram`: figura humanoide holográfica en un anillo, sobre plataforma de anillos y suelo en perspectiva (foto 1).
+  Respira; el núcleo del pecho y el brillo siguen el volumen REAL de la voz; escaneo al pensar; rojo en PAUSA.
+  Los 10 nodos del Neural Core alrededor, con su estado real (verde listo, cian procesando, rojo error, gris desconectado).
+- Paneles con datos reales: ESTADO DEL SISTEMA (Claude, voz, memoria, evolución), RENDIMIENTO (primera palabra MEDIDA o
+  «sin medir»), PRÓXIMAS MEJORAS (de FÉNIX). Se atenúan al hablar/escuchar; tocar la figura los oculta (pantalla limpia).
+- Menú lateral como la foto 2: Centro, VULKAN, Agentes, Memoria, Investigación, Finanzas, Creador, Lab, Config.
+  Abajo: Hablar, Chat, Cámara, Archivo, RADAR, Voz, PAUSA. No se copiaron indicadores que no existen (Python, FPS, 98 %).
+- La prueba en Android emulado ahora recorre el asistente y abre la pantalla principal y la ventana Neural Core.

@@ -222,30 +222,43 @@ public class MainActivity extends Activity {
         windows.setListener(new WindowHost.Listener() { public void changed() { badges(); } });
         root.addView(windows, new FrameLayout.LayoutParams(-1, -1));
 
+        // menú lateral (como la referencia): Centro, VULKAN, Agentes, Memoria, Investigación, Finanzas, Creador, Lab, Config
+        LinearLayout rail = Ui.col(this);
+        rail.addView(railItem("🏠", "Centro", new View.OnClickListener() { public void onClick(View v) { windows.hideAll(); } }));
+        evoIcon = railItem("🔥", "VULKAN", new View.OnClickListener() { public void onClick(View v) { toggleWin("evo"); } });
+        rail.addView(evoIcon);
+        rail.addView(railItem("🧠", "Agentes", new View.OnClickListener() { public void onClick(View v) { toggleWin("neural"); } }));
+        rail.addView(railItem("🕘", "Memoria", new View.OnClickListener() { public void onClick(View v) { toggleWin("history"); } }));
+        resultsIcon = railItem("🔎", "Investig.", new View.OnClickListener() { public void onClick(View v) { toggleWin("results"); } });
+        rail.addView(resultsIcon);
+        rail.addView(railItem("📈", "Finanzas", new View.OnClickListener() { public void onClick(View v) { finance(); } }));
+        rail.addView(railItem("🎬", "Creador", new View.OnClickListener() { public void onClick(View v) { toggleWin("editor"); } }));
+        labIcon = railItem("🧪", "Lab", new View.OnClickListener() { public void onClick(View v) { toggleWin("lab"); } });
+        rail.addView(labIcon);
+        rail.addView(railItem("⚙", "Config", new View.OnClickListener() { public void onClick(View v) { panel(); } }));
+        ScrollView railScroll = new ScrollView(this);
+        railScroll.setVerticalScrollBarEnabled(false);
+        railScroll.addView(rail);
+        FrameLayout.LayoutParams rp = new FrameLayout.LayoutParams(Ui.dp(this, 64), -2, Gravity.START | Gravity.CENTER_VERTICAL);
+        rp.leftMargin = Ui.dp(this, 6);
+        root.addView(railScroll, rp);
+
+        // acciones frecuentes abajo
         LinearLayout bottom = Ui.col(this);
         bottom.addView(dockScroll, Ui.margins(this, 0, 0, 0, 6));
         HorizontalScrollView hs = new HorizontalScrollView(this);
         hs.setHorizontalScrollBarEnabled(false);
         LinearLayout bar = Ui.row(this);
-        bar.addView(icon("🎤", "Hablar", new View.OnClickListener() { public void onClick(View v) { micToggle(); } }));
+        TextView mic = icon("🎤", "Hablar", new View.OnClickListener() { public void onClick(View v) { micToggle(); } });
+        mic.setTextColor(Ui.ACCENT);
+        bar.addView(mic);
         chatIcon = icon("💬", "Chat", new View.OnClickListener() { public void onClick(View v) { toggleWin("chat"); } });
         bar.addView(chatIcon);
-        resultsIcon = icon("🔎", "Resultados", new View.OnClickListener() { public void onClick(View v) { toggleWin("results"); } });
-        bar.addView(resultsIcon);
-        bar.addView(icon("🕘", "Historial", new View.OnClickListener() { public void onClick(View v) { toggleWin("history"); } }));
-        labIcon = icon("🧪", "Laboratorio", new View.OnClickListener() { public void onClick(View v) { toggleWin("lab"); } });
-        bar.addView(labIcon);
-        bar.addView(icon("🧠", "Neural", new View.OnClickListener() { public void onClick(View v) { toggleWin("neural"); } }));
-        evoIcon = icon("🔥", "Evolución", new View.OnClickListener() { public void onClick(View v) { toggleWin("evo"); } });
-        bar.addView(evoIcon);
-        bar.addView(icon("🎬", "Editor", new View.OnClickListener() { public void onClick(View v) { toggleWin("editor"); } }));
         bar.addView(icon("📷", "Cámara", new View.OnClickListener() { public void onClick(View v) { camera(); } }));
         bar.addView(icon("📁", "Archivo", new View.OnClickListener() { public void onClick(View v) { pickFile(); } }));
-        bar.addView(icon("📈", "Finanzas", new View.OnClickListener() { public void onClick(View v) { finance(); } }));
         bar.addView(icon("📡", "RADAR", new View.OnClickListener() { public void onClick(View v) { radar(); } }));
         voiceBtn = icon("🔊", "Voz", new View.OnClickListener() { public void onClick(View v) { toggleVoice(); } });
         bar.addView(voiceBtn);
-        bar.addView(icon("⚙", "Panel", new View.OnClickListener() { public void onClick(View v) { panel(); } }));
         pauseBtn = icon("⏸", "PAUSA", new View.OnClickListener() { public void onClick(View v) { togglePause(); } });
         pauseBtn.setTextColor(Ui.BAD);
         bar.addView(pauseBtn);
@@ -254,7 +267,78 @@ public class MainActivity extends Activity {
         FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
         bp.leftMargin = pad; bp.rightMargin = pad; bp.bottomMargin = pad;
         root.addView(bottom, bp);
+        holo.post(hudTick);
         setContentView(root);
+    }
+
+    private TextView railItem(String glyph, String label, View.OnClickListener l) {
+        TextView t = Ui.text(this, glyph + "\n" + label, 9, Ui.TEXT);
+        t.setGravity(Gravity.CENTER);
+        t.setPadding(Ui.dp(this, 2), Ui.dp(this, 6), Ui.dp(this, 2), Ui.dp(this, 6));
+        t.setBackground(Ui.box(this, (0xA0 << 24) | (Ui.PANEL & 0xFFFFFF), (0x90 << 24) | (Ui.ACCENT & 0xFFFFFF), Ui.dp(this, 10)));
+        t.setOnClickListener(l);
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2);
+        p.bottomMargin = Ui.dp(this, 5);
+        t.setLayoutParams(p);
+        return t;
+    }
+
+    /** Paneles y nodos del holograma con datos REALES (cada 0,5 s; más a menudo no hace falta). */
+    private final Runnable hudTick = new Runnable() { public void run() {
+        try { updateHud(); } catch (Exception ignored) {}
+        if (holo != null) holo.postDelayed(this, 500);
+    }};
+
+    private int hudTicks;
+    private Hologram.Hud slowHud;
+
+    private void updateHud() {
+        if (brain == null) return;
+        Hologram.Hud h = new Hologram.Hud();
+        if (slowHud != null && hudTicks++ % 10 != 0) {  // lo que lee archivos, cada 5 s; los nodos, cada 0,5 s
+            h.status = slowHud.status; h.statusOk = slowHud.statusOk; h.perf = slowHud.perf; h.next = slowHud.next;
+            nodesInto(h);
+            holo.hud = h;
+            return;
+        }
+        Voice v = JarvisApp.voice(this);
+        boolean claude = !brain.apiKey.isEmpty() && !"respaldo".equals(brain.brainState);
+        String evo = "";
+        try { evo = JarvisApp.evolution(this).missionState().toLowerCase(Locale.ROOT); } catch (Exception ignored) {}
+        h.status = new String[]{
+                "Claude: " + (brain.apiKey.isEmpty() ? "sin clave" : brain.brainState),
+                "Voz: " + (!v.enabled ? "apagada" : v.usesElevenLabs() ? "ElevenLabs" + (v.stream ? " streaming" : "") : "Android"),
+                "Memoria: " + brain.memories().size() + " recuerdos · " + brain.historySize() + " turnos",
+                "Evolución: " + (evo.isEmpty() ? "?" : evo)};
+        h.statusOk = new boolean[]{claude, v.enabled, true, !"bloqueada".equals(evo)};
+        Map<String, Object> cmp = v.metrics == null ? null : v.metrics.compare();
+        String perf = "sin medir todavía";
+        if (cmp != null && !cmp.isEmpty()) {
+            String eng = cmp.containsKey(v.stream ? "elevenlabs-stream" : "elevenlabs-mp3") ? (v.stream ? "elevenlabs-stream" : "elevenlabs-mp3") : cmp.keySet().iterator().next();
+            Object fw = Json.obj(cmp.get(eng)).get("hasta_primera_palabra_ms");
+            perf = fw == null ? "sin medir todavía" : "1.ª palabra " + String.format(Locale.US, "%.1f s", ((Number) fw).longValue() / 1000.0) + " (mediana, " + Json.obj(cmp.get(eng)).get("turnos") + " turnos)";
+        }
+        h.perf = perf;
+        try { Map<String, Object> st = JarvisApp.evolution(this).status(System.currentTimeMillis()); h.next = st.get("proxima") != null ? String.valueOf(st.get("proxima")) : "ver «Qué me falta» en VULKAN"; }
+        catch (Exception e) { h.next = ""; }
+        slowHud = h;
+        com.radar.jarvis.core.NeuralCore nc = JarvisApp.neuralIfReady();
+        if (nc != null) {
+            nc.setConnected("razonamiento", !brain.apiKey.isEmpty(), brain.apiKey.isEmpty() ? "falta la clave de Claude" : "Claude");
+            nc.setConnected("investigacion", !brain.apiKey.isEmpty(), brain.apiKey.isEmpty() ? "falta la clave de Claude" : "búsqueda web");
+        }
+        nodesInto(h);
+        holo.hud = h;
+    }
+
+    private void nodesInto(Hologram.Hud h) {
+        com.radar.jarvis.core.NeuralCore nc = JarvisApp.neuralIfReady();
+        if (nc != null) {
+            Map<String, Object> ns = Json.obj(nc.nodeStates());
+            h.nodes = ns.keySet().toArray(new String[0]);
+            h.nodeState = new String[h.nodes.length];
+            for (int i = 0; i < h.nodes.length; i++) h.nodeState[i] = String.valueOf(Json.obj(ns.get(h.nodes[i])).get("estado"));
+        }
     }
 
     private TextView icon(String glyph, String label, View.OnClickListener l) {
@@ -310,9 +394,9 @@ public class MainActivity extends Activity {
         if (chatIcon == null) return;
         chatIcon.setText((unseenChat ? "💬•" : "💬") + "\nChat");
         chatIcon.setTextColor(unseenChat ? Ui.ACCENT : Ui.TEXT);
-        resultsIcon.setText((unseenResults ? "🔎•" : "🔎") + "\nResultados");
+        resultsIcon.setText((unseenResults ? "🔎•" : "🔎") + "\nInvestig.");
         resultsIcon.setTextColor(unseenResults ? Ui.ACCENT : Ui.TEXT);
-        labIcon.setText((unseenLab ? "🧪•" : "🧪") + "\nLaboratorio");
+        labIcon.setText((unseenLab ? "🧪•" : "🧪") + "\nLab");
         labIcon.setTextColor(unseenLab ? Ui.ACCENT : Ui.TEXT);
     }
 
