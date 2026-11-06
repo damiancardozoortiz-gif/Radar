@@ -66,11 +66,26 @@ captura() {  # captura y la deja también en el registro (reducida) para poder v
   fi
   rm -f "$OUT/$1.raw"
 }
+# ---- prueba real del exportador de vídeo: la app la ejecuta al abrir la pantalla principal si encuentra este archivo
+APPDIR=/sdcard/Android/data/com.radar.jarvis/files/autotest
+adb shell mkdir -p $APPDIR && adb push "$(dirname "$0")/muestra.mp4" $APPDIR/video.mp4 >/dev/null && echo "VÍDEO DE PRUEBA: copiado a la carpeta de la app"
 if tap_text "Empezar" && tap_text "Guardar y seguir" && tap_text "Terminar"; then
   sleep 12
   PID3=$(adb shell pidof com.radar.jarvis | tr -d '\r')
   adb logcat -d > "$OUT/logcat-principal.txt"
   if [ -n "$PID3" ] && ! grep -q "FATAL EXCEPTION" "$OUT/logcat-principal.txt"; then echo "PANTALLA PRINCIPAL: abierta y estable 12 s" | tee -a "$OUT/resumen.txt"; else echo "PANTALLA PRINCIPAL: FALLÓ" | tee -a "$OUT/resumen.txt"; grep -A 15 "FATAL EXCEPTION" "$OUT/logcat-principal.txt" | head -40; exit 1; fi
+  for i in $(seq 1 20); do adb shell "[ -f $APPDIR/resultado.txt ]" && break; sleep 1; done
+  RES=$(adb shell cat $APPDIR/resultado.txt 2>/dev/null | tr -d '\r')
+  echo "EXPORTADOR DE VÍDEO (en Android): ${RES:-sin resultado}" | tee -a "$OUT/resumen.txt"
+  case "$RES" in OK*) ;; *) echo "EXPORTADOR: FALLÓ" | tee -a "$OUT/resumen.txt"; exit 1;; esac
+  adb pull $APPDIR/salida.mp4 "$OUT/salida.mp4" >/dev/null 2>&1
+  if command -v ffprobe >/dev/null && [ -f "$OUT/salida.mp4" ]; then
+    DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$OUT/salida.mp4")
+    NS=$(ffprobe -v error -show_entries stream=codec_type -of csv=p=0 "$OUT/salida.mp4" | sort | tr '\n' ' ')
+    echo "MP4 EXPORTADO (ffprobe): duración ${DUR} s · pistas: ${NS}" | tee -a "$OUT/resumen.txt"
+    python3 -c "import sys; d=float(sys.argv[1]); sys.exit(0 if 3.2<=d<=3.9 else 1)" "$DUR" && echo "DURACIÓN ESPERADA (2,0 + 1,5 s): correcta" | tee -a "$OUT/resumen.txt" || { echo "DURACIÓN ESPERADA: INCORRECTA" | tee -a "$OUT/resumen.txt"; exit 1; }
+    echo "$NS" | grep -q audio && echo "$NS" | grep -q video || { echo "PISTAS: falta audio o vídeo" | tee -a "$OUT/resumen.txt"; exit 1; }
+  fi
   captura principal
   if tap_text "Agentes"; then sleep 3; captura neural; echo "VENTANA NEURAL CORE: abierta" | tee -a "$OUT/resumen.txt"; fi
   PID4=$(adb shell pidof com.radar.jarvis | tr -d '\r')

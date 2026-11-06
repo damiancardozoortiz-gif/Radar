@@ -60,6 +60,7 @@ public class MainActivity extends Activity {
     private LinearLayout chat, chatWin, results, historyBox;
     private ScrollView resultsScroll, historyScroll;
     private TextView chatIcon, resultsIcon, labIcon, evoIcon, thinkingLine;
+    private VideoEditor editor;
     private LinearLayout evoBox, neuralBox;
     private ScrollView evoScroll, neuralScroll;
     private boolean unseenChat, unseenResults, unseenLab;
@@ -84,6 +85,7 @@ public class MainActivity extends Activity {
         }
         setVolumeControlStream(AudioManager.STREAM_MUSIC);  // las teclas de volumen controlan la voz de JARVIS
         build();
+        videoAutotest();
         say("Iniciando sistemas…", "sistema");
         JarvisApp.brain(this, new JarvisApp.Ready() { public void ready(Brain br) {
             brain = br;
@@ -271,6 +273,37 @@ public class MainActivity extends Activity {
         setContentView(root);
     }
 
+    /**
+     * Prueba automática del exportador de vídeo (la usa GitHub Actions en el Android emulado): si existe
+     * files/autotest/video.mp4 en la carpeta EXTERNA de la propia app, exporta un montaje de 2 clips y deja el resultado.
+     * Solo lee y escribe en la carpeta de la app; no hace nada si el archivo no está.
+     */
+    private void videoAutotest() {
+        final File dir = new File(getExternalFilesDir(null), "autotest");
+        final File in = new File(dir, "video.mp4");
+        if (!in.isFile()) return;
+        new Thread(new Runnable() { public void run() {
+            String res;
+            try {
+                Uri u = Uri.fromFile(in);
+                VideoTools.Info info = VideoTools.probe(MainActivity.this, u);
+                com.radar.jarvis.core.video.Timeline t = new com.radar.jarvis.core.video.Timeline();
+                t.add("a", 1000, 3000); t.add("a", 4000, 5500);
+                Map<String, Uri> src = new java.util.HashMap<String, Uri>(); src.put("a", u);
+                Map<String, VideoTools.Info> inf = new java.util.HashMap<String, VideoTools.Info>(); inf.put("a", info);
+                File outF = new File(dir, "salida.mp4");
+                Map<String, Object> r = VideoTools.export(MainActivity.this, t, src, inf, outF, null);
+                VideoTools.Info o = VideoTools.probe(MainActivity.this, Uri.fromFile(outF));
+                File aud = VideoTools.extractAudio(MainActivity.this, u, new File(dir, "audio.m4a"));
+                res = "OK entrada=" + info.describe() + " claves=" + info.keyframes.length + " | salida=" + o.describe() + " bytes=" + r.get("bytes")
+                        + " adelanto=" + r.get("adelanto_por_claves_ms") + " | audio_extraido=" + aud.length() + " bytes";
+            } catch (Throwable e) { res = "FALLO " + e; }
+            android.util.Log.i("JARVIS-AUTOTEST", "video: " + res);
+            try { java.io.FileOutputStream o = new java.io.FileOutputStream(new File(dir, "resultado.txt")); o.write(res.getBytes("UTF-8")); o.close(); } catch (Exception ignored) {}
+            in.delete();
+        }}, "autotest-video").start();
+    }
+
     private TextView railItem(String glyph, String label, View.OnClickListener l) {
         TextView t = Ui.text(this, glyph + "\n" + label, 9, Ui.TEXT);
         t.setGravity(Gravity.CENTER);
@@ -363,10 +396,11 @@ public class MainActivity extends Activity {
         else if ("results".equals(id)) { unseenResults = false; windows.open("results", "Resultados", resultsScroll); }
         else if ("history".equals(id)) { fillHistory(); windows.open("history", "Historial", historyScroll); }
         else if ("editor".equals(id)) {
-            LinearLayout e = Ui.col(this);
-            e.addView(Ui.text(this, "Editor de vídeo: TODAVÍA NO DISPONIBLE.\n\nSe construye en la fase 5 de JARVIS 3.0 (importar, recortar, unir, "
-                    + "subtítulos, 9:16 y 16:9, exportar) con los componentes de vídeo de Android. No se muestra una maqueta.", 13, Ui.TEXT));
-            windows.open("editor", "Editor de vídeo", e);
+            if (editor == null) editor = new VideoEditor(this);
+            ScrollView sv = new ScrollView(this);
+            if (editor.view().getParent() instanceof android.view.ViewGroup) ((android.view.ViewGroup) editor.view().getParent()).removeView(editor.view());
+            sv.addView(editor.view());
+            windows.open("editor", "Creador · editor de vídeo", sv);
         }
         else if ("panel".equals(id)) panel();
         else if ("neural".equals(id)) { fillNeural(); windows.open("neural", "Neural Core", neuralScroll); }
@@ -459,6 +493,15 @@ public class MainActivity extends Activity {
     private void ask(final String q) {
         if (brain == null || busy) return;
         say(q, "user");
+        java.util.regex.Matcher sm = java.util.regex.Pattern.compile("(converti|convierte|convertir|hace|haceme|arma|armame|crea|creame).*\\bshort\\b.*?(\\d{1,3})\\s*seg").matcher(com.radar.jarvis.core.UiCommands.normalize(q));
+        if (sm.find()) {
+            long target = Math.max(5, Math.min(180, Integer.parseInt(sm.group(2)))) * 1000L;
+            openWin("editor");
+            if (editor.hasVideo()) { say("Preparo un Short de " + target / 1000 + " s: transcribo, propongo cortes y le muestro la vista previa. Nada se exporta sin su aprobación.", "jarvis"); editor.makeShort(target, q); }
+            else say("Abro el editor: importe primero el vídeo y repítame el pedido.", "jarvis");
+            speakThen(editor.hasVideo() ? "Preparo el Short. Le muestro la vista previa antes de exportar." : "Importe primero el vídeo, por favor.");
+            return;
+        }
         String ek = EvoCommands.parse(q);
         if (ek != null) { evoCommand(ek); return; }
         Map<String, Object> cmd = UiCommands.parse(q);
@@ -1082,6 +1125,7 @@ public class MainActivity extends Activity {
     }
 
     @Override protected void onActivityResult(int req, int res, Intent data) {
+        if (editor != null && editor.onResult(req, res, data)) return;
         if (res != RESULT_OK || data == null || brain == null) return;
         if (req == REQ_CAMERA) {
             String path = data.getStringExtra("jpeg");

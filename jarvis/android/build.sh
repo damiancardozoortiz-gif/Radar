@@ -56,7 +56,7 @@ PY
 if [ "${1:-}" = "test" ]; then
   exec > >(tee $B/salida-pruebas.txt)  # para guardar el resumen en .pruebas.txt (lo lee el inventario de JARVIS)
   mkdir -p $B/test-obj
-  javac -nowarn -encoding UTF-8 -d $B/test-obj src/com/radar/jarvis/core/*.java src/com/radar/jarvis/core/fin/*.java test/CoreTest.java test/FinTest.java test/MetaApiTest.java test/DisciplineTest.java test/UiTest.java test/LabTest.java test/NodeSandbox.java test/EvolutionTest.java test/FenixTest.java test/VoiceTest.java test/NeuralTest.java
+  javac -nowarn -encoding UTF-8 -d $B/test-obj src/com/radar/jarvis/core/*.java src/com/radar/jarvis/core/fin/*.java src/com/radar/jarvis/core/video/*.java test/CoreTest.java test/FinTest.java test/MetaApiTest.java test/DisciplineTest.java test/UiTest.java test/LabTest.java test/NodeSandbox.java test/EvolutionTest.java test/FenixTest.java test/VoiceTest.java test/NeuralTest.java test/VideoTest.java
   PORT=$(python3 -c "import socket;s=socket.socket();s.bind(('127.0.0.1',0));print(s.getsockname()[1])")
   rm -f $B/mock.log; python3 test/mock_anthropic.py $PORT $B/mock.log & MOCK=$!
   sleep 0.6
@@ -90,6 +90,9 @@ if [ "${1:-}" = "test" ]; then
   echo "--- Neural Core (red neuronal real entrenada aquí, nodos, plan, memoria; Claude SIMULADO):"
   rm -rf $B/test-neural; set +e; LC_ALL=C.UTF-8 java -Dsun.jnu.encoding=UTF-8 -Dfile.encoding=UTF-8 -cp $B/test-obj NeuralTest $B/test-neural $B/assets $PORT $B/mock.log neural-corpus.json; rc10=$?; set -e
   [ $rc10 -ne 0 ] && rc=$rc10
+  echo "--- editor de vídeo (núcleo: línea de tiempo, subtítulos, plan de Short; Claude SIMULADO):"
+  rm -rf $B/test-video; set +e; LC_ALL=C.UTF-8 java -Dsun.jnu.encoding=UTF-8 -Dfile.encoding=UTF-8 -cp $B/test-obj VideoTest $B/test-video $B/assets $PORT; rc11=$?; set -e
+  [ $rc11 -ne 0 ] && rc=$rc11
   echo "--- voz (detección de fin de frase con señales SINTÉTICAS y medición de tiempos):"
   PORT3=$(python3 -c "import socket;s=socket.socket();s.bind(('127.0.0.1',0));print(s.getsockname()[1])")
   python3 test/mock_tts_stream.py $PORT3 & MOCK3=$!; sleep 0.5

@@ -50,6 +50,8 @@ public final class UiCommands {
         return null;
     }
 
+    public static String normalize(String s) { return norm(s); }
+
     /** minúsculas, sin tildes, sin «JARVIS,» al principio ni signos. */
     static String norm(String s) {
         String t = Normalizer.normalize(s.toLowerCase(java.util.Locale.ROOT), Normalizer.Form.NFD).replaceAll("\\p{M}", "");

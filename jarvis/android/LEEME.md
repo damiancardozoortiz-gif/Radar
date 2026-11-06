@@ -153,3 +153,16 @@ desinstalar la versión anterior antes de instalar la nueva.
 - Menú lateral como la foto 2: Centro, VULKAN, Agentes, Memoria, Investigación, Finanzas, Creador, Lab, Config.
   Abajo: Hablar, Chat, Cámara, Archivo, RADAR, Voz, PAUSA. No se copiaron indicadores que no existen (Python, FPS, 98 %).
 - La prueba en Android emulado ahora recorre el asistente y abre la pantalla principal y la ventana Neural Core.
+
+## 3.4.0-video · Editor de vídeo («Creador»), etapa A (sin recodificar)
+- `core/video/Timeline`: montaje (unir, dividir, recortar, borrar, mover, deshacer), tiempos fuente → montaje.
+- `core/video/Subtitles`: transcripción de ElevenLabs Scribe con tiempos por palabra → líneas legibles → SRT
+  sincronizado con el montaje (lo cortado no aparece).
+- `core/video/ShortPlan` + `Brain.videoPlan`: «convertí este vídeo en un Short de 30 segundos» → Claude propone
+  segmentos sobre la transcripción REAL; se validan (fuera del vídeo, solapes, palabras partidas, duración máx. +10 %).
+  Sin IA: tramos con más habla. Vista previa obligatoria; nada se exporta sin su aprobación.
+- `VideoTools` (Android, sin librerías): análisis (duración, formato, rotación, fotogramas clave), miniaturas, audio
+  extraído, EXPORTACIÓN MP4 sin recodificar (MediaExtractor → MediaMuxer). Límites: cada clip empieza en el fotograma
+  clave anterior; para unir, vídeos del mismo formato.
+- `VideoEditor`: ventana «Creador» con reproductor, línea de tiempo con miniaturas y botones; el proyecto se guarda.
+- Etapa B (pendiente): 9:16/16:9 con reencuadre, resolución, texto y subtítulos grabados, música, transiciones.

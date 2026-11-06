@@ -43,7 +43,10 @@ class H(BaseHTTPRequestHandler):
         if "LENTO" in text: time.sleep(5)
         tools = [t.get("type") for t in body.get("tools", [])]
         LOG.write(json.dumps({"tools": tools, "msg": text[:40]}) + "\n"); LOG.flush()
-        if "aprendé a" in text: rep = {"decir": "Preparé una herramienta para convertir segundos.", "detalle": "## Qué falta\nNada nativo.", "recordar": None, "tipo": "herramienta",
+        if "EDICIÓN DE VÍDEO" in text: rep = {"decir": "Propongo un Short con el gancho y la conclusión.", "detalle": "## Estructura\nGancho, idea, cierre.", "recordar": None,
+            "segmentos": [{"inicio_s": 1.7, "fin_s": 9.0, "motivo": "gancho"}, {"inicio_s": 8.0, "fin_s": 14.2, "motivo": "idea"}, {"inicio_s": 99, "fin_s": 120, "motivo": "inventado"},
+                          {"inicio_s": 30, "fin_s": 55, "motivo": "cierre"}], "titulo": "Tres claves del seguro de hogar", "descripcion": "Resumen en 30 s", "hashtags": ["#seguros"]}
+        elif "aprendé a" in text: rep = {"decir": "Preparé una herramienta para convertir segundos.", "detalle": "## Qué falta\nNada nativo.", "recordar": None, "tipo": "herramienta",
             "herramienta": {"id": "reloj", "nombre": "Segundos a reloj", "descripcion": "segundos → hh:mm:ss", "codigo": "function run(entrada){ var h=Math.floor(entrada/3600),m=Math.floor(entrada%3600/60),s=entrada%60; function p(n){return (n<10?'0':'')+n;} return p(h)+':'+p(m)+':'+p(s); }",
                             "pruebas": [{"entrada": 0, "esperado": "00:00:00"}, {"entrada": 3661, "esperado": "01:01:01"}, {"entrada": 59, "esperado": "00:00:59"}], "por_que": "división entera"}}
         elif "editá este vídeo" in text: rep = {"decir": "Todavía no sé editar vídeo, señor Rafael.", "detalle": "", "recordar": None, "capacidad_faltante": "editar vídeo"}

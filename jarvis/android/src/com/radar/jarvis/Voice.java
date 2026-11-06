@@ -140,18 +140,24 @@ public final class Voice {
 
     /** ElevenLabs Scribe (scribe_v1, es). */
     public String transcribe(File audio) throws IOException {
+        String t = Json.str(transcribeFull(audio, "orden.m4a").get("text"));
+        return t == null ? "" : t.trim();
+    }
+
+    /** Respuesta completa de Scribe: texto y palabras con tiempos (para subtítulos y para editar vídeo). */
+    public Map<String, Object> transcribeFull(File audio, String name) throws IOException {
         if (!usesElevenLabs()) throw new IOException("falta la clave de ElevenLabs");
         String boundary = "jarvis" + UUID.randomUUID().toString().replace("-", "");
         HttpURLConnection c = (HttpURLConnection) new URL("https://api.elevenlabs.io/v1/speech-to-text").openConnection();
         c.setRequestMethod("POST");
         c.setDoOutput(true);
-        c.setConnectTimeout(15000); c.setReadTimeout(30000);
+        c.setConnectTimeout(15000); c.setReadTimeout(audio.length() > 2_000_000 ? 300000 : 30000);  // un vídeo largo tarda más
         c.setRequestProperty("xi-api-key", elevenKey);
         c.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
         OutputStream o = c.getOutputStream();
         for (String[] f : new String[][]{{"model_id", "scribe_v1"}, {"language_code", "es"}, {"tag_audio_events", "false"}})
             o.write(("--" + boundary + "\r\nContent-Disposition: form-data; name=\"" + f[0] + "\"\r\n\r\n" + f[1] + "\r\n").getBytes("UTF-8"));
-        o.write(("--" + boundary + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"orden.m4a\"\r\nContent-Type: audio/mp4\r\n\r\n").getBytes("UTF-8"));
+        o.write(("--" + boundary + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"" + name + "\"\r\nContent-Type: audio/mp4\r\n\r\n").getBytes("UTF-8"));
         FileInputStream in = new FileInputStream(audio);
         byte[] buf = new byte[8192]; int n;
         while ((n = in.read(buf)) > 0) o.write(buf, 0, n);
@@ -162,8 +168,9 @@ public final class Voice {
         String body = read(code >= 400 ? c.getErrorStream() : c.getInputStream());
         c.disconnect();
         if (code >= 400) throw new IOException("ElevenLabs " + code);
-        String t = Json.str(Json.obj(Json.parse(body)).get("text"));
-        return t == null ? "" : t.trim();
+        Map<String, Object> r = Json.obj(Json.parse(body));
+        if (r == null) throw new IOException("respuesta vacía de ElevenLabs");
+        return r;
     }
 
     // ================================================================== voces
