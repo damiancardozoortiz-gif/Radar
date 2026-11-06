@@ -120,3 +120,13 @@ desinstalar la versión anterior antes de instalar la nueva.
 4. Decir «JARVIS, trabaja en ti mismo». En el chat aparecen los pasos «FÉNIX · …». Esperar a que termine.
 5. En 🔥: aprobar la mejora VERIFICADA. Comprobar en 🧪 que la herramienta está activa.
 6. «JARVIS, PAUSA TOTAL» durante otra misión: debe detenerse y quedar en pausa.
+
+## 3.1.0-voz · NEURAL CORE, etapa 1: voz (diagnóstico, medición y velocidad)
+- Medición real por turno (`core/VoiceMetrics`, `files/voz/metricas.jsonl`): reconocimiento, Claude, síntesis hasta el
+  primer sonido, tiempo hasta la primera palabra, CPU y RAM, por motor de voz. Panel → VOZ muestra las medianas.
+- Fin de frase adaptado al ruido (`core/Vad`, sustituye el umbral fijo 2200): calibra el ruido, distingue voz (varía con
+  las sílabas) de ruido parejo, 0,8 s de silencio. Probado con señales SINTÉTICAS (50 variaciones por escenario).
+- ElevenLabs en STREAMING (`core/PcmStream` + AudioTrack, PCM 22,05 kHz): suena mientras se genera. Si falla antes de
+  sonar, MP3 completo como antes; después, voz de Android. Botón en el panel para comparar con/sin streaming.
+- Reconocimiento y voz de Android en español de Argentina (es-AR; si no está, es-US/es-ES).
+- Conexiones a Claude y ElevenLabs abiertas de antemano al arrancar (sin enviar datos).

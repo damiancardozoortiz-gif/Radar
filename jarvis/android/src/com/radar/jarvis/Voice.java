@@ -4,6 +4,7 @@ import android.content.Context;
 import android.media.AudioFormat;
 import android.media.AudioManager;
 import android.media.AudioRecord;
+import android.media.AudioTrack;
 import android.media.MediaPlayer;
 import android.media.audiofx.Visualizer;
 import android.media.MediaRecorder;
@@ -14,6 +15,9 @@ import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
 
 import com.radar.jarvis.core.Json;
+import com.radar.jarvis.core.PcmStream;
+import com.radar.jarvis.core.Vad;
+import com.radar.jarvis.core.VoiceMetrics;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -33,7 +37,9 @@ import java.util.UUID;
 
 /**
  * Voz de JARVIS con ElevenLabs (la integración que ya tienes; la clave nunca sale del teléfono salvo hacia ElevenLabs).
- * - Escuchar: graba tu orden, fin de turno tras ~0,9 s de silencio, y la transcribe con Scribe (scribe_v1, es).
+ * - Escuchar: graba tu orden; el fin de frase lo decide Vad (se adapta al ruido de fondo); transcribe con Scribe (es).
+ * - Hablar en STREAMING (por defecto): ElevenLabs envía PCM y suena mientras se genera (AudioTrack). Si falla antes de
+ *   sonar, se usa el MP3 completo de antes y, si también falla, la voz de Android (español de Argentina si está).
  * - Hablar: una voz FIJA (masculina, adulta, grave si tu cuenta la tiene), modelo natural por defecto,
  *   ritmo tranquilo, volumen ajustable, margen al final para no cortar frases.
  * - Interrupción: mientras habla escucha con cancelación de eco; si hablas ~0,3 s, se calla.
@@ -47,7 +53,13 @@ public final class Voice {
     /** eleven_multilingual_v2 = la más natural (por defecto); eleven_flash_v2_5 = la más rápida. */
     public volatile String model = "eleven_multilingual_v2";
     public volatile float volume = 1f;
-    public volatile boolean enabled = true, bargeIn = true;
+    public volatile boolean enabled = true, bargeIn = true, stream = true;
+    /** Medición real de cada turno (la pone la app al arrancar). */
+    public volatile VoiceMetrics metrics;
+    /** Motor que habló la última vez: elevenlabs-stream, elevenlabs-mp3 o android. */
+    public volatile String lastEngine = "";
+    private volatile AudioTrack track;
+    private volatile int gen;
 
     private final Context ctx;
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -67,7 +79,12 @@ public final class Voice {
     Voice(Context c) {
         ctx = c;
         tts = new TextToSpeech(c, new TextToSpeech.OnInitListener() {
-            public void onInit(int s) { ttsReady = s == TextToSpeech.SUCCESS; if (ttsReady) tts.setLanguage(new Locale("es", "ES")); }
+            public void onInit(int s) {
+                ttsReady = s == TextToSpeech.SUCCESS;
+                if (!ttsReady) return;
+                for (Locale l : new Locale[]{new Locale("es", "AR"), new Locale("es", "US"), new Locale("es", "ES"), new Locale("es")})  // español argentino primero
+                    if (tts.setLanguage(l) >= TextToSpeech.LANG_AVAILABLE) break;
+            }
         });
     }
 
@@ -94,23 +111,23 @@ public final class Voice {
             return;
         }
         recording = true; state = "escuchando";
-        long t0 = System.currentTimeMillis(), lastVoice = 0, voiceMs = 0;
-        boolean heard = false;
+        long t0 = System.currentTimeMillis();
+        Vad vad = new Vad();  // fin de frase adaptado al ruido (antes: umbral fijo LEVEL_THRESHOLD)
         try {
+            rec.getMaxAmplitude();  // la primera lectura siempre es 0
             while (!cancelled) {
-                Thread.sleep(50);
-                long now = System.currentTimeMillis();
+                Thread.sleep(vad.frameMs);
                 int amp = rec.getMaxAmplitude();
-                if (levelCb != null) levelCb.level(Math.min(1f, amp / 12000f), now - t0);
-                if (amp > LEVEL_THRESHOLD) { if (heard) voiceMs += 50; heard = true; lastVoice = now; }
-                if (heard && now - lastVoice > SILENCE_MS) break;
-                if (!heard && now - t0 > NO_SPEECH_MS) break;
-                if (now - t0 > MAX_TURN_MS) break;
+                if (levelCb != null) levelCb.level(Math.min(1f, amp / 12000f), System.currentTimeMillis() - t0);
+                Vad.State st = vad.feed(amp);
+                if (st == Vad.State.FIN || st == Vad.State.SIN_VOZ || st == Vad.State.MAXIMO) break;
             }
         } catch (InterruptedException ignored) {}
         release();
         if (cancelled) { done.done(null, "cancelado"); return; }
-        if (!heard || voiceMs < MIN_SPEECH_MS) { done.done(null, "no te he oído"); return; }
+        if (!vad.heard()) { done.done(null, "no te he oído"); return; }
+        VoiceMetrics m = metrics;
+        if (m != null) { m.start("voz", System.currentTimeMillis()); m.note("ruido", (long) vad.noise()); }
         done.done(out, null);
     }
 
@@ -202,7 +219,16 @@ public final class Voice {
         stopSpeaking();
         if (!enabled || text == null || text.trim().isEmpty()) { if (done != null) main.post(done); return; }
         state = "hablando";
+        final int my = ++gen;
         new Thread(new Runnable() { public void run() {
+            if (usesElevenLabs() && stream) {
+                try {
+                    if (streamTts(text, my, done)) { lastError = ""; return; }
+                } catch (Exception e) {
+                    lastError = "streaming: " + e.getMessage() + " (pruebo el audio completo)";
+                }
+                if (my != gen) return;  // se cortó mientras tanto
+            }
             if (usesElevenLabs()) {
                 try {
                     final File mp3 = tts11(text);
@@ -249,6 +275,70 @@ public final class Voice {
         return mp3;
     }
 
+    /**
+     * ElevenLabs en streaming (PCM 22,05 kHz) reproducido con AudioTrack a medida que llega. Devuelve false si no sonó
+     * nada (para probar la vía siguiente); true si habló (o lo cortaron a mitad).
+     */
+    private boolean streamTts(String text, final int my, final Runnable done) throws IOException {
+        String vid = chooseVoice();
+        HttpURLConnection c = (HttpURLConnection) new URL("https://api.elevenlabs.io/v1/text-to-speech/" + vid + "/stream?output_format=pcm_22050").openConnection();
+        c.setRequestMethod("POST"); c.setDoOutput(true);
+        c.setConnectTimeout(15000); c.setReadTimeout(30000);
+        c.setRequestProperty("xi-api-key", elevenKey);
+        c.setRequestProperty("Content-Type", "application/json");
+        Map<String, Object> body = Json.map("text", text, "model_id", model);
+        if (!simple) {
+            body.put("voice_settings", Json.map("stability", 0.55, "similarity_boost", 0.8, "style", 0.1, "use_speaker_boost", true, "speed", 0.94));
+            if (model.endsWith("v2_5")) body.put("language_code", "es");
+        }
+        long t0 = System.currentTimeMillis();
+        OutputStream o = c.getOutputStream();
+        o.write(Json.write(body).getBytes("UTF-8"));
+        o.close();
+        int code = c.getResponseCode();
+        if ((code == 400 || code == 422) && !simple) { c.disconnect(); simple = true; try { return streamTts(text, my, done); } finally { simple = false; } }
+        if (code >= 400) { c.disconnect(); throw new IOException("código " + code); }
+        final int rate = 22050;
+        int min = AudioTrack.getMinBufferSize(rate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT);
+        final AudioTrack t = new AudioTrack(AudioManager.STREAM_MUSIC, rate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT,
+                Math.max(min * 2, rate / 2), AudioTrack.MODE_STREAM);
+        track = t;
+        final boolean[] started = {false};
+        Map<String, Object> r;
+        try {
+            t.setStereoVolume(volume, volume);
+            t.play();
+            r = PcmStream.pump(c.getInputStream(), new PcmStream.Sink() {
+                public void write(byte[] b, int off, int len) {
+                    if (!started[0]) {
+                        started[0] = true;
+                        lastEngine = "elevenlabs-stream";
+                        VoiceMetrics m = metrics; if (m != null) m.mark("primer_audio", System.currentTimeMillis());
+                        main.post(new Runnable() { public void run() { startBargeIn(); } });
+                    }
+                    try { t.write(b, off, len); } catch (Exception e) { /* cortado */ }
+                }
+                public boolean stopped() { return my != gen; }  // la interrupción llama a stopSpeaking(), que cambia gen
+                public void level(float l, long ms) { outLevel = l; }
+            }, t0);
+            if (!started[0]) return false;
+            if (!Boolean.TRUE.equals(r.get("cortado"))) {  // espera a que suene lo que queda en el búfer
+                long frames = ((Number) r.get("bytes")).longValue() / 2, limit = System.currentTimeMillis() + frames * 1000 / rate + 2000;
+                while (my == gen && t.getPlaybackHeadPosition() < frames && System.currentTimeMillis() < limit) { try { Thread.sleep(20); } catch (InterruptedException e) { break; } }
+            }
+        } finally {
+            try { t.pause(); t.flush(); } catch (Exception ignored) {}
+            t.release();
+            if (track == t) track = null;
+            outLevel = 0;
+            c.disconnect();
+        }
+        if (my == gen && !Boolean.TRUE.equals(r.get("cortado"))) {
+            main.postDelayed(new Runnable() { public void run() { if (my == gen) { stopSpeaking(); if (done != null) done.run(); } } }, 150);
+        }
+        return true;
+    }
+
     private void play(File mp3, final Runnable done) {
         try {
             player = new MediaPlayer();
@@ -262,6 +352,8 @@ public final class Voice {
             player.setVolume(volume, volume);
             player.prepare();
             player.start();
+            lastEngine = "elevenlabs-mp3";
+            VoiceMetrics m = metrics; if (m != null) m.mark("primer_audio", System.currentTimeMillis());
             meter(player.getAudioSessionId());
             startBargeIn();
         } catch (Exception e) {
@@ -274,7 +366,7 @@ public final class Voice {
     private void androidTts(String text, final Runnable done) {
         if (!ttsReady) { state = "en espera"; lastError = "la voz de Android no está lista"; if (done != null) done.run(); return; }
         tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
-            public void onStart(String id) {}
+            public void onStart(String id) { lastEngine = "android"; VoiceMetrics m = metrics; if (m != null) m.mark("primer_audio", System.currentTimeMillis()); }
             public void onDone(String id) { state = "en espera"; if (done != null) main.post(done); }
             public void onError(String id) { state = "en espera"; if (done != null) main.post(done); }
         });
@@ -314,6 +406,9 @@ public final class Voice {
     public void stopSpeaking() {
         releaseMeter();
         bargeStop = true;
+        gen++;  // corta cualquier streaming en curso (el hilo libera su AudioTrack)
+        AudioTrack t = track;
+        if (t != null) { try { t.pause(); t.flush(); } catch (Exception ignored) {} }
         if (player != null) { try { player.stop(); } catch (Exception ignored) {} player.release(); player = null; }
         if (tts != null) tts.stop();
         if (!recording) state = "en espera";

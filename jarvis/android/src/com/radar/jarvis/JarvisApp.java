@@ -175,6 +175,24 @@ public class JarvisApp extends Application {
         v.volume = s.num("volume_set") == 1 ? s.num("volume") / 100f : 1f;
         v.enabled = !s.flag("voice_off");
         v.bargeIn = !s.flag("bargein_off");
+        v.stream = !s.flag("voice_stream_off");
+        if (v.metrics == null) v.metrics = new com.radar.jarvis.core.VoiceMetrics(c.getApplicationContext().getFilesDir());
+        prewarm(v.usesElevenLabs());
+    }
+
+    /** Abre ya las conexiones cifradas con Claude y ElevenLabs (sin enviar datos ni claves) para que la primera respuesta no espere al «saludo» TLS. */
+    static void prewarm(final boolean eleven) {
+        new Thread(new Runnable() { public void run() {
+            String[] hosts = eleven ? new String[]{"https://api.anthropic.com/", "https://api.elevenlabs.io/"} : new String[]{"https://api.anthropic.com/"};
+            for (String h : hosts) {
+                try {
+                    java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL(h).openConnection();
+                    c.setRequestMethod("HEAD"); c.setConnectTimeout(5000); c.setReadTimeout(5000);
+                    c.getResponseCode();
+                    InputStream in = c.getErrorStream(); if (in != null) in.close();  // leída: la conexión queda en el grupo para reutilizarse
+                } catch (Exception ignored) {}
+            }
+        }}, "precalentar").start();
     }
 
     static String readAll(InputStream in) throws IOException {

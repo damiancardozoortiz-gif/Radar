@@ -361,6 +361,8 @@ public class MainActivity extends Activity {
         String q = input.getText().toString().trim();
         if (q.isEmpty()) return;
         input.setText("");
+        com.radar.jarvis.core.VoiceMetrics vm = JarvisApp.voice(this).metrics;
+        if (vm != null) { long now = System.currentTimeMillis(); vm.start("texto", now); vm.mark("transcrito", now); }  // escrito: sin reconocimiento
         ask(q);
     }
 
@@ -372,6 +374,7 @@ public class MainActivity extends Activity {
         Map<String, Object> cmd = UiCommands.parse(q);
         if (cmd != null) { say(String.valueOf(cmd.get("say")), "sistema"); uiCommand(cmd); return; }
         busy = true;
+        cpu0 = android.os.Process.getElapsedCpuTime();
         thinkingLine = Ui.mono(this, "◌ JARVIS está pensando…", 11, Ui.ACCENT);
         chat.addView(thinkingLine);
         refresh();
@@ -381,7 +384,11 @@ public class MainActivity extends Activity {
         }}).start();
     }
 
+    private long cpu0;
+
     private void show(Map<String, Object> r) {
+        com.radar.jarvis.core.VoiceMetrics vm = JarvisApp.voice(this).metrics;
+        if (vm != null) vm.mark("respuesta", System.currentTimeMillis());
         String sayTxt = String.valueOf(r.get("say"));
         TextView t = say(sayTxt, "jarvis");
         String meta = r.get("tool") + " · " + r.get("brain") + (r.get("ms") instanceof Long && (Long) r.get("ms") > 0
@@ -775,6 +782,14 @@ public class MainActivity extends Activity {
     }
 
     private void afterSpeak() {
+        Voice vo = JarvisApp.voice(this);
+        if (vo.metrics != null && vo.metrics.active()) {
+            Runtime rt = Runtime.getRuntime();
+            vo.metrics.finish(System.currentTimeMillis(), vo.enabled && !muted ? (vo.lastEngine.isEmpty() ? "sin voz" : vo.lastEngine) : "voz apagada",
+                    cpu0 > 0 ? android.os.Process.getElapsedCpuTime() - cpu0 : -1, (rt.totalMemory() - rt.freeMemory()) / (1024 * 1024),
+                    vo.lastError.isEmpty() ? null : vo.lastError);
+            vo.lastEngine = "";
+        }
         refresh();
         if (conversation && !brain.isPaused()) listen();  // modo conversación: vuelve a escuchar solo
     }
@@ -811,6 +826,7 @@ public class MainActivity extends Activity {
                     }
                     try {
                         final String text = v.transcribe(audio);
+                        if (v.metrics != null) { v.metrics.mark("transcrito", System.currentTimeMillis()); v.metrics.note("palabras", (long) text.split("\\s+").length); }
                         JarvisApp.ui(new Runnable() { public void run() { if (!text.isEmpty()) ask(text); else listen(); } });
                     } catch (final Exception e) {  // si falla la transcripción, sigue escuchando
                         brain.error("transcripción: " + e.getMessage());
@@ -834,6 +850,8 @@ public class MainActivity extends Activity {
             public void onError(int e) { if (conversation && e != SpeechRecognizer.ERROR_CLIENT) { conversation = false; say("No te he oído. Pulsa Hablar cuando quieras.", "sistema"); } refresh(); }
             public void onResults(Bundle r) {
                 ArrayList<String> l = r.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+                com.radar.jarvis.core.VoiceMetrics vm = JarvisApp.voice(MainActivity.this).metrics;
+                if (vm != null) { vm.start("voz-android", System.currentTimeMillis()); vm.mark("transcrito", System.currentTimeMillis()); }
                 if (l != null && !l.isEmpty()) ask(l.get(0)); else if (conversation) listen();
             }
             public void onPartialResults(Bundle p) {}
@@ -841,7 +859,10 @@ public class MainActivity extends Activity {
         });
         Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
         i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
-        i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-ES");
+        i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-AR");  // español de Argentina (antes es-ES)
+        i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "es-AR");
+        i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 800L);
+        i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 800L);
         recognizer.startListening(i);
     }
 
@@ -1115,7 +1136,12 @@ public class MainActivity extends Activity {
         rv2.addView(Ui.button(this, vo.bargeIn ? "Interrupción: desactivar" : "Interrupción: activar", Ui.TEXT, new View.OnClickListener() { public void onClick(View v) {
             vo.bargeIn = !vo.bargeIn; JarvisApp.store(MainActivity.this).flag("bargein_off", !vo.bargeIn); dlg[0].dismiss();
         }}));
+        rv2.addView(gap());
+        rv2.addView(Ui.button(this, vo.stream ? "Streaming: desactivar" : "Streaming: activar", Ui.TEXT, new View.OnClickListener() { public void onClick(View v) {
+            vo.stream = !vo.stream; JarvisApp.store(MainActivity.this).flag("voice_stream_off", !vo.stream); dlg[0].dismiss();
+        }}));
         p.addView(rv2);
+        p.addView(Ui.text(this, vo.metrics == null ? "" : vo.metrics.report(), 12, Ui.TEXT));
         p.addView(Ui.text(this, "Volumen de JARVIS: " + Math.round(vo.volume * 100) + " %", 12, Ui.DIM));
         android.widget.SeekBar vol = new android.widget.SeekBar(this);
         vol.setMax(100);
