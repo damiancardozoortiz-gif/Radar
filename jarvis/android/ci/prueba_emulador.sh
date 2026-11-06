@@ -48,7 +48,8 @@ for m in re.finditer(r'<node [^>]*>',x):
     if b: a=list(map(int,b.groups())); print((a[0]+a[2])//2,(a[1]+a[3])//2); break
 " "$OUT/ui.xml" "$1")
     if [ -n "$XY" ]; then adb shell input tap $XY; sleep 2; return 0; fi
-    adb shell input swipe 500 1600 500 500 300; sleep 1
+    SZ=$(adb shell wm size | sed -n 's/.*: \([0-9]*\)x\([0-9]*\).*/\1 \2/p' | tail -1); W=${SZ% *}; H=${SZ#* }
+    adb shell input swipe $((W/2)) $((H*8/10)) $((W/2)) $((H*2/10)) 300; sleep 1
   done
   echo "no encontré «$1»; textos en pantalla:"; python3 -c "
 import re,sys
