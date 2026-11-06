@@ -83,6 +83,11 @@ public class CoreTest {
         check(r.get("report") != null && new File(String.valueOf(r.get("report"))).exists(), "el informe se guarda en el teléfono");
         r = b.answer("agregá una tarea: llamar al banco");
         check(b.tasks().size() == 1 && "llamar al banco".equals(b.tasks().get(0).get("texto")), "tarea creada y guardada");
+        r = b.analyzeTrade(com.radar.jarvis.core.Json.map("instrumento", "EURUSD", "resultado_neto", -35.0), java.util.Arrays.asList("las rupturas sin volumen fallan"));
+        check("No entrar contra la tendencia de H4.".equals(r.get("lesson")) && "claude".equals(r.get("brain")), "aprendizaje tras una operación: lección extraída");
+        b.setPause(true, "prueba");
+        check(Boolean.TRUE.equals(b.analyzeTrade(com.radar.jarvis.core.Json.map("x", 1L), new java.util.ArrayList<String>()).get("paused")), "en PAUSA no se analiza nada");
+        b.setPause(false, "prueba");
         System.out.println(ok + " PASA · " + bad + " FALLA");
         System.exit(bad == 0 ? 0 : 1);
     }

@@ -229,12 +229,20 @@ public final class Brain {
 
     /** Estratega financiero: Claude razona SOLO con el análisis calculado (no inventa precios) y no toca los límites. */
     public Map<String, Object> strategy(String symbol, Map<String, Object> analysis, Map<String, Object> limits) {
+        return strategy(symbol, analysis, limits, new java.util.ArrayList<String>());
+    }
+
+    /** lessons: aprendizajes de operaciones anteriores (los registra el usuario; son datos, no órdenes). */
+    public Map<String, Object> strategy(String symbol, Map<String, Object> analysis, Map<String, Object> limits, List<String> lessons) {
         if (paused) return paused("estrategia");
         long t0 = System.currentTimeMillis();
         String msg = "Actúa como el equipo de JARVIS FINANCIAL INTELLIGENCE (investigador, analista técnico, de tendencias y de liquidez, "
                 + "estratega y gestor de riesgo) para el señor Rafael. Instrumento: " + symbol + ".\n"
                 + "Análisis multitemporal CALCULADO por la app (son los únicos datos de precio válidos; no inventes otros):\n"
                 + Json.write(analysis) + "\nLímites de riesgo fijados por el señor Rafael (no los cambies ni propongas cambiarlos): " + Json.write(limits)
+                + (lessons.isEmpty() ? "" : "\nAprendizajes de operaciones anteriores (tenlos en cuenta; si uno aplica, dilo):\n<datos_no_confiables origen=\"aprendizajes\">\n"
+                    + join(lessons) + "\n</datos_no_confiables>")
+                + "\nNunca propongas aumentar volumen para recuperar pérdidas ni operar para completar una racha."
                 + "\n\nEn \"detalle\" (markdown): 1) lectura de cada temporalidad, 2) confluencias y contradicciones, 3) escenario principal y alternativo, "
                 + "4) si hay oportunidad: dirección, zona de entrada, stop loss y take profit basados en niveles del análisis (cita el nivel y la temporalidad), "
                 + "5) qué la invalidaría. Si no hay oportunidad clara, dilo. Nada es una certeza; solo cuenta DEMO. "
@@ -257,6 +265,37 @@ public final class Brain {
                     "warning", "Cerebro no disponible (" + e.getMessage() + ").", "ms", System.currentTimeMillis() - t0);
         }
     }
+
+    /** Aprendizaje tras una operación cerrada: qué factores pesaron y qué repetir o evitar. No cambia ninguna regla. */
+    public Map<String, Object> analyzeTrade(Map<String, Object> trade, List<String> lessons) {
+        if (paused) return paused("aprendizaje");
+        long t0 = System.currentTimeMillis();
+        String msg = "Analiza esta operación CERRADA del señor Rafael para aprender de ella. Datos registrados (no inventes otros):\n"
+                + "<datos_no_confiables origen=\"operacion\">\n" + Json.write(trade) + "\n</datos_no_confiables>\n"
+                + (lessons.isEmpty() ? "" : "Aprendizajes anteriores:\n<datos_no_confiables origen=\"aprendizajes\">\n" + join(lessons) + "\n</datos_no_confiables>\n")
+                + "En \"detalle\" (markdown): factores que contribuyeron al resultado (entrada, salida, gestión, contexto, costes: comisión y spread), "
+                + "qué se cumplió y qué no de la estrategia, y qué repetir o evitar. Distingue lo que muestran los datos de lo que es hipótesis. "
+                + "No propongas cambiar los límites de riesgo ni aumentar el volumen. Añade el campo \"aprendizaje\": una o dos frases reutilizables. "
+                + "En \"decir\", una frase. Responde solo con el JSON.";
+        try {
+            String text = call(Json.list(Json.map("role", "user", "content", msg)), systemPrompt());
+            if (paused) return paused("aprendizaje");
+            Map<String, Object> rep = parseReply(text);
+            String lesson = null;
+            int a = text.indexOf('{'), z = text.lastIndexOf('}');
+            try { lesson = Json.str(Json.obj(Json.parse(text.substring(a, z + 1))).get("aprendizaje")); } catch (Exception ignored) {}
+            log("finanzas", "operación analizada para aprendizaje");
+            return Json.map("say", cleanSpeech(String.valueOf(rep.get("decir"))), "detail", String.valueOf(rep.get("detalle")).trim(),
+                    "lesson", lesson, "tool", "aprendizaje", "brain", "claude", "ms", System.currentTimeMillis() - t0);
+        } catch (Exception e) {
+            if (paused) return paused("aprendizaje");
+            error("aprendizaje: " + e.getMessage());
+            return Json.map("say", "No pude analizar la operación.", "detail", "", "tool", "aprendizaje", "brain", "respaldo",
+                    "warning", "Cerebro no disponible (" + e.getMessage() + ").", "ms", System.currentTimeMillis() - t0);
+        }
+    }
+
+    private static String join(List<String> l) { StringBuilder b = new StringBuilder(); for (String x : l) b.append("- ").append(x).append('\n'); return b.toString(); }
 
     /** Analiza el texto de un documento elegido (datos no confiables). */
     public Map<String, Object> document(String name, String text) {

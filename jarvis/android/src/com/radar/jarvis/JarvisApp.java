@@ -8,6 +8,7 @@ import android.os.Looper;
 
 import com.radar.jarvis.core.Brain;
 import com.radar.jarvis.core.Vault;
+import com.radar.jarvis.core.fin.Discipline;
 import com.radar.jarvis.core.fin.MetaApi;
 import com.radar.jarvis.core.fin.Mt5;
 
@@ -68,6 +69,13 @@ public class JarvisApp extends Application {
         }
         return mt5;
     }
+    private static Discipline discipline;
+    /** Regla de autodisciplina financiera (estado en disco: sobrevive a reinicios). */
+    public static synchronized Discipline discipline(Context c) {
+        if (discipline == null) discipline = new Discipline(c.getApplicationContext().getFilesDir());
+        return discipline;
+    }
+
     /** Tras cambiar el token o la cuenta. */
     public static synchronized void resetMt5() { mt5 = null; }
 

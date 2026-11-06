@@ -52,3 +52,12 @@ desinstalar la versión anterior antes de instalar la nueva.
 - Rutas tomadas del SDK oficial `metaapi.cloud-sdk` 29.3.4. Sin confirmar contra el servicio real (inaccesible desde el
   entorno de desarrollo): `…/account-information` y `…/positions` de la API REST de cliente.
 - Pruebas: `./build.sh test` incluye 16 comprobaciones contra una MetaApi SIMULADA (`test/mock_metaapi.py`).
+
+## Versión 1.3: regla de autodisciplina financiera
+- `core/fin/Discipline`: se aplica ANTES de cualquier orden y sus motivos van primero (PAUSA la primera).
+  Ciclo = operaciones desde la última autorización expresa. Hasta 3 por ciclo; una 4.ª solo tras 3 ganadoras netas y con
+  todos los controles; luego hace falta autorizar otro ciclo. Con 2 perdedoras en el ciclo: BLOQUEO inmediato (demo y
+  real), informe de pérdidas en `files/finanzas/`, aviso por voz y en el arranque; solo el usuario reactiva, tras
+  confirmar la revisión del riesgo. El volumen nunca supera el que fija el riesgo y no sube tras una pérdida.
+- Registro de cada operación cerrada con los 15 datos pedidos; Claude la analiza y el aprendizaje se guarda y se da
+  al estratega en los análisis siguientes. Panel con acumulados DEMO y REAL por separado.

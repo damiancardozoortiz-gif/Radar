@@ -125,6 +125,7 @@ public class MainActivity extends Activity {
         if (!mem.isDirectory() || !mem.canWrite()) { p.add("la memoria no está disponible"); h.append(" · memoria: no disponible"); }
         else h.append(" · memoria: ").append(brain.memories().size()).append(" recuerdos");
         if (!Perms.granted(this, "android.permission.RECORD_AUDIO")) { p.add("el micrófono no tiene permiso"); h.append(" · micrófono: sin permiso"); }
+        if (JarvisApp.discipline(this).blocked()) { p.add("las operaciones financieras están bloqueadas por dos pérdidas y esperan su revisión"); h.append(" · finanzas: BLOQUEADAS"); }
         com.radar.jarvis.core.fin.Mt5 m5 = JarvisApp.mt5(this);
         if (m5 instanceof com.radar.jarvis.core.fin.MetaApi) {
             try {

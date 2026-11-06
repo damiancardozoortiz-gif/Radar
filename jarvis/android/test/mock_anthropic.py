@@ -23,7 +23,8 @@ class H(BaseHTTPRequestHandler):
         if "LENTO" in text: time.sleep(5)
         tools = [t.get("type") for t in body.get("tools", [])]
         LOG.write(json.dumps({"tools": tools, "msg": text[:40]}) + "\n"); LOG.flush()
-        if has_image: rep = {"decir": "Veo un cuadrado rojo.", "detalle": "", "recordar": None}
+        if "operación CERRADA" in text: rep = {"decir": "La salida por stop fue correcta.", "detalle": "## Factores\nEntrada contra la tendencia de H4.", "recordar": None, "aprendizaje": "No entrar contra la tendencia de H4."}
+        elif has_image: rep = {"decir": "Veo un cuadrado rojo.", "detalle": "", "recordar": None}
         elif "informe" in text.lower(): rep = {"decir": "Informe listo, señor Rafael.", "detalle": "# Informe\n" + "Hallazgo con fuente https://ejemplo.org. " * 10, "recordar": None}
         elif "tarea" in text.lower(): rep = {"decir": "Tarea creada: llamar al banco.", "detalle": "", "recordar": None, "tarea": {"accion": "crear", "texto": "llamar al banco"}}
         elif "Recuerda" in text: rep = {"decir": "He guardado: la cita del dentista es el jueves.", "detalle": "", "recordar": "la cita del dentista es el jueves"}

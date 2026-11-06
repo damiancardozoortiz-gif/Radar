@@ -8,6 +8,7 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.text.InputType;
 import android.view.View;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -16,6 +17,7 @@ import android.widget.Toast;
 
 import com.radar.jarvis.core.Brain;
 import com.radar.jarvis.core.Json;
+import com.radar.jarvis.core.fin.Discipline;
 import com.radar.jarvis.core.fin.Market;
 import com.radar.jarvis.core.fin.MetaApi;
 import com.radar.jarvis.core.fin.Mt5;
@@ -34,6 +36,7 @@ import java.util.Map;
 public class FinanceActivity extends Activity {
     static final int REQ_CSV = 21;
     private Brain brain;
+    private Discipline disc;
     private Mt5 mt5;              // MetaApi (solo lectura) si está configurado; si no, sin conexión (no se simula)
     private Map<String, Object> mt5Info;  // última lectura de la cuenta
     private String mt5Error;
@@ -51,6 +54,7 @@ public class FinanceActivity extends Activity {
         brain = JarvisApp.brainOrNull();
         if (brain == null) { finish(); return; }
         mt5 = JarvisApp.mt5(this);
+        disc = JarvisApp.discipline(this);
         ScrollView sv = new ScrollView(this);
         sv.setBackgroundColor(Ui.BG);
         body = Ui.col(this);
@@ -95,6 +99,8 @@ public class FinanceActivity extends Activity {
             brain.setPause(true, "emergencia financiera"); brain.log("finanzas", "emergencia"); refreshStatus();
             Toast.makeText(FinanceActivity.this, "PAUSA activada. Nada se ejecuta.", Toast.LENGTH_LONG).show();
         }}), Ui.margins(this, 0, 8, 0, 0));
+
+        disciplineSection();
 
         section("ESPECIALISTAS");
         body.addView(Ui.text(this,
@@ -296,7 +302,8 @@ public class FinanceActivity extends Activity {
         final Risk.Limits lim = limits();
         new Thread(new Runnable() { public void run() {
             final Map<String, Object> r = brain.strategy(sym, analysis, Json.map("riesgo_por_operacion_pct", lim.riskPct,
-                    "perdida_diaria_max_pct", lim.maxDailyLossPct, "max_posiciones", (long) lim.maxPositions, "exposicion_max_lotes", lim.maxTotalLots));
+                    "perdida_diaria_max_pct", lim.maxDailyLossPct, "max_posiciones", (long) lim.maxPositions, "exposicion_max_lotes", lim.maxTotalLots),
+                    disc.lessons(8));
             JarvisApp.ui(new Runnable() { public void run() {
                 proposal = Json.obj(r.get("proposal"));
                 build();
@@ -340,6 +347,10 @@ public class FinanceActivity extends Activity {
         boolean demo = false;
         try { demo = mt5.isDemo(); } catch (Exception ignored) {}
         List<String> no = Risk.check(o, lim, bal, cs, brain.isPaused(), mt5.connected(), demo, 0, new ArrayList<Risk.Order>(), recent, o.createdMs);
+        // REGLA DE AUTODISCIPLINA: se aplica ANTES de enviar, y sus motivos van primero (PAUSA la primera de todas)
+        List<String> rules = disc.check(o, brain.isPaused(), 0, o.lots);
+        for (String x : no) if (!x.contains("PAUSA")) rules.add(x);
+        no = rules;
         if (!mt5.canTrade()) no.add("el conector MT5 está en modo SOLO LECTURA: JARVIS no envía órdenes (puede copiarla a mano en MT5)");
         String t = String.format(Locale.US, "%s %s\nEntrada %.5f · SL %.5f · TP %s\nLote calculado: %.2f (riesgo %.2f %% de %.2f)\nPérdida si salta el stop: %.2f",
                 o.side.toUpperCase(Locale.US), o.symbol, o.entry, o.sl, o.tp > 0 ? String.format(Locale.US, "%.5f", o.tp) : "—",
@@ -360,6 +371,185 @@ public class FinanceActivity extends Activity {
             });
         }
         d.show();
+    }
+
+    // ------------------------------------------------------------------ autodisciplina
+    private void disciplineSection() {
+        Map<String, Object> p = disc.panel();
+        section("AUTODISCIPLINA (regla obligatoria antes de cada orden)");
+        boolean blocked = disc.blocked();
+        if (blocked) {
+            TextView alert = Ui.text(this, "⚠ " + p.get("bloqueo") + "\nNo se abren nuevas entradas (demo ni real). Solo usted puede reactivar, tras revisar el riesgo.", 13, Ui.BAD);
+            alert.setBackground(Ui.box(this, Ui.PANEL, Ui.BAD, 8));
+            alert.setPadding(Ui.dp(this, 10), Ui.dp(this, 8), Ui.dp(this, 10), Ui.dp(this, 8));
+            body.addView(alert);
+        }
+        Map<String, Object> d = Json.obj(p.get("demo")), r = Json.obj(p.get("real")), c = Json.obj(p.get("ciclo"));
+        body.addView(Ui.text(this,
+                "Autorización: " + p.get("autorizacion") + "\n"
+              + "Bloqueo: " + p.get("bloqueo") + "\n"
+              + "Ciclo actual: " + c.get("operaciones") + " operaciones · " + c.get("ganadoras") + " ganadoras · " + c.get("perdedoras") + " perdedoras\n"
+              + "Próxima operación permitida: " + p.get("proxima") + "\n\n"
+              + "DEMO · " + stats(d) + "\nREAL · " + stats(r) + "\n"
+              + "Aprendizajes registrados: " + p.get("aprendizajes")
+              + (p.get("informe_perdidas") != null ? "\nInforme de pérdidas: " + new java.io.File(String.valueOf(p.get("informe_perdidas"))).getName() : ""), 12, Ui.TEXT));
+        body.addView(Ui.text(this, "Regla: hasta 3 operaciones por ciclo; una 4.ª solo tras 3 ganadoras netas. Con 2 perdedoras, bloqueo inmediato. "
+                + "El volumen nunca sube por ganar ni para recuperar. Cada ciclo nuevo exige su autorización.", 11, Ui.DIM));
+        LinearLayout row = Ui.row(this);
+        row.addView(Ui.button(this, "Registrar operación cerrada", Ui.ACCENT, new View.OnClickListener() { public void onClick(View v) { recordDialog(); } }));
+        row.addView(gap());
+        row.addView(Ui.button(this, blocked ? "Reactivar (revisión)" : "Autorizar ciclo", blocked ? Ui.BAD : Ui.TEXT, new View.OnClickListener() { public void onClick(View v) { authorizeDialog(); } }));
+        body.addView(row, Ui.margins(this, 0, 6, 0, 0));
+    }
+
+    private static String stats(Map<String, Object> m) {
+        return m.get("operaciones") + " operaciones · " + m.get("ganadoras") + " ganadoras · " + m.get("perdedoras") + " perdedoras · ganancias "
+                + m.get("ganancias_acumuladas") + " · pérdidas " + m.get("perdidas_acumuladas") + " · neto " + m.get("neto");
+    }
+
+    /** Autorización expresa: muestra límites, ciclo e informe de pérdidas, y exige confirmar la revisión. */
+    private void authorizeDialog() {
+        Risk.Limits lim = limits();
+        Map<String, Object> p = disc.panel();
+        StringBuilder b = new StringBuilder("REVISIÓN DE RIESGO\n\n")
+                .append(String.format(Locale.US, "Riesgo por operación: %.2f %%\nPérdida diaria máxima: %.2f %%\nMáximo de posiciones: %d\nExposición máxima: %.2f lotes\n\n",
+                        lim.riskPct, lim.maxDailyLossPct, lim.maxPositions, lim.maxTotalLots))
+                .append("Estado: ").append(p.get("bloqueo")).append("\n");
+        Object rep = p.get("informe_perdidas");
+        if (rep != null) {
+            try { b.append("\n").append(JarvisApp.readAll(new java.io.FileInputStream(String.valueOf(rep)))); }
+            catch (Throwable e) { b.append("\nInforme: ").append(rep); }
+        }
+        LinearLayout box = Ui.col(this);
+        int pad = Ui.dp(this, 16);
+        box.setPadding(pad, pad / 2, pad, 0);
+        TextView t = Ui.text(this, b.toString(), 12, Ui.TEXT);
+        ScrollView sv = new ScrollView(this);
+        sv.addView(t);
+        box.addView(sv, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, Ui.dp(this, 260)));
+        final CheckBox ck = new CheckBox(this);
+        ck.setText("He revisado el riesgo y el informe. Autorizo un ciclo nuevo sin cambiar los límites.");
+        ck.setTextColor(Ui.TEXT);
+        box.addView(ck);
+        final EditText note = field("Nota de la revisión (opcional)", "", false);
+        note.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        box.addView(note);
+        new AlertDialog.Builder(this).setTitle(disc.blocked() ? "Reactivar operaciones" : "Autorizar ciclo").setView(box)
+                .setNegativeButton("Cancelar", null)
+                .setPositiveButton("Autorizo", new DialogInterface.OnClickListener() { public void onClick(DialogInterface di, int w) {
+                    try {
+                        disc.authorize(ck.isChecked(), note.getText().toString().trim(), System.currentTimeMillis());
+                        brain.log("finanzas", "ciclo autorizado por el usuario tras revisión de riesgo");
+                        Toast.makeText(FinanceActivity.this, "Ciclo autorizado.", Toast.LENGTH_SHORT).show();
+                    } catch (Exception e) { Toast.makeText(FinanceActivity.this, e.getMessage(), Toast.LENGTH_LONG).show(); }
+                    build();
+                }}).show();
+    }
+
+    /** Registro de una operación cerrada con todos los datos para aprender, y análisis posterior. */
+    private void recordDialog() {
+        LinearLayout box = Ui.col(this);
+        int pad = Ui.dp(this, 16);
+        box.setPadding(pad, pad / 2, pad, 0);
+        final String now = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(new java.util.Date());
+        final EditText acc = labeled(box, "Cuenta: demo o real", "demo", false);
+        final EditText sym = labeled(box, "Instrumento", symbol == null ? "EURUSD" : symbol.getText().toString().trim().toUpperCase(Locale.US), false);
+        final EditText tf = labeled(box, "Temporalidad (M1…D1)", "H1", false);
+        final EditText side = labeled(box, "Dirección: buy o sell", "buy", false);
+        final EditText open = labeled(box, "Apertura (aaaa-mm-dd hh:mm)", now, false);
+        final EditText close = labeled(box, "Cierre (aaaa-mm-dd hh:mm)", now, false);
+        final EditText en = labeled(box, "Precio de entrada", "", true);
+        final EditText ex = labeled(box, "Precio de salida", "", true);
+        final EditText vol = labeled(box, "Volumen (lotes)", "", true);
+        final EditText sl = labeled(box, "Stop loss", "", true);
+        final EditText tp = labeled(box, "Take profit (0 si no tenía)", "0", true);
+        final EditText net = labeled(box, "Resultado neto (negativo si perdió)", "", true);
+        net.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL | InputType.TYPE_NUMBER_FLAG_SIGNED);
+        final EditText com = labeled(box, "Comisiones", "0", true);
+        final EditText spr = labeled(box, "Spread (puntos)", "0", true);
+        final EditText cond = labeled(box, "Condiciones del mercado", analysis == null ? "" : conditions(analysis), false);
+        final EditText strat = labeled(box, "Estrategia utilizada", "", false);
+        final EditText why = labeled(box, "Motivo de entrada", "", false);
+        final EditText out = labeled(box, "Motivo de salida", "", false);
+        for (EditText e : new EditText[]{cond, strat, why, out}) e.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        ScrollView sv = new ScrollView(this);
+        sv.addView(box);
+        new AlertDialog.Builder(this).setTitle("Operación cerrada").setView(sv).setNegativeButton("Cancelar", null)
+                .setPositiveButton("Registrar", new DialogInterface.OnClickListener() { public void onClick(DialogInterface di, int w) {
+                    final Discipline.Trade t = new Discipline.Trade();
+                    t.account = acc.getText().toString().trim().toLowerCase(Locale.US);
+                    t.symbol = sym.getText().toString().trim().toUpperCase(Locale.US);
+                    t.tf = tf.getText().toString().trim().toUpperCase(Locale.US);
+                    t.side = side.getText().toString().trim().toLowerCase(Locale.US);
+                    t.openMs = time(open); t.closeMs = time(close);
+                    t.entry = num(en, 0); t.exit = num(ex, 0); t.lots = num(vol, 0); t.sl = num(sl, 0); t.tp = num(tp, 0);
+                    t.net = num(net, 0); t.commission = num(com, 0); t.spread = num(spr, 0);
+                    t.conditions = cond.getText().toString().trim(); t.strategy = strat.getText().toString().trim();
+                    t.entryReason = why.getText().toString().trim(); t.exitReason = out.getText().toString().trim();
+                    try {
+                        Map<String, Object> r = disc.record(t);
+                        brain.log("finanzas", "operación registrada [" + t.account + "] " + t.symbol + " neto " + t.net);
+                        if (r.get("bloqueo") != null) lossAlert(String.valueOf(r.get("bloqueo")));
+                        learn(t);
+                    } catch (Exception e) { Toast.makeText(FinanceActivity.this, "No registrada: " + e.getMessage(), Toast.LENGTH_LONG).show(); }
+                    build();
+                }}).show();
+    }
+
+    private void lossAlert(String why) {
+        brain.log("finanzas", "BLOQUEO: " + why);
+        new AlertDialog.Builder(this).setTitle("⚠ Operaciones bloqueadas")
+                .setMessage(why + ".\n\nNo se abrirán nuevas entradas, ni en demo ni en real. Se generó el informe de pérdidas. "
+                        + "Para reactivar hace falta su autorización expresa tras revisar el riesgo.")
+                .setPositiveButton("Entendido", null).show();
+        JarvisApp.voice(this).speak("Señor Rafael, dos operaciones perdedoras. Bloqueo nuevas entradas hasta que usted revise el riesgo.", null);
+    }
+
+    /** Claude analiza la operación y el aprendizaje se guarda para futuros análisis. */
+    private void learn(final Discipline.Trade t) {
+        if (brain.apiKey.isEmpty()) return;
+        result.setText("Analizando la operación para aprender…");
+        new Thread(new Runnable() { public void run() {
+            final Map<String, Object> r = brain.analyzeTrade(t.toMap(), disc.lessons(8));
+            String lesson = Json.str(r.get("lesson"));
+            if (lesson != null && !lesson.trim().isEmpty()) {
+                try { disc.saveLesson(t.id, t.account, lesson.trim()); } catch (Exception ignored) {}
+            }
+            JarvisApp.ui(new Runnable() { public void run() {
+                build();
+                result.setText("— APRENDIZAJE —\n" + r.get("say") + "\n\n" + r.get("detail") + (r.get("lesson") != null ? "\n\nGuardado: " + r.get("lesson") : "")
+                        + (r.get("warning") != null ? "\n\n" + r.get("warning") : ""));
+            }});
+        }}).start();
+    }
+
+    private static String conditions(Map<String, Object> an) {
+        StringBuilder b = new StringBuilder();
+        List<Object> l = Json.arr(an.get("analisis"));
+        if (l != null) for (Object o : l) {
+            Map<String, Object> a = Json.obj(o);
+            if (a == null || a.get("aviso") != null) continue;
+            b.append(b.length() == 0 ? "" : "; ").append(a.get("temporalidad")).append(' ').append(a.get("tendencia")).append(", RSI ").append(a.get("rsi14"));
+        }
+        return b.toString();
+    }
+
+    private static long time(EditText e) {
+        try {
+            java.text.SimpleDateFormat f = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US);
+            f.setLenient(false);
+            return f.parse(e.getText().toString().trim()).getTime();
+        } catch (Exception x) { return 0; }
+    }
+
+    private EditText labeled(LinearLayout box, String label, String value, boolean numeric) {
+        TextView l = Ui.text(this, label, 12, Ui.DIM);
+        l.setPadding(0, Ui.dp(this, 6), 0, 0);
+        box.addView(l);
+        EditText e = field(label, value, numeric);
+        if (!numeric) e.setInputType(InputType.TYPE_CLASS_TEXT);
+        box.addView(e);
+        return e;
     }
 
     // ------------------------------------------------------------------ utilidades
