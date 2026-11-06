@@ -400,7 +400,7 @@ public class MainActivity extends Activity {
             ScrollView sv = new ScrollView(this);
             if (editor.view().getParent() instanceof android.view.ViewGroup) ((android.view.ViewGroup) editor.view().getParent()).removeView(editor.view());
             sv.addView(editor.view());
-            windows.open("editor", "Creador · editor de vídeo", sv);
+            windows.open("editor", "Creador · vídeo", sv);
         }
         else if ("panel".equals(id)) panel();
         else if ("neural".equals(id)) { fillNeural(); windows.open("neural", "Neural Core", neuralScroll); }

@@ -104,7 +104,10 @@ public class VideoEditor {
 
     private TextView btn(String s, boolean accent, View.OnClickListener l) {
         TextView b = Ui.button(act, s, accent ? Ui.ACCENT : Ui.TEXT, l);
-        b.setTextSize(11);
+        b.setTextSize(10.5f);
+        b.setSingleLine(true);
+        b.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        b.setPadding(Ui.dp(act, 2), Ui.dp(act, 8), Ui.dp(act, 2), Ui.dp(act, 8));
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, -2, 1);
         p.rightMargin = Ui.dp(act, 4);
         b.setLayoutParams(p);
