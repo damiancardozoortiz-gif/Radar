@@ -88,7 +88,14 @@ if tap_text "Empezar" && tap_text "Guardar y seguir" && tap_text "Terminar"; the
   fi
   captura principal
   if tap_text "Agentes"; then sleep 3; captura neural; echo "VENTANA NEURAL CORE: abierta" | tee -a "$OUT/resumen.txt"; fi
-  if tap_text "Creador"; then sleep 3; captura editor; echo "VENTANA EDITOR DE VÍDEO: abierta" | tee -a "$OUT/resumen.txt"; fi
+  tap_text "✕" >/dev/null  # cierra la ventana Neural Core (si no, tapa el menú)
+  if tap_text "Creador"; then
+    sleep 2
+    adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; adb shell cat /sdcard/ui.xml > "$OUT/ui-editor.xml"
+    if grep -q 'text="Importar"' "$OUT/ui-editor.xml" && grep -q 'text="Short IA"' "$OUT/ui-editor.xml"; then
+      captura editor; echo "VENTANA EDITOR DE VÍDEO: abierta (Importar, Short IA y Exportar a la vista)" | tee -a "$OUT/resumen.txt"
+    else echo "VENTANA EDITOR DE VÍDEO: NO verificada" | tee -a "$OUT/resumen.txt"; fi
+  else echo "VENTANA EDITOR DE VÍDEO: NO verificada (no encontré el botón)" | tee -a "$OUT/resumen.txt"; fi
   PID4=$(adb shell pidof com.radar.jarvis | tr -d '\r')
   [ -n "$PID4" ] && echo "TRAS ABRIR VENTANAS: la app sigue viva" | tee -a "$OUT/resumen.txt" || { echo "TRAS ABRIR VENTANAS: SE CERRÓ" | tee -a "$OUT/resumen.txt"; adb logcat -d | grep -A 15 "FATAL EXCEPTION" | head -40; exit 1; }
 else
