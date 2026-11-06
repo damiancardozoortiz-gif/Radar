@@ -6,6 +6,8 @@
 <title>J.A.R.V.I.S.</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/styles.css">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#07090c">
 </head>
 <body>
 <canvas id="graph" aria-label="Mapa de notas"></canvas>
@@ -67,6 +69,7 @@
   <button id="btn-brief" class="pill">parte del día</button>
   <button id="btn-plan" class="pill">plan</button>
   <button id="btn-memory" class="pill">memoria</button>
+  <button id="btn-device" class="pill" title="Permisos, cámara y apps">teléfono</button>
   <button id="btn-pause" class="pill pause" title="Pausa de emergencia (P)">pausa</button>
 </footer>
 
@@ -76,7 +79,31 @@
 </div>
 <div id="toast" class="toast hidden"></div>
 
+<!-- Cámara: solo visible (y encendida) cuando tú la abres. El punto rojo indica que está activa. -->
+<section id="camera" class="camera hidden" aria-label="Cámara">
+  <div class="cam-head"><span class="rec">● CÁMARA ACTIVA</span><span id="cam-info" class="dim"></span>
+    <button id="cam-close" class="icon-btn" title="Cerrar cámara">×</button></div>
+  <video id="cam-video" playsinline muted></video>
+  <div class="row"><button id="cam-shot" class="pill">Sacar foto</button><button id="cam-switch" class="pill">Cambiar cámara</button>
+    <button id="cam-describe" class="pill">¿Qué ves?</button></div>
+  <div id="cam-photo-box" class="hidden"><img id="cam-photo" alt="Foto capturada">
+    <div class="row"><button id="cam-save" class="pill">Guardar…</button><button id="cam-share" class="pill">Compartir…</button>
+      <button id="cam-discard" class="pill">Descartar</button></div>
+    <div class="src">No se guarda ni se comparte nada sin que lo confirmes.</div></div>
+</section>
+
+<!-- Abrir otra app: siempre con tu clic -->
+<div id="app-card" class="app-card hidden"></div>
+
+<!-- Panel de control del teléfono -->
+<aside id="panel" class="panel-device hidden" aria-label="Panel del teléfono">
+  <div class="card-head"><h3>Teléfono · permisos y apps</h3><button id="panel-close" class="icon-btn">×</button></div>
+  <div id="panel-body"></div>
+</aside>
+<input id="file-input" type="file" class="hidden">
+
 <script src="/graph.js"></script>
 <script src="/app.js"></script>
+<script src="/dispositivo.js"></script>
 </body>
 </html>

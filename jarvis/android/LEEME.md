@@ -1,0 +1,168 @@
+# JARVIS para Android (APK autónomo)
+
+App Android propia: se abre desde su icono, sin Termux, sin Ubuntu y sin ordenador. El cerebro piensa con la
+**API de Claude** (tu clave de API, de pago por uso) y lleva dentro las instrucciones (`agent/prompt.md`),
+tu perfil (`CLAUDE.md`), las notas, el correo y la agenda de JARVIS, y RADAR.
+
+## Instalar
+- **Desde el teléfono:** descarga `jarvis-debug.apk`, ábrelo y acepta «Permitir instalar apps de esta fuente»
+  (Android te lo pide la primera vez para la app desde la que lo abres). Después «Instalar».
+- **Desde un ordenador con adb:** `adb install -r jarvis-debug.apk`
+
+Al abrirla: asistente inicial (claves → permisos de uno en uno). Se repite en cada versión nueva.
+
+## Compilar (sin Gradle)
+```bash
+sudo apt install android-sdk-platform-23 aapt dalvik-exchange zipalign apksigner
+./build.sh          # build/jarvis-debug.apk
+./build.sh test     # prueba del núcleo contra una API de Claude simulada (18 comprobaciones)
+```
+La clave de firma de depuración (`debug.keystore`) se crea sola y no va a git. Si cambia, hay que
+desinstalar la versión anterior antes de instalar la nueva.
+
+## Estructura
+- `src/com/radar/jarvis/core/`: cerebro (Java puro, probado en el ordenador): `Brain` (API de Claude, PAUSA,
+  memoria, borradores, registro), `Router` (herramientas y órdenes del teléfono), `Vault` (notas), `Json`.
+- `src/com/radar/jarvis/`: `MainActivity` (reactor, chat, micrófono, cámara, archivos, RADAR, panel, PAUSA),
+  `SetupActivity` (asistente y permisos), `Perms`, `Voice` (ElevenLabs o voz de Android), `CameraActivity`,
+  `RadarActivity`, `JarvisService` (primer plano, dos palmadas), `Store` (claves cifradas con el Keystore).
+
+## Versión 1.1: identidad, voz y JARVIS FINANCIAL
+- Arranque: comprueba de verdad Claude (consulta ligera a la API), ElevenLabs (lee sus voces), memoria y micrófono, y saluda
+  UNA vez por arranque: «Buen día / Buenas tardes / Buenas noches, señor Rafael. JARVIS está a su servicio…». Si algo
+  falla, lo nombra en vez de decir «todos los sistemas operativos».
+- Personalidad y nombre en `agent/prompt.md` y `CLAUDE.md` (compartidos con la versión web).
+- Voz: una voz fija elegida entre las de su cuenta (masculina, grave, mejor en español; se puede cambiar en el panel),
+  calidad natural (`eleven_multilingual_v2`) o rápida (`eleven_flash_v2_5`), volumen, botón de voz, interrupción
+  al hablar (con cancelación de eco).
+- Órdenes con voseo: «investigá…», «analizá el mercado», «prepará un informe», «pausá todas las operaciones».
+  Investigación e informes con la búsqueda web de la API de Claude (cuesta por búsqueda). Tareas e informes guardados.
+- JARVIS FINANCIAL INTELLIGENCE (botón «📈 Finanzas»): análisis multitemporal M1…D1 (velas, acción del precio,
+  soportes/resistencias, tendencia, estructura, liquidez, rupturas falsas, volumen, RSI, MACD, medias, ATR, Fibonacci)
+  sobre velas reales importadas en CSV desde MT5; estratega (Claude, solo con los números calculados); gestor de riesgo
+  con reglas fijas; ticket de orden con autorización; auditoría.
+- MetaTrader 5: NO CONECTADO. No hay API oficial de MetaQuotes para apps; la vía sin ordenador es MetaApi (terceros),
+  pendiente de verificar su documentación (inaccesible desde el entorno de desarrollo). Operaciones reales deshabilitadas.
+
+## Versión 1.2: MetaTrader 5 por MetaApi (fase 1, SOLO LECTURA)
+- Panel financiero → «Conexión MT5»: ID de la cuenta en MetaApi + token (cifrado en el teléfono). Lee estado, tipo de cuenta
+  (DEMO/REAL según el servidor de MT5), saldo, posiciones y velas reales M5…D1 («Velas MT5») para el análisis.
+- NO envía órdenes: el conector se niega siempre (`canTrade()=false`, `execute()` falla sin tocar la red).
+- Recomendado: registrar en MetaApi la cuenta DEMO con la contraseña de INVERSOR y limitar el token a esa cuenta.
+- Rutas tomadas del SDK oficial `metaapi.cloud-sdk` 29.3.4. Sin confirmar contra el servicio real (inaccesible desde el
+  entorno de desarrollo): `…/account-information` y `…/positions` de la API REST de cliente.
+- Pruebas: `./build.sh test` incluye 16 comprobaciones contra una MetaApi SIMULADA (`test/mock_metaapi.py`).
+
+## Versión 1.3: regla de autodisciplina financiera
+- `core/fin/Discipline`: se aplica ANTES de cualquier orden y sus motivos van primero (PAUSA la primera).
+  Ciclo = operaciones desde la última autorización expresa. Hasta 3 por ciclo; una 4.ª solo tras 3 ganadoras netas y con
+  todos los controles; luego hace falta autorizar otro ciclo. Con 2 perdedoras en el ciclo: BLOQUEO inmediato (demo y
+  real), informe de pérdidas en `files/finanzas/`, aviso por voz y en el arranque; solo el usuario reactiva, tras
+  confirmar la revisión del riesgo. El volumen nunca supera el que fija el riesgo y no sube tras una pérdida.
+- Registro de cada operación cerrada con los 15 datos pedidos; Claude la analiza y el aprendizaje se guarda y se da
+  al estratega en los análisis siguientes. Panel con acumulados DEMO y REAL por separado.
+
+## JARVIS 3.0 · fases 1 y 2 (en curso)
+- Pantalla limpia: holograma a pantalla completa (`Hologram`): respira en espera, ondas al escuchar, giro y puntos al
+  pensar, boca y anillos que siguen el volumen REAL del audio de ElevenLabs (`Voice.outLevel`, Visualizer; si el teléfono
+  no lo permite, pulso suave), rojo en PAUSA y alerta roja con el bloqueo financiero.
+- Ventanas flotantes (`WindowHost`): aparecen con animación, semitransparentes, se arrastran por la barra, se minimizan
+  al dock, se expanden y se cierran sin perder el contenido. Chat, Resultados, Historial y Editor.
+- Nada se abre solo: las respuestas largas van a «Resultados» y el icono avisa (•). Copiar: pulsación larga en el chat.
+- Órdenes de pantalla resueltas en el teléfono, sin Claude (`core/UiCommands`): «abre el chat», «muéstrame la
+  investigación», «abre el editor», «oculta todas las ventanas», «vuelve a la pantalla principal»…
+- Investigador: búsqueda web + lectura de páginas (`web_fetch_20260209`), proceso de 10 pasos con secciones fijas;
+  la app comprueba cada enlace contra lo que la búsqueda devolvió de verdad, retira los que no salieron de ella y añade
+  el registro real de búsquedas y fuentes. Lee PDF. Guarda aprendizajes en `files/aprendizaje/`.
+- Pendiente: Finanzas, Cámara y RADAR siguen siendo pantallas propias (no ventanas); editor de vídeo; laboratorio.
+
+## JARVIS 3.0 · fase 4: automejora y aprendizaje supervisado
+- Reconoce lo que no sabe: conoce sus capacidades (`Brain.CAPABILITIES`); si le piden algo fuera de ellas lo dice,
+  devuelve `capacidad_faltante` y lo anota como propuesta en el laboratorio. No investiga por su cuenta.
+- «JARVIS, aprendé a …»: investiga (web), compara alternativas, diseña y decide: herramienta del laboratorio
+  (JavaScript puro con pruebas) o módulo nativo (propuesta para el desarrollador: necesita una APK nueva).
+- Laboratorio (`core/Lab`, ventana 🧪): versiones guardadas aparte; control de seguridad del código (sin red, sin
+  escapes, sin temporizadores); pruebas en aislamiento (`LabSandbox`: WebView nuevo, red bloqueada, sin archivos ni
+  puente con la app, límite de 4 s); aprobación SOLO del usuario; respaldo antes de cada cambio; volver a la versión
+  anterior; desactivar; registro de modificaciones; análisis de capacidades y límites.
+- Experiencia (`core/Experience`): cada tarea con su resultado y error; aprendizajes de investigaciones, capacidades y
+  operaciones; antes de cada tarea se recuperan los aprendizajes y fallos parecidos y se le dan a Claude.
+- Límite honesto: una herramienta del laboratorio solo calcula o transforma datos. Lo que necesita Android (vídeo,
+  cámara, sensores) no se puede crear dentro del teléfono: queda como propuesta y llega en una APK nueva.
+
+## FÉNIX 80 · motor de evolución supervisada (primera versión)
+- «JARVIS, trabaja en ti mismo» inicia una misión (`core/Evolution`): diagnostica, elige UNA mejora por prioridad
+  (categorías del señor Rafael + impacto, seguridad, estabilidad, probabilidad − coste, dificultad), la desarrolla,
+  la prueba, la corrige con los fallos reales y la deja VERIFICADA con evidencias. Solo después elige la siguiente.
+  Estados: PENDIENTE → EN ANÁLISIS → EN DESARROLLO → EN PRUEBAS → CORRIGIENDO → VERIFICADA → APROBADA → INTEGRADA
+  (+ BLOQUEADA, DESCARTADA). Las transiciones inválidas se rechazan en el código.
+- Intervalos configurables (reintento 1 min, siguiente 2 min, diagnóstico 5 min) y límites (40 consultas, 3 mejoras,
+  60 minutos, 3 intentos). Pausar, reanudar, detener. «JARVIS, PAUSA TOTAL» detiene todo.
+- VULKAN (`core/Vulkan`) dirige y reparte a agentes con instrucciones, salida y registro propios
+  (`files/evolucion/agentes/`): arquitectura, investigación (solo con la web autorizada), programación y android
+  (Claude); seguridad, calidad y memoria (deterministas). IA, optimización, voz e interfaz y finanzas: preparados,
+  sin lógica propia todavía.
+- Autodiagnóstico (`core/SelfCheck`): inventario de compilación (`assets/inventario.json`: versión, módulos, líneas,
+  permisos, resultado de las últimas pruebas), código fuente propio (`assets/fuente.json`), pendientes conocidos
+  (`pendientes.json`) y comprobaciones del teléfono (claves, micrófono, almacenamiento, aislamiento).
+- Aprendizaje estructurado: fecha, módulo, problema, causa, solución, pruebas, resultado, confianza, aprendizaje y
+  tipo (hecho comprobado, hipótesis o conclusión); se recupera ante tareas parecidas.
+- Preguntas respondidas con registros reales, sin Claude: «¿qué estás mejorando?», «¿qué aprendiste hoy?», «¿qué errores
+  corregiste?», «¿qué capacidades nuevas desarrollaste?», «¿qué te falta para evolucionar?», «¿qué podés hacer?»…
+- LÍMITE: dentro del teléfono solo se completan mejoras de tipo herramienta (JavaScript en el laboratorio). Las mejoras
+  de código Android se diseñan y se dejan como propuesta (BLOQUEADA: compilar fuera) hasta tener un canal de
+  compilación externo.
+
+### Prueba en el teléfono (FÉNIX)
+1. Abrir 🔥 Evolución: el panel muestra la misión INACTIVA y «Qué me falta» con los pendientes conocidos.
+2. Decir «JARVIS, ¿qué está fallando?»: debe listar las comprobaciones reales (por ejemplo, si falta el micrófono).
+3. Pedir algo que no sabe hacer y que sea de cálculo (p. ej. «convertí una lista de tiempos en subtítulos SRT»).
+4. Decir «JARVIS, trabaja en ti mismo». En el chat aparecen los pasos «FÉNIX · …». Esperar a que termine.
+5. En 🔥: aprobar la mejora VERIFICADA. Comprobar en 🧪 que la herramienta está activa.
+6. «JARVIS, PAUSA TOTAL» durante otra misión: debe detenerse y quedar en pausa.
+
+## 3.1.0-voz · NEURAL CORE, etapa 1: voz (diagnóstico, medición y velocidad)
+- Medición real por turno (`core/VoiceMetrics`, `files/voz/metricas.jsonl`): reconocimiento, Claude, síntesis hasta el
+  primer sonido, tiempo hasta la primera palabra, CPU y RAM, por motor de voz. Panel → VOZ muestra las medianas.
+- Fin de frase adaptado al ruido (`core/Vad`, sustituye el umbral fijo 2200): calibra el ruido, distingue voz (varía con
+  las sílabas) de ruido parejo, 0,8 s de silencio. Probado con señales SINTÉTICAS (50 variaciones por escenario).
+- ElevenLabs en STREAMING (`core/PcmStream` + AudioTrack, PCM 22,05 kHz): suena mientras se genera. Si falla antes de
+  sonar, MP3 completo como antes; después, voz de Android. Botón en el panel para comparar con/sin streaming.
+- Reconocimiento y voz de Android en español de Argentina (es-AR; si no está, es-US/es-ES).
+- Conexiones a Claude y ElevenLabs abiertas de antemano al arrancar (sin enviar datos).
+
+## 3.2.0-neural · NEURAL CORE, etapa 2: núcleo, red neuronal y memoria
+- `core/NeuralCore`: 10 nodos (percepción, lenguaje, memoria, planificación, razonamiento, investigación, ejecución,
+  validación, aprendizaje, respuesta) conectados al Brain existente (no lo duplica). Estado real por nodo (inactivo,
+  procesando, listo, error, desconectado), veces, tiempo y nota. Ventana 🧠 «Neural Core».
+- `core/NeuralNet`: RED NEURONAL REAL pequeña (1024 rasgos → 24 neuronas ReLU → 10 intenciones, softmax), entrenada en el
+  teléfono con 110 ejemplos semilla (`neural-corpus.json`), los pedidos reales (×2) y las correcciones del usuario (×3).
+  30 frases nuevas: 28/30. Validación interna (1 de cada 5 ejemplos): 50 % (pocos datos). Por eso las reglas mandan y la
+  red solo decide cuando las reglas no reconocen el pedido (o solo suponen «buscar en notas») y está segura (≥ 80 %).
+- Planificación: pedidos compuestos («investigá X y prepará una publicación») → pasos en orden; cada paso recibe el
+  resultado del anterior. Herramienta nueva «redactar» (publicaciones, guiones, textos; nunca publica).
+- `core/NeuralMemory`: memoria en 8 niveles sobre lo que ya existe. La conversación reciente ahora persiste al cerrar.
+- Corregida una regla vieja: «redactá un mensaje…» iba a leer correo.
+
+## 3.3.0-holo · NEURAL CORE, etapa 3: interfaz holográfica (fotos de referencia)
+- `Hologram`: figura humanoide holográfica en un anillo, sobre plataforma de anillos y suelo en perspectiva (foto 1).
+  Respira; el núcleo del pecho y el brillo siguen el volumen REAL de la voz; escaneo al pensar; rojo en PAUSA.
+  Los 10 nodos del Neural Core alrededor, con su estado real (verde listo, cian procesando, rojo error, gris desconectado).
+- Paneles con datos reales: ESTADO DEL SISTEMA (Claude, voz, memoria, evolución), RENDIMIENTO (primera palabra MEDIDA o
+  «sin medir»), PRÓXIMAS MEJORAS (de FÉNIX). Se atenúan al hablar/escuchar; tocar la figura los oculta (pantalla limpia).
+- Menú lateral como la foto 2: Centro, VULKAN, Agentes, Memoria, Investigación, Finanzas, Creador, Lab, Config.
+  Abajo: Hablar, Chat, Cámara, Archivo, RADAR, Voz, PAUSA. No se copiaron indicadores que no existen (Python, FPS, 98 %).
+- La prueba en Android emulado ahora recorre el asistente y abre la pantalla principal y la ventana Neural Core.
+
+## 3.4.0-video · Editor de vídeo («Creador»), etapa A (sin recodificar)
+- `core/video/Timeline`: montaje (unir, dividir, recortar, borrar, mover, deshacer), tiempos fuente → montaje.
+- `core/video/Subtitles`: transcripción de ElevenLabs Scribe con tiempos por palabra → líneas legibles → SRT
+  sincronizado con el montaje (lo cortado no aparece).
+- `core/video/ShortPlan` + `Brain.videoPlan`: «convertí este vídeo en un Short de 30 segundos» → Claude propone
+  segmentos sobre la transcripción REAL; se validan (fuera del vídeo, solapes, palabras partidas, duración máx. +10 %).
+  Sin IA: tramos con más habla. Vista previa obligatoria; nada se exporta sin su aprobación.
+- `VideoTools` (Android, sin librerías): análisis (duración, formato, rotación, fotogramas clave), miniaturas, audio
+  extraído, EXPORTACIÓN MP4 sin recodificar (MediaExtractor → MediaMuxer). Límites: cada clip empieza en el fotograma
+  clave anterior; para unir, vídeos del mismo formato.
+- `VideoEditor`: ventana «Creador» con reproductor, línea de tiempo con miniaturas y botones; el proyecto se guarda.
+- Etapa B (pendiente): 9:16/16:9 con reencuadre, resolución, texto y subtítulos grabados, música, transiciones.

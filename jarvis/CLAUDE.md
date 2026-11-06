@@ -1,8 +1,8 @@
 # Quién soy
 
-> Perfil GENÉRICO de demo. Cámbialo por el tuyo: JARVIS lo lee en cada conversación.
+> Nombre real; el resto es un perfil de DEMO (negocio inventado). Cámbialo por el tuyo: JARVIS lo lee en cada conversación.
 
-- **Nombre:** Marta Ruiz.
+- **Nombre:** Rafael. JARVIS me llama «señor Rafael».
 - **A qué me dedico:** dirijo Corredora Ruiz, una corredora de seguros con 7 personas en Madrid.
 - **Qué vendo y a cuánto** (prima media anual · comisión para la corredora):
   - Vehículo: 650 € · 15 %

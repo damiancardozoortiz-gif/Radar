@@ -1,0 +1,4 @@
+build/
+debug.keystore
+*.apk
+.pruebas.txt

@@ -174,20 +174,46 @@ function showAnswer(o, question) {
   if (o.warning) toast(o.warning, o.brain !== "claude", 9000);
 }
 // ---------------- autorizaciones humanas ----------------
+// Borradores que siguen pendientes (también los que sobreviven a un reinicio). No se ejecuta nada.
+function showPendingDrafts(list) {
+  if (!list.length) return;
+  $("#answer-meta").textContent = `borradores pendientes · ${list.length}`; $("#answer-meta").style.color = "var(--warn)";
+  $("#answer-say").textContent = "";
+  $("#answer-card").innerHTML = list.map(a =>
+    `<div class="src">Pediste: ${esc(a.question || "")} · ${esc(a.created || "")}</div>` +
+    `<div class="note-body">${renderMarkdown(a.text || "", [])}</div>` + approvalHtml(a)).join("<hr>");
+  $("#answer").classList.remove("hidden");
+}
+
 function approvalHtml(a) {
   const done = a.state !== "pendiente";
   return `<div class="approval ${done ? "done" : ""}" data-aid="${esc(a.id)}">
     <div class="state">${done ? esc(a.state.toUpperCase() + " · " + (a.result || "")) : "BORRADOR · espera tu sí. JARVIS nunca envía nada."}</div>
-    ${done ? "" : `<div class="row"><button class="pill" data-decision="aprobar">Aprobar</button><button class="pill" data-decision="descartar">Descartar</button></div>`}
+    ${done ? (a.state === "aprobado" ? `<div class="row">
+        <a class="pill" href="mailto:?body=${encodeURIComponent(a.text || "")}" target="_blank" rel="noopener" data-draft-open="gmail">Abrir en Gmail</a>
+        <button class="pill" data-draft-share="${esc(a.id)}">Compartir (WhatsApp…)</button></div>
+        <div class="src">Se abre la app con el texto escrito; lo envías tú.</div>` : "")
+      : `<div class="row"><button class="pill" data-decision="aprobar">Aprobar</button><button class="pill" data-decision="descartar">Descartar</button></div>`}
   </div>`;
 }
 document.addEventListener("click", async e => {
+  const g = e.target.closest("[data-draft-open]");
+  if (g && window.devLog) devLog("app", "borrador aprobado abierto en Gmail por el usuario");
+  const sh = e.target.closest("[data-draft-share]");
+  if (sh) {
+    const text = (App.lastApproved && App.lastApproved.text) || "";
+    if (!navigator.share) { toast("Este navegador no tiene el menú Compartir. Usa «Abrir en Gmail» o copia el texto."); return; }
+    try { await navigator.share({ text }); if (window.devLog) devLog("compartir", "borrador compartido por el usuario"); }
+    catch (err) { if (err.name !== "AbortError") toast("No se pudo compartir: " + err.name, true); }
+    return;
+  }
   const b = e.target.closest(".approval button[data-decision]"); if (!b) return;
   const box = b.closest(".approval");
   const r = await fetch("/api/approve", { method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ id: box.dataset.aid, decision: b.dataset.decision }) });
   const a = await r.json();
-  if (!r.ok) { toast("No se pudo registrar: " + (a.error || r.status), true); return; }
+  if (!r.ok) { toast(r.status === 423 ? "JARVIS está en pausa: quita la pausa para aprobar o descartar." : "No se pudo registrar: " + (a.error || r.status), true); return; }
+  if (a.state === "aprobado") App.lastApproved = a;
   box.outerHTML = approvalHtml(a);
   if (a.state === "aprobado") {
     try { await navigator.clipboard.writeText(a.text); toast("Aprobado y copiado. No se ha enviado nada: envíalo tú."); }
@@ -204,6 +230,7 @@ function showPause(on) {
   $("#btn-pause").textContent = App.paused ? "en pausa" : "pausa";
   if (App.paused) {
     if (typeof stopSpeaking === "function") { stopSpeaking(); stopConversation(); }
+    if (typeof Camera !== "undefined" && Dev.cam.stream) Camera.close("pausa");  // la pausa también apaga la cámara
     setState("paused");
   } else if (App.state === "paused") setState("idle");
 }
@@ -220,6 +247,8 @@ $("#btn-unpause").onclick = () => setPause(false);
 $("#answer-close").onclick = () => $("#answer").classList.add("hidden");
 
 async function ask(text, tool) {
+  // «JARVIS, detener todo»: se aplica aquí al instante, sin esperar al servidor
+  if (text && /\bdet[eé]n(er)?\s+todo\b|\bpara(r)?\s+todo\b/i.test(text) && window.stopAll) { stopAll("voz"); return; }
   if (App.busy) return;
   if (App.paused && !(text && /^\s*pausa\s*$/i.test(text))) { toast("JARVIS está en pausa. Quítala para seguir."); return; }
   App.busy = true; setState("thinking");
@@ -236,6 +265,7 @@ async function ask(text, tool) {
     showAnswer(o, text);
     if (o.saved) refreshStatus();
     if (o.paused) showPause(true);
+    if (o.device && window.runDevice) runDevice(o.device);  // orden del teléfono (abrir apps: siempre con tu clic)
     App.last = o;
     App.busy = false;
     if (window.onAnswer && !o.paused) await window.onAnswer(o); // voz
@@ -266,7 +296,7 @@ async function refreshStatus() {
     const st = await (await fetch("/api/status")).json();
     if (st.pause && !!st.pause.on !== !!App.paused) showPause(st.pause.on);
     const b = st.brain || {};
-    const map = { listo: ["cerebro: listo", "ok"], calentando: ["cerebro: calentando…", "warn"], arrancando: ["cerebro: arrancando…", "warn"],
+    const map = { "en pausa": ["cerebro: en pausa", "warn"], listo: ["cerebro: listo", "ok"], calentando: ["cerebro: calentando…", "warn"], arrancando: ["cerebro: arrancando…", "warn"],
                   respaldo: ["cerebro: RESPALDO", "bad"], "no disponible": ["cerebro: NO DISPONIBLE", "bad"] };
     const [txt, cls] = map[b.brain] || ["cerebro: " + b.brain, ""];
     chip("#st-brain", txt + (b.last_ms ? ` · ${(b.last_ms / 1000).toFixed(1).replace(".", ",")} s` : ""), cls);
@@ -409,7 +439,11 @@ function markVoice(err) {
 }
 
 function stopSpeaking() {
-  if (Voice.audio) { const a = Voice.audio; Voice.audio = null; const done = a.onended; a.onended = a.onerror = null; a.pause(); if (done) done(); }
+  if (Voice.audio) {
+    const a = Voice.audio; Voice.audio = null; const done = a.onended; a.onended = a.onerror = null;
+    a.pause(); a.removeAttribute("src"); a.load(); // desconecta el audio antes de liberar su dirección temporal
+    if (done) done();
+  }
   if (App.state === "speaking") setState("idle");
 }
 
@@ -427,7 +461,7 @@ async function speak(text) {
   if (Mic.stream) chip("#st-mic", "micrófono: sordo mientras hablo", "warn");
   return new Promise(resolve => {
     const a = Voice.audio = new Audio(url);
-    a.onended = a.onerror = () => { URL.revokeObjectURL(url); Voice.audio = null; resolve(true); };
+    a.onended = a.onerror = () => { setTimeout(() => URL.revokeObjectURL(url), 2000); if (Voice.audio === a) Voice.audio = null; resolve(true); };
     setState("speaking");
     a.play().catch(err => {
       const interrupted = err && err.name === "AbortError" || Voice.audio !== a; // lo cortaste tú (Esc, Espacio, pausa)
@@ -478,6 +512,8 @@ async function boot() {
     const st = await (await fetch("/api/status")).json();
     App.status = st;
     if (st.pause && st.pause.on) showPause(true);
+    for (const w of st.state_warnings || []) toast(w, true, 0);
+    showPendingDrafts(st.approvals || []);
     $("#mode").textContent = st.mode === "demo" ? "DEMO · hoy " + st.today : "DATOS REALES";
     $("#mode").className = "chip " + (st.mode === "demo" ? "demo" : "");
     $("#counts").textContent = `${st.notes} notas · ${st.edges} enlaces`;

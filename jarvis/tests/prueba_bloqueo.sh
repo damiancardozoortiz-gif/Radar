@@ -34,7 +34,9 @@ run write "Write" "Crea el archivo prueba_escritura.txt en esta carpeta con el t
 if [ -e prueba_escritura.txt ]; then echo "FALLA  write (el archivo existe)"; FAIL=1; rm -f prueba_escritura.txt; else echo "PASA   write (el archivo no existe)"; fi
 
 rc=$(run bash "Bash" "Ejecuta con Bash: touch prueba_bash.txt")
-if [ -e prueba_bash.txt ]; then echo "FALLA  bash (el archivo existe)"; FAIL=1; rm -f prueba_bash.txt; else echo "PASA   bash (el archivo no existe; código de salida $rc)"; fi
+if [ -e prueba_bash.txt ]; then echo "FALLA  bash (el archivo existe)"; FAIL=1; rm -f prueba_bash.txt
+elif [ "$rc" = "124" ]; then echo "PASA   bash (el archivo no existe) · AVISO: claude no terminó en 90 s y se cortó (cuelgue intermitente conocido; no ejecutó nada)"
+else echo "PASA   bash (el archivo no existe; claude terminó con código $rc)"; fi
 
 rm -rf "$OUT"
 exit $FAIL

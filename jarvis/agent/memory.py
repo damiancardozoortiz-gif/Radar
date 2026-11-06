@@ -3,13 +3,16 @@
 Escribe en memory/ y en ningún otro sitio. Claude nunca escribe:
 devuelve un campo "recordar" en su JSON y este módulo lo guarda.
 """
+import os
 import re
 import unicodedata
 from pathlib import Path
 
 import data
+import estado
 
-MEMORY = (Path(__file__).resolve().parent.parent / "memory").resolve()
+# JARVIS_MEMORY_DIR solo sirve para aislar las pruebas; por defecto, jarvis/memory/.
+MEMORY = Path(os.environ.get("JARVIS_MEMORY_DIR") or (Path(__file__).resolve().parent.parent / "memory")).resolve()
 
 
 def _slug(text):
@@ -20,10 +23,16 @@ def _slug(text):
 
 
 def save(text, source="conversación"):
-    """Guarda UNA cosa en memory/ con la fecha de hoy (la fija de la demo en modo demo)."""
+    """Guarda UNA cosa en memory/ con la fecha de hoy (la fija de la demo en modo demo).
+    Con la PAUSA activa no escribe nada: lanza estado.Paused."""
     text = " ".join(str(text).split())[:600]
     if not text:
         return None
+    with estado.guarded_write():
+        return _write(text, source)
+
+
+def _write(text, source):
     MEMORY.mkdir(exist_ok=True)
     day = data.today().isoformat()
     base = f"{day}-{_slug(text)}"

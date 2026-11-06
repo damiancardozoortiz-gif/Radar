@@ -17,6 +17,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "agent"))
 PORT = int(os.environ.get("JARVIS_PORT", "8790"))
+# Si el servidor usa una memoria aislada (JARVIS_MEMORY_DIR), la prueba mira ahí.
+MEM = Path(os.environ.get("JARVIS_MEMORY_DIR") or (ROOT / "memory"))
 URL = f"http://localhost:{PORT}"
 
 
@@ -45,7 +47,7 @@ def tree_hash(folder):
 
 
 def memory_files():
-    return sorted(p.name for p in (ROOT / "memory").glob("*.md"))
+    return sorted(p.name for p in MEM.glob("*.md"))
 
 
 class T1_Pausa(unittest.TestCase):
@@ -123,11 +125,12 @@ class T4_Memoria(unittest.TestCase):
         before = memory_files()
         r = memory.save("../../etc/passwd prueba de ruta")
         try:
-            p = (ROOT / r["file"]).resolve()
-            self.assertEqual(p.parent, (ROOT / "memory").resolve())
+            p = (memory.MEMORY / Path(r["file"]).name).resolve()
+            self.assertEqual(p.parent, memory.MEMORY)
+            self.assertTrue(p.exists())
             self.assertNotIn("/", p.name)
         finally:
-            (ROOT / r["file"]).unlink()
+            (memory.MEMORY / Path(r["file"]).name).unlink()
         self.assertEqual(memory_files(), before)
 
     def test_recordar_lo_dice_en_voz_alta(self):
@@ -140,7 +143,7 @@ class T4_Memoria(unittest.TestCase):
             self.assertIn(norm(o["saved"]["text"])[:40], norm(o["say"]), "dice exactamente qué guardó")
         finally:
             if o.get("saved"):
-                (ROOT / o["saved"]["file"]).unlink(missing_ok=True)
+                (MEM / Path(o["saved"]["file"]).name).unlink(missing_ok=True)
 
 
 class T5_SoloLectura(unittest.TestCase):

@@ -1,0 +1,12 @@
+{
+  "name": "jarvis-pruebas-navegador",
+  "private": true,
+  "description": "Solo para las pruebas de navegador (tests/navegador.js). JARVIS no lo necesita para funcionar.",
+  "scripts": {
+    "instalar": "npm install && npx playwright install chromium",
+    "navegador": "node navegador.js"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
+}

@@ -1,0 +1,585 @@
+package com.radar.jarvis;
+
+import android.app.Activity;
+import android.app.AlertDialog;
+import android.content.DialogInterface;
+import android.content.Intent;
+import android.net.Uri;
+import android.os.Bundle;
+import android.text.InputType;
+import android.view.View;
+import android.widget.CheckBox;
+import android.widget.EditText;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import com.radar.jarvis.core.Brain;
+import com.radar.jarvis.core.Json;
+import com.radar.jarvis.core.fin.Discipline;
+import com.radar.jarvis.core.fin.Market;
+import com.radar.jarvis.core.fin.MetaApi;
+import com.radar.jarvis.core.fin.Mt5;
+import com.radar.jarvis.core.fin.Risk;
+
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+
+/** JARVIS FINANCIAL INTELLIGENCE: análisis multitemporal, estratega, gestor de riesgo y ticket de orden (solo DEMO).
+ *  MT5 por MetaApi en fase de SOLO LECTURA: lee cuenta, posiciones y velas; no envía órdenes. */
+public class FinanceActivity extends Activity {
+    static final int REQ_CSV = 21;
+    private Brain brain;
+    private Discipline disc;
+    private Mt5 mt5;              // MetaApi (solo lectura) si está configurado; si no, sin conexión (no se simula)
+    private Map<String, Object> mt5Info;  // última lectura de la cuenta
+    private String mt5Error;
+    private List<Market.Candle> candles = new ArrayList<Market.Candle>();
+    private Map<String, Object> analysis;
+    private Map<String, Object> proposal;
+    private final List<Risk.Order> recent = new ArrayList<Risk.Order>();
+    private LinearLayout body;
+    private TextView status, result;
+    private EditText symbol, contract, balance;
+
+    @Override protected void onCreate(Bundle b) {
+        super.onCreate(b);
+        getWindow().setStatusBarColor(Ui.BG);
+        brain = JarvisApp.brainOrNull();
+        if (brain == null) { finish(); return; }
+        mt5 = JarvisApp.mt5(this);
+        disc = JarvisApp.discipline(this);
+        ScrollView sv = new ScrollView(this);
+        sv.setBackgroundColor(Ui.BG);
+        body = Ui.col(this);
+        int pad = Ui.dp(this, 14);
+        body.setPadding(pad, pad, pad, pad);
+        sv.addView(body);
+        setContentView(sv);
+        build();
+        checkMt5();
+    }
+
+    /** Lee de verdad la cuenta en MetaApi (segundo plano) y refresca la pantalla. */
+    private void checkMt5() {
+        if (!(mt5 instanceof MetaApi)) return;
+        final MetaApi m = (MetaApi) mt5;
+        new Thread(new Runnable() { public void run() {
+            Map<String, Object> info = null; String err = null;
+            try { info = m.refresh(); if (!m.connected()) err = m.lastError(); } catch (Exception e) { err = e.getMessage(); }
+            final Map<String, Object> fi = info; final String fe = err;
+            JarvisApp.ui(new Runnable() { public void run() {
+                mt5Info = fi; mt5Error = fe;
+                if (fi != null && fi.get("saldo") instanceof Number) JarvisApp.store(FinanceActivity.this).put("fin_balance", String.valueOf(((Number) fi.get("saldo")).doubleValue()));
+                brain.log("finanzas", "MT5 comprobado: " + (fe == null ? "conectado" : fe));
+                build();
+            }});
+        }}).start();
+    }
+
+    private String mt5Line() {
+        if (!(mt5 instanceof MetaApi)) return "NO CONFIGURADO (ver «Conexión MT5»)";
+        if (mt5Error != null) return "ERROR: " + mt5Error;
+        if (mt5Info == null) return "comprobando…";
+        return "conectado vía MetaApi · cuenta " + mt5Info.get("tipo") + " · SOLO LECTURA";
+    }
+
+    private void build() {
+        body.removeAllViews();
+        body.addView(Ui.mono(this, "JARVIS FINANCIAL INTELLIGENCE", 13, Ui.ACCENT));
+        status = Ui.text(this, "", 12, Ui.TEXT);
+        body.addView(status, Ui.margins(this, 0, 6, 0, 0));
+        body.addView(Ui.button(this, "⏹ EMERGENCIA: PAUSAR TODO", Ui.BAD, new View.OnClickListener() { public void onClick(View v) {
+            brain.setPause(true, "emergencia financiera"); brain.log("finanzas", "emergencia"); refreshStatus();
+            Toast.makeText(FinanceActivity.this, "PAUSA activada. Nada se ejecuta.", Toast.LENGTH_LONG).show();
+        }}), Ui.margins(this, 0, 8, 0, 0));
+
+        disciplineSection();
+
+        section("ESPECIALISTAS");
+        body.addView(Ui.text(this,
+                "• Investigador financiero (Claude + búsqueda web): " + (brain.apiKey.isEmpty() ? "sin clave de Claude" : "listo") + "\n"
+              + "• Analista técnico, de tendencias y de liquidez (cálculo en el teléfono): listo · datos: " + (candles.isEmpty() ? "ninguno" : candles.size() + " velas") + "\n"
+              + "• Estratega de operaciones (Claude, solo con los números calculados): " + (brain.apiKey.isEmpty() ? "sin clave" : "listo") + "\n"
+              + "• Gestor de riesgo (reglas fijas): activo\n"
+              + "• Ejecutor MT5: " + mt5Line() + "\n"
+              + "• Auditor de resultados: registra cada propuesta y decisión", 12, Ui.TEXT));
+
+        section("DATOS Y ANÁLISIS");
+        symbol = field("Instrumento (p. ej. EURUSD)", JarvisApp.store(this).get("fin_symbol", "EURUSD"), false);
+        body.addView(symbol);
+        body.addView(Ui.text(this, mt5 instanceof MetaApi
+                ? "«Velas MT5» lee de su cuenta, vía MetaApi, M5, M15, H1, H4 y D1 del instrumento. También puede importar un CSV."
+                : "Sin conexión a MT5, importe velas reales: en MetaTrader 5 de escritorio, Ver → Símbolos → Barras → Exportar (CSV). "
+                + "Cualquier temporalidad de M1 a D1: JARVIS calcula las mayores.", 12, Ui.DIM));
+        LinearLayout r = Ui.row(this);
+        if (mt5 instanceof MetaApi) {
+            r.addView(Ui.button(this, "Velas MT5", Ui.ACCENT, new View.OnClickListener() { public void onClick(View v) { loadMt5Candles(); } }));
+            r.addView(gap());
+        }
+        r.addView(Ui.button(this, "Importar CSV", Ui.ACCENT, new View.OnClickListener() { public void onClick(View v) { pickCsv(); } }));
+        r.addView(gap());
+        r.addView(Ui.button(this, "Estratega", Ui.TEXT, new View.OnClickListener() { public void onClick(View v) { strategist(); } }));
+        r.addView(gap());
+        r.addView(Ui.button(this, "Investigar", Ui.TEXT, new View.OnClickListener() { public void onClick(View v) { research(); } }));
+        body.addView(r, Ui.margins(this, 0, 6, 0, 0));
+        result = Ui.text(this, analysis == null ? "Sin análisis todavía." : summary(analysis), 12, Ui.TEXT);
+        body.addView(result, Ui.margins(this, 0, 8, 0, 0));
+
+        section("RIESGO (solo usted cambia estos límites)");
+        final Risk.Limits lim = limits();
+        final EditText rp = field("Riesgo por operación %", String.valueOf(lim.riskPct), true);
+        final EditText dl = field("Pérdida diaria máxima %", String.valueOf(lim.maxDailyLossPct), true);
+        final EditText mp = field("Máximo de posiciones", String.valueOf(lim.maxPositions), true);
+        final EditText ml = field("Exposición máxima (lotes)", String.valueOf(lim.maxTotalLots), true);
+        body.addView(label("Riesgo por operación (%)")); body.addView(rp);
+        body.addView(label("Pérdida diaria máxima (%)")); body.addView(dl);
+        body.addView(label("Máximo de posiciones abiertas")); body.addView(mp);
+        body.addView(label("Exposición máxima (lotes)")); body.addView(ml);
+        body.addView(Ui.button(this, "Guardar límites", Ui.TEXT, new View.OnClickListener() { public void onClick(View v) {
+            try {
+                Store s = JarvisApp.store(FinanceActivity.this);
+                s.put("fin_riskPct", String.valueOf(Double.parseDouble(rp.getText().toString())));
+                s.put("fin_dailyPct", String.valueOf(Double.parseDouble(dl.getText().toString())));
+                s.put("fin_maxPos", String.valueOf(Integer.parseInt(mp.getText().toString())));
+                s.put("fin_maxLots", String.valueOf(Double.parseDouble(ml.getText().toString())));
+                brain.log("finanzas", "límites de riesgo cambiados por el usuario");
+                Toast.makeText(FinanceActivity.this, "Límites guardados.", Toast.LENGTH_SHORT).show();
+            } catch (Exception e) { Toast.makeText(FinanceActivity.this, "Número no válido.", Toast.LENGTH_LONG).show(); }
+        }}));
+
+        section("TICKET DE ORDEN (DEMO)");
+        body.addView(label("Saldo de la cuenta DEMO (para calcular el lote)"));
+        balance = field("Saldo", JarvisApp.store(this).get("fin_balance", "10000"), true);
+        body.addView(balance);
+        body.addView(label("Tamaño de contrato (forex 100000, oro 100, índices según su bróker)"));
+        contract = field("Contrato", JarvisApp.store(this).get("fin_contract", "100000"), true);
+        body.addView(contract);
+        body.addView(Ui.button(this, proposal == null ? "Preparar orden (pida antes una estrategia)" : "Preparar orden propuesta", Ui.ACCENT,
+                new View.OnClickListener() { public void onClick(View v) { ticket(); } }), Ui.margins(this, 0, 8, 0, 0));
+
+        section("CONEXIÓN MT5 (MetaApi · solo lectura)");
+        StringBuilder st = new StringBuilder("Estado: ").append(mt5Line());
+        if (mt5Info != null) for (Map.Entry<String, Object> e : mt5Info.entrySet()) st.append("\n").append(e.getKey()).append(": ").append(e.getValue());
+        body.addView(Ui.text(this, st.toString(), 12, mt5Error == null ? Ui.TEXT : Ui.BAD));
+        body.addView(Ui.text(this, "Cómo conectar (una vez, desde el navegador del teléfono):\n"
+                + "1) Cree una cuenta en metaapi.cloud.\n"
+                + "2) Añada su cuenta DEMO de MT5 con la CONTRASEÑA DE INVERSOR (así MetaApi solo puede leer) y espere a que quede «Deployed».\n"
+                + "3) Copie el ID de la cuenta y genere un token de acceso; lo más seguro es limitarlo a esa cuenta y a lectura.\n"
+                + "4) Péguelos aquí. El token se guarda cifrado en el teléfono y no se muestra.\n"
+                + "MetaApi es un servicio de terceros (de pago, con prueba): su contraseña de MT5 queda en su nube.", 12, Ui.DIM));
+        final EditText acc = field("ID de la cuenta en MetaApi", JarvisApp.store(this).get("metaapi_account", ""), false);
+        acc.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD);
+        final EditText tok = field(JarvisApp.store(this).hasSecret("metaapi_token") ? "Token guardado (escriba otro para cambiarlo)" : "Token de MetaApi", "", false);
+        tok.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        body.addView(acc, Ui.margins(this, 0, 6, 0, 0));
+        body.addView(tok, Ui.margins(this, 0, 6, 0, 0));
+        LinearLayout cr = Ui.row(this);
+        cr.addView(Ui.button(this, "Guardar y comprobar", Ui.ACCENT, new View.OnClickListener() { public void onClick(View v) {
+            Store s = JarvisApp.store(FinanceActivity.this);
+            String a = acc.getText().toString().trim(), t = tok.getText().toString().trim();
+            if (a.isEmpty() || (t.isEmpty() && !s.hasSecret("metaapi_token"))) { Toast.makeText(FinanceActivity.this, "Faltan el ID de la cuenta o el token.", Toast.LENGTH_LONG).show(); return; }
+            s.put("metaapi_account", a);
+            if (!t.isEmpty()) s.secret("metaapi_token", t);
+            brain.log("finanzas", "conexión MetaApi configurada por el usuario");
+            JarvisApp.resetMt5(); mt5 = JarvisApp.mt5(FinanceActivity.this); mt5Info = null; mt5Error = null;
+            build(); checkMt5();
+        }}));
+        cr.addView(gap());
+        cr.addView(Ui.button(this, "Olvidar conexión", Ui.BAD, new View.OnClickListener() { public void onClick(View v) {
+            Store s = JarvisApp.store(FinanceActivity.this);
+            s.secret("metaapi_token", ""); s.put("metaapi_account", "");
+            brain.log("finanzas", "conexión MetaApi borrada por el usuario");
+            JarvisApp.resetMt5(); mt5 = JarvisApp.mt5(FinanceActivity.this); mt5Info = null; mt5Error = null;
+            build();
+        }}));
+        body.addView(cr, Ui.margins(this, 0, 6, 0, 0));
+        body.addView(Ui.text(this, "Esta versión NO envía órdenes a MT5 (solo lectura). Operaciones reales: DESHABILITADAS.", 12, Ui.DIM),
+                Ui.margins(this, 0, 6, 0, 0));
+        section("AUDITORÍA (últimas acciones financieras)");
+        StringBuilder au = new StringBuilder();
+        for (String l : brain.tail("acciones.jsonl", 40)) if (l.contains("finanzas")) au.append(l).append('\n');
+        body.addView(Ui.text(this, au.length() == 0 ? "Sin acciones todavía." : au.toString(), 11, Ui.DIM));
+        refreshStatus();
+    }
+
+    private void refreshStatus() {
+        status.setText("MT5: " + mt5Line() + " · Operaciones reales: DESHABILITADAS"
+                + (brain.isPaused() ? "\nPAUSA ACTIVA: nada se ejecuta" : ""));
+        status.setTextColor(brain.isPaused() ? Ui.BAD : Ui.TEXT);
+    }
+
+    // ------------------------------------------------------------------ datos y análisis
+    private void pickCsv() {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("*/*");
+        startActivityForResult(i, REQ_CSV);
+    }
+
+    @Override protected void onActivityResult(int req, int res, Intent data) {
+        if (req != REQ_CSV || res != RESULT_OK || data == null) return;
+        final Uri uri = data.getData();
+        new Thread(new Runnable() { public void run() {
+            try {
+                InputStream in = getContentResolver().openInputStream(uri);
+                ByteArrayOutputStream b = new ByteArrayOutputStream();
+                byte[] buf = new byte[8192]; int n;
+                while ((n = in.read(buf)) > 0) b.write(buf, 0, n);
+                in.close();
+                String text = new String(b.toByteArray(), "UTF-8").replace("\u0000", "");  // los CSV de MT5 pueden venir en UTF-16
+                final List<Market.Candle> cs = Market.parseCsv(text);
+                final Map<String, Object> an = cs.size() >= 60 ? Market.multi(cs) : null;
+                JarvisApp.ui(new Runnable() { public void run() {
+                    candles = cs; analysis = an;
+                    brain.log("finanzas", "velas importadas: " + cs.size());
+                    if (an == null) Toast.makeText(FinanceActivity.this, "Solo " + cs.size() + " velas válidas: hacen falta al menos 60.", Toast.LENGTH_LONG).show();
+                    build();
+                }});
+            } catch (final Exception e) {
+                JarvisApp.ui(new Runnable() { public void run() { Toast.makeText(FinanceActivity.this, "No pude leer el archivo: " + e.getMessage(), Toast.LENGTH_LONG).show(); } });
+            }
+        }}).start();
+    }
+
+    /** Velas reales de la cuenta MT5 (MetaApi) en varias temporalidades, y análisis. */
+    private void loadMt5Candles() {
+        final String sym = symbol.getText().toString().trim().toUpperCase(Locale.US);
+        if (sym.isEmpty()) return;
+        JarvisApp.store(this).put("fin_symbol", sym);
+        result.setText("Leyendo velas de " + sym + " en MT5…");
+        new Thread(new Runnable() { public void run() {
+            final Map<String, List<Market.Candle>> by = new LinkedHashMap<String, List<Market.Candle>>();
+            String err = null;
+            for (String tf : new String[]{"M5", "M15", "H1", "H4", "D1"}) {
+                try { by.put(tf, mt5.candles(sym, tf, 300)); }
+                catch (Exception e) { err = tf + ": " + e.getMessage(); break; }
+            }
+            final String fe = err;
+            final Map<String, Object> an = fe == null ? Market.multiTf(by) : null;
+            JarvisApp.ui(new Runnable() { public void run() {
+                if (fe != null) { result.setText("No pude leer las velas de MT5 (" + fe + ")."); brain.log("finanzas", "velas MT5 fallidas: " + fe); return; }
+                analysis = an; candles = by.get("M5");
+                brain.log("finanzas", "velas MT5 leídas: " + sym);
+                build();
+            }});
+        }}).start();
+    }
+
+    @SuppressWarnings("unchecked")
+    static String summary(Map<String, Object> m) {
+        StringBuilder b = new StringBuilder();
+        if (m.get("aviso") != null) return String.valueOf(m.get("aviso"));
+        b.append("Datos: ").append(m.get("temporalidad_base")).append(" · ").append(m.get("desde")).append(" → ").append(m.get("hasta")).append("\n");
+        for (Object o : Json.arr(m.get("analisis"))) {
+            Map<String, Object> a = Json.obj(o);
+            b.append("\n").append(a.get("temporalidad")).append(": ");
+            if (a.get("aviso") != null) { b.append(a.get("aviso")); continue; }
+            b.append(a.get("tendencia")).append(" · estructura ").append(a.get("estructura"))
+             .append("\n  precio ").append(a.get("precio")).append(" · RSI ").append(a.get("rsi14")).append(" (").append(a.get("rsi_lectura")).append(")")
+             .append(" · MACD ").append(a.get("macd_cruce")).append(" · ATR ").append(a.get("atr14"))
+             .append("\n  soporte ").append(a.get("soporte") == null ? "—" : Json.obj(a.get("soporte")).get("precio"))
+             .append(" · resistencia ").append(a.get("resistencia") == null ? "—" : Json.obj(a.get("resistencia")).get("precio"))
+             .append(" · vela: ").append(a.get("vela"));
+            List<Object> f = Json.arr(a.get("rupturas_falsas"));
+            if (f != null && !f.isEmpty()) b.append(" · ").append(f.size()).append(" ruptura(s) falsa(s)");
+        }
+        return b.toString();
+    }
+
+    private void strategist() {
+        if (analysis == null) { Toast.makeText(this, "Importe antes las velas.", Toast.LENGTH_LONG).show(); return; }
+        if (brain.isPaused()) { Toast.makeText(this, "En pausa.", Toast.LENGTH_LONG).show(); return; }
+        final String sym = symbol.getText().toString().trim().toUpperCase(Locale.US);
+        JarvisApp.store(this).put("fin_symbol", sym);
+        result.setText("Consultando al estratega…");
+        final Risk.Limits lim = limits();
+        new Thread(new Runnable() { public void run() {
+            final Map<String, Object> r = brain.strategy(sym, analysis, Json.map("riesgo_por_operacion_pct", lim.riskPct,
+                    "perdida_diaria_max_pct", lim.maxDailyLossPct, "max_posiciones", (long) lim.maxPositions, "exposicion_max_lotes", lim.maxTotalLots),
+                    disc.lessons(8));
+            JarvisApp.ui(new Runnable() { public void run() {
+                proposal = Json.obj(r.get("proposal"));
+                build();
+                result.setText(summary(analysis) + "\n\n— ESTRATEGA —\n" + r.get("say") + "\n\n" + r.get("detail")
+                        + (r.get("warning") != null ? "\n\n" + r.get("warning") : ""));
+                if (!Boolean.TRUE.equals(r.get("paused"))) JarvisApp.voice(FinanceActivity.this).speak(String.valueOf(r.get("say")), null);
+            }});
+        }}).start();
+    }
+
+    private void research() {
+        final String sym = symbol.getText().toString().trim();
+        result.setText("Investigando " + sym + "…");
+        new Thread(new Runnable() { public void run() {
+            final Map<String, Object> r = brain.answer("Investiga en internet la situación actual del mercado de " + sym
+                    + ": noticias, contexto macro y sentimiento. Separa datos de opinión.");
+            JarvisApp.ui(new Runnable() { public void run() {
+                result.setText(r.get("say") + "\n\n" + (r.get("detail") == null ? "" : r.get("detail")) + (r.get("warning") != null ? "\n\n" + r.get("warning") : ""));
+                JarvisApp.voice(FinanceActivity.this).speak(String.valueOf(r.get("say")), null);
+            }});
+        }}).start();
+    }
+
+    // ------------------------------------------------------------------ orden (autorización humana)
+    private void ticket() {
+        if (proposal == null) { Toast.makeText(this, "Pida antes una estrategia con una propuesta.", Toast.LENGTH_LONG).show(); return; }
+        final Risk.Order o = new Risk.Order();
+        try {
+            o.symbol = symbol.getText().toString().trim().toUpperCase(Locale.US);
+            o.side = String.valueOf(proposal.get("direccion"));
+            o.entry = ((Number) proposal.get("entrada")).doubleValue();
+            o.sl = proposal.get("sl") instanceof Number ? ((Number) proposal.get("sl")).doubleValue() : 0;
+            o.tp = proposal.get("tp") instanceof Number ? ((Number) proposal.get("tp")).doubleValue() : 0;
+        } catch (Exception e) { Toast.makeText(this, "La propuesta no trae números válidos.", Toast.LENGTH_LONG).show(); return; }
+        final Risk.Limits lim = limits();
+        final double bal = num(balance, 0), cs = num(contract, 100000);
+        JarvisApp.store(this).put("fin_balance", String.valueOf(bal));
+        JarvisApp.store(this).put("fin_contract", String.valueOf(cs));
+        o.lots = Risk.lots(bal, lim.riskPct, o.entry, o.sl, cs, 0.01, 0.01, 100);
+        o.createdMs = System.currentTimeMillis();
+        boolean demo = false;
+        try { demo = mt5.isDemo(); } catch (Exception ignored) {}
+        List<String> no = Risk.check(o, lim, bal, cs, brain.isPaused(), mt5.connected(), demo, 0, new ArrayList<Risk.Order>(), recent, o.createdMs);
+        // REGLA DE AUTODISCIPLINA: se aplica ANTES de enviar, y sus motivos van primero (PAUSA la primera de todas)
+        List<String> rules = disc.check(o, brain.isPaused(), 0, o.lots);
+        for (String x : no) if (!x.contains("PAUSA")) rules.add(x);
+        no = rules;
+        if (!mt5.canTrade()) no.add("el conector MT5 está en modo SOLO LECTURA: JARVIS no envía órdenes (puede copiarla a mano en MT5)");
+        String t = String.format(Locale.US, "%s %s\nEntrada %.5f · SL %.5f · TP %s\nLote calculado: %.2f (riesgo %.2f %% de %.2f)\nPérdida si salta el stop: %.2f",
+                o.side.toUpperCase(Locale.US), o.symbol, o.entry, o.sl, o.tp > 0 ? String.format(Locale.US, "%.5f", o.tp) : "—",
+                o.lots, lim.riskPct, bal, Risk.lossAtStop(o, cs));
+        brain.log("finanzas", "orden preparada " + o.side + " " + o.symbol + " (" + (no.isEmpty() ? "válida" : "rechazada por riesgo") + ")");
+        AlertDialog.Builder d = new AlertDialog.Builder(this).setTitle("Ticket de orden · DEMO").setNegativeButton("Cancelar", null);
+        if (!no.isEmpty()) {
+            StringBuilder b = new StringBuilder(t).append("\n\nNO SE PUEDE EJECUTAR:");
+            for (String x : no) b.append("\n• ").append(x);
+            d.setMessage(b.toString());
+        } else {
+            d.setMessage(t + "\n\n¿Autoriza esta orden en la cuenta DEMO?").setPositiveButton("Autorizo (DEMO)", new DialogInterface.OnClickListener() {
+                public void onClick(DialogInterface di, int w) {
+                    recent.add(o);
+                    try { Map<String, Object> r = mt5.execute(o); brain.log("finanzas", "orden ejecutada en DEMO: " + r.get("stringCode")); }
+                    catch (Exception e) { brain.log("finanzas", "orden no ejecutada: " + e.getMessage()); Toast.makeText(FinanceActivity.this, e.getMessage(), Toast.LENGTH_LONG).show(); }
+                }
+            });
+        }
+        d.show();
+    }
+
+    // ------------------------------------------------------------------ autodisciplina
+    private void disciplineSection() {
+        Map<String, Object> p = disc.panel();
+        section("AUTODISCIPLINA (regla obligatoria antes de cada orden)");
+        boolean blocked = disc.blocked();
+        if (blocked) {
+            TextView alert = Ui.text(this, "⚠ " + p.get("bloqueo") + "\nNo se abren nuevas entradas (demo ni real). Solo usted puede reactivar, tras revisar el riesgo.", 13, Ui.BAD);
+            alert.setBackground(Ui.box(this, Ui.PANEL, Ui.BAD, 8));
+            alert.setPadding(Ui.dp(this, 10), Ui.dp(this, 8), Ui.dp(this, 10), Ui.dp(this, 8));
+            body.addView(alert);
+        }
+        Map<String, Object> d = Json.obj(p.get("demo")), r = Json.obj(p.get("real")), c = Json.obj(p.get("ciclo"));
+        body.addView(Ui.text(this,
+                "Autorización: " + p.get("autorizacion") + "\n"
+              + "Bloqueo: " + p.get("bloqueo") + "\n"
+              + "Ciclo actual: " + c.get("operaciones") + " operaciones · " + c.get("ganadoras") + " ganadoras · " + c.get("perdedoras") + " perdedoras\n"
+              + "Próxima operación permitida: " + p.get("proxima") + "\n\n"
+              + "DEMO · " + stats(d) + "\nREAL · " + stats(r) + "\n"
+              + "Aprendizajes registrados: " + p.get("aprendizajes")
+              + (p.get("informe_perdidas") != null ? "\nInforme de pérdidas: " + new java.io.File(String.valueOf(p.get("informe_perdidas"))).getName() : ""), 12, Ui.TEXT));
+        body.addView(Ui.text(this, "Regla: hasta 3 operaciones por ciclo; una 4.ª solo tras 3 ganadoras netas. Con 2 perdedoras, bloqueo inmediato. "
+                + "El volumen nunca sube por ganar ni para recuperar. Cada ciclo nuevo exige su autorización.", 11, Ui.DIM));
+        LinearLayout row = Ui.row(this);
+        row.addView(Ui.button(this, "Registrar operación cerrada", Ui.ACCENT, new View.OnClickListener() { public void onClick(View v) { recordDialog(); } }));
+        row.addView(gap());
+        row.addView(Ui.button(this, blocked ? "Reactivar (revisión)" : "Autorizar ciclo", blocked ? Ui.BAD : Ui.TEXT, new View.OnClickListener() { public void onClick(View v) { authorizeDialog(); } }));
+        body.addView(row, Ui.margins(this, 0, 6, 0, 0));
+    }
+
+    private static String stats(Map<String, Object> m) {
+        return m.get("operaciones") + " operaciones · " + m.get("ganadoras") + " ganadoras · " + m.get("perdedoras") + " perdedoras · ganancias "
+                + m.get("ganancias_acumuladas") + " · pérdidas " + m.get("perdidas_acumuladas") + " · neto " + m.get("neto");
+    }
+
+    /** Autorización expresa: muestra límites, ciclo e informe de pérdidas, y exige confirmar la revisión. */
+    private void authorizeDialog() {
+        Risk.Limits lim = limits();
+        Map<String, Object> p = disc.panel();
+        StringBuilder b = new StringBuilder("REVISIÓN DE RIESGO\n\n")
+                .append(String.format(Locale.US, "Riesgo por operación: %.2f %%\nPérdida diaria máxima: %.2f %%\nMáximo de posiciones: %d\nExposición máxima: %.2f lotes\n\n",
+                        lim.riskPct, lim.maxDailyLossPct, lim.maxPositions, lim.maxTotalLots))
+                .append("Estado: ").append(p.get("bloqueo")).append("\n");
+        Object rep = p.get("informe_perdidas");
+        if (rep != null) {
+            try { b.append("\n").append(JarvisApp.readAll(new java.io.FileInputStream(String.valueOf(rep)))); }
+            catch (Throwable e) { b.append("\nInforme: ").append(rep); }
+        }
+        LinearLayout box = Ui.col(this);
+        int pad = Ui.dp(this, 16);
+        box.setPadding(pad, pad / 2, pad, 0);
+        TextView t = Ui.text(this, b.toString(), 12, Ui.TEXT);
+        ScrollView sv = new ScrollView(this);
+        sv.addView(t);
+        box.addView(sv, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, Ui.dp(this, 260)));
+        final CheckBox ck = new CheckBox(this);
+        ck.setText("He revisado el riesgo y el informe. Autorizo un ciclo nuevo sin cambiar los límites.");
+        ck.setTextColor(Ui.TEXT);
+        box.addView(ck);
+        final EditText note = field("Nota de la revisión (opcional)", "", false);
+        note.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        box.addView(note);
+        new AlertDialog.Builder(this).setTitle(disc.blocked() ? "Reactivar operaciones" : "Autorizar ciclo").setView(box)
+                .setNegativeButton("Cancelar", null)
+                .setPositiveButton("Autorizo", new DialogInterface.OnClickListener() { public void onClick(DialogInterface di, int w) {
+                    try {
+                        disc.authorize(ck.isChecked(), note.getText().toString().trim(), System.currentTimeMillis());
+                        brain.log("finanzas", "ciclo autorizado por el usuario tras revisión de riesgo");
+                        Toast.makeText(FinanceActivity.this, "Ciclo autorizado.", Toast.LENGTH_SHORT).show();
+                    } catch (Exception e) { Toast.makeText(FinanceActivity.this, e.getMessage(), Toast.LENGTH_LONG).show(); }
+                    build();
+                }}).show();
+    }
+
+    /** Registro de una operación cerrada con todos los datos para aprender, y análisis posterior. */
+    private void recordDialog() {
+        LinearLayout box = Ui.col(this);
+        int pad = Ui.dp(this, 16);
+        box.setPadding(pad, pad / 2, pad, 0);
+        final String now = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(new java.util.Date());
+        final EditText acc = labeled(box, "Cuenta: demo o real", "demo", false);
+        final EditText sym = labeled(box, "Instrumento", symbol == null ? "EURUSD" : symbol.getText().toString().trim().toUpperCase(Locale.US), false);
+        final EditText tf = labeled(box, "Temporalidad (M1…D1)", "H1", false);
+        final EditText side = labeled(box, "Dirección: buy o sell", "buy", false);
+        final EditText open = labeled(box, "Apertura (aaaa-mm-dd hh:mm)", now, false);
+        final EditText close = labeled(box, "Cierre (aaaa-mm-dd hh:mm)", now, false);
+        final EditText en = labeled(box, "Precio de entrada", "", true);
+        final EditText ex = labeled(box, "Precio de salida", "", true);
+        final EditText vol = labeled(box, "Volumen (lotes)", "", true);
+        final EditText sl = labeled(box, "Stop loss", "", true);
+        final EditText tp = labeled(box, "Take profit (0 si no tenía)", "0", true);
+        final EditText net = labeled(box, "Resultado neto (negativo si perdió)", "", true);
+        net.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL | InputType.TYPE_NUMBER_FLAG_SIGNED);
+        final EditText com = labeled(box, "Comisiones", "0", true);
+        final EditText spr = labeled(box, "Spread (puntos)", "0", true);
+        final EditText cond = labeled(box, "Condiciones del mercado", analysis == null ? "" : conditions(analysis), false);
+        final EditText strat = labeled(box, "Estrategia utilizada", "", false);
+        final EditText why = labeled(box, "Motivo de entrada", "", false);
+        final EditText out = labeled(box, "Motivo de salida", "", false);
+        for (EditText e : new EditText[]{cond, strat, why, out}) e.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        ScrollView sv = new ScrollView(this);
+        sv.addView(box);
+        new AlertDialog.Builder(this).setTitle("Operación cerrada").setView(sv).setNegativeButton("Cancelar", null)
+                .setPositiveButton("Registrar", new DialogInterface.OnClickListener() { public void onClick(DialogInterface di, int w) {
+                    final Discipline.Trade t = new Discipline.Trade();
+                    t.account = acc.getText().toString().trim().toLowerCase(Locale.US);
+                    t.symbol = sym.getText().toString().trim().toUpperCase(Locale.US);
+                    t.tf = tf.getText().toString().trim().toUpperCase(Locale.US);
+                    t.side = side.getText().toString().trim().toLowerCase(Locale.US);
+                    t.openMs = time(open); t.closeMs = time(close);
+                    t.entry = num(en, 0); t.exit = num(ex, 0); t.lots = num(vol, 0); t.sl = num(sl, 0); t.tp = num(tp, 0);
+                    t.net = num(net, 0); t.commission = num(com, 0); t.spread = num(spr, 0);
+                    t.conditions = cond.getText().toString().trim(); t.strategy = strat.getText().toString().trim();
+                    t.entryReason = why.getText().toString().trim(); t.exitReason = out.getText().toString().trim();
+                    try {
+                        Map<String, Object> r = disc.record(t);
+                        brain.log("finanzas", "operación registrada [" + t.account + "] " + t.symbol + " neto " + t.net);
+                        if (r.get("bloqueo") != null) lossAlert(String.valueOf(r.get("bloqueo")));
+                        learn(t);
+                    } catch (Exception e) { Toast.makeText(FinanceActivity.this, "No registrada: " + e.getMessage(), Toast.LENGTH_LONG).show(); }
+                    build();
+                }}).show();
+    }
+
+    private void lossAlert(String why) {
+        brain.log("finanzas", "BLOQUEO: " + why);
+        new AlertDialog.Builder(this).setTitle("⚠ Operaciones bloqueadas")
+                .setMessage(why + ".\n\nNo se abrirán nuevas entradas, ni en demo ni en real. Se generó el informe de pérdidas. "
+                        + "Para reactivar hace falta su autorización expresa tras revisar el riesgo.")
+                .setPositiveButton("Entendido", null).show();
+        JarvisApp.voice(this).speak("Señor Rafael, dos operaciones perdedoras. Bloqueo nuevas entradas hasta que usted revise el riesgo.", null);
+    }
+
+    /** Claude analiza la operación y el aprendizaje se guarda para futuros análisis. */
+    private void learn(final Discipline.Trade t) {
+        if (brain.apiKey.isEmpty()) return;
+        result.setText("Analizando la operación para aprender…");
+        new Thread(new Runnable() { public void run() {
+            final Map<String, Object> r = brain.analyzeTrade(t.toMap(), disc.lessons(8));
+            String lesson = Json.str(r.get("lesson"));
+            if (lesson != null && !lesson.trim().isEmpty()) {
+                try { disc.saveLesson(t.id, t.account, lesson.trim()); } catch (Exception ignored) {}
+            }
+            JarvisApp.ui(new Runnable() { public void run() {
+                build();
+                result.setText("— APRENDIZAJE —\n" + r.get("say") + "\n\n" + r.get("detail") + (r.get("lesson") != null ? "\n\nGuardado: " + r.get("lesson") : "")
+                        + (r.get("warning") != null ? "\n\n" + r.get("warning") : ""));
+            }});
+        }}).start();
+    }
+
+    private static String conditions(Map<String, Object> an) {
+        StringBuilder b = new StringBuilder();
+        List<Object> l = Json.arr(an.get("analisis"));
+        if (l != null) for (Object o : l) {
+            Map<String, Object> a = Json.obj(o);
+            if (a == null || a.get("aviso") != null) continue;
+            b.append(b.length() == 0 ? "" : "; ").append(a.get("temporalidad")).append(' ').append(a.get("tendencia")).append(", RSI ").append(a.get("rsi14"));
+        }
+        return b.toString();
+    }
+
+    private static long time(EditText e) {
+        try {
+            java.text.SimpleDateFormat f = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US);
+            f.setLenient(false);
+            return f.parse(e.getText().toString().trim()).getTime();
+        } catch (Exception x) { return 0; }
+    }
+
+    private EditText labeled(LinearLayout box, String label, String value, boolean numeric) {
+        TextView l = Ui.text(this, label, 12, Ui.DIM);
+        l.setPadding(0, Ui.dp(this, 6), 0, 0);
+        box.addView(l);
+        EditText e = field(label, value, numeric);
+        if (!numeric) e.setInputType(InputType.TYPE_CLASS_TEXT);
+        box.addView(e);
+        return e;
+    }
+
+    // ------------------------------------------------------------------ utilidades
+    private Risk.Limits limits() {
+        Store s = JarvisApp.store(this);
+        Risk.Limits l = new Risk.Limits();
+        try {
+            l.riskPct = Double.parseDouble(s.get("fin_riskPct", "1.0"));
+            l.maxDailyLossPct = Double.parseDouble(s.get("fin_dailyPct", "3.0"));
+            l.maxPositions = Integer.parseInt(s.get("fin_maxPos", "3"));
+            l.maxTotalLots = Double.parseDouble(s.get("fin_maxLots", "1.0"));
+        } catch (Exception ignored) {}
+        return l;
+    }
+
+    private static double num(EditText e, double def) { try { return Double.parseDouble(e.getText().toString().trim()); } catch (Exception x) { return def; } }
+
+    private EditText field(String hint, String value, boolean numeric) {
+        EditText e = new EditText(this);
+        e.setHint(hint); e.setText(value); e.setSingleLine(true);
+        e.setTextColor(Ui.TEXT); e.setHintTextColor(Ui.DIM);
+        e.setInputType(numeric ? InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL : InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS);
+        e.setBackground(Ui.box(this, Ui.PANEL, Ui.LINE, 8));
+        e.setPadding(Ui.dp(this, 12), Ui.dp(this, 8), Ui.dp(this, 12), Ui.dp(this, 8));
+        return e;
+    }
+
+    private TextView label(String s) { TextView t = Ui.text(this, s, 12, Ui.DIM); t.setPadding(0, Ui.dp(this, 8), 0, Ui.dp(this, 2)); return t; }
+
+    private void section(String s) { TextView t = Ui.mono(this, s, 11, Ui.DIM); t.setPadding(0, Ui.dp(this, 18), 0, Ui.dp(this, 4)); body.addView(t); }
+
+    private View gap() { View v = new View(this); v.setLayoutParams(new LinearLayout.LayoutParams(Ui.dp(this, 6), 1)); return v; }
+}
