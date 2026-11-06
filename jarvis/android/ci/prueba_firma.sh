@@ -13,7 +13,7 @@ zipalign -c 4 build/jarvis-sin-firmar.apk; check $? "APK sin firmar alineada"
 aapt dump badging build/jarvis-sin-firmar.apk | grep -q "package: name='com.radar.jarvis'"; check $? "paquete com.radar.jarvis (el mismo de la app instalada)"
 # versión: versionCode entero y no menor que el último entregado (7); Android no permite bajar de versión
 VC=$(aapt dump badging build/jarvis-sin-firmar.apk | sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p")
-[ -n "$VC" ] && [ "$VC" -ge 7 ]; check $? "versionCode $VC ≥ 7 (Android exige no bajar de versión)"
+[ -n "$VC" ] && [ "$VC" -ge 8 ]; check $? "versionCode $VC ≥ 8: mayor que la última entregada (7), Android lo acepta como actualización"
 # 2) con otra clave: se rechaza y no queda APK firmada
 keytool -genkeypair -keystore $T/otra.keystore -storepass android -keypass android -alias x -keyalg RSA -keysize 2048 -validity 1 -dname "CN=otra" >/dev/null 2>&1
 JARVIS_KEYSTORE=$T/otra.keystore ./build.sh > $T/b.txt 2>&1; rc=$?
