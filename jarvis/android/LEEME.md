@@ -89,3 +89,34 @@ desinstalar la versión anterior antes de instalar la nueva.
   operaciones; antes de cada tarea se recuperan los aprendizajes y fallos parecidos y se le dan a Claude.
 - Límite honesto: una herramienta del laboratorio solo calcula o transforma datos. Lo que necesita Android (vídeo,
   cámara, sensores) no se puede crear dentro del teléfono: queda como propuesta y llega en una APK nueva.
+
+## FÉNIX 80 · motor de evolución supervisada (primera versión)
+- «JARVIS, trabaja en ti mismo» inicia una misión (`core/Evolution`): diagnostica, elige UNA mejora por prioridad
+  (categorías del señor Rafael + impacto, seguridad, estabilidad, probabilidad − coste, dificultad), la desarrolla,
+  la prueba, la corrige con los fallos reales y la deja VERIFICADA con evidencias. Solo después elige la siguiente.
+  Estados: PENDIENTE → EN ANÁLISIS → EN DESARROLLO → EN PRUEBAS → CORRIGIENDO → VERIFICADA → APROBADA → INTEGRADA
+  (+ BLOQUEADA, DESCARTADA). Las transiciones inválidas se rechazan en el código.
+- Intervalos configurables (reintento 1 min, siguiente 2 min, diagnóstico 5 min) y límites (40 consultas, 3 mejoras,
+  60 minutos, 3 intentos). Pausar, reanudar, detener. «JARVIS, PAUSA TOTAL» detiene todo.
+- VULKAN (`core/Vulkan`) dirige y reparte a agentes con instrucciones, salida y registro propios
+  (`files/evolucion/agentes/`): arquitectura, investigación (solo con la web autorizada), programación y android
+  (Claude); seguridad, calidad y memoria (deterministas). IA, optimización, voz e interfaz y finanzas: preparados,
+  sin lógica propia todavía.
+- Autodiagnóstico (`core/SelfCheck`): inventario de compilación (`assets/inventario.json`: versión, módulos, líneas,
+  permisos, resultado de las últimas pruebas), código fuente propio (`assets/fuente.json`), pendientes conocidos
+  (`pendientes.json`) y comprobaciones del teléfono (claves, micrófono, almacenamiento, aislamiento).
+- Aprendizaje estructurado: fecha, módulo, problema, causa, solución, pruebas, resultado, confianza, aprendizaje y
+  tipo (hecho comprobado, hipótesis o conclusión); se recupera ante tareas parecidas.
+- Preguntas respondidas con registros reales, sin Claude: «¿qué estás mejorando?», «¿qué aprendiste hoy?», «¿qué errores
+  corregiste?», «¿qué capacidades nuevas desarrollaste?», «¿qué te falta para evolucionar?», «¿qué podés hacer?»…
+- LÍMITE: dentro del teléfono solo se completan mejoras de tipo herramienta (JavaScript en el laboratorio). Las mejoras
+  de código Android se diseñan y se dejan como propuesta (BLOQUEADA: compilar fuera) hasta tener un canal de
+  compilación externo.
+
+### Prueba en el teléfono (FÉNIX)
+1. Abrir 🔥 Evolución: el panel muestra la misión INACTIVA y «Qué me falta» con los pendientes conocidos.
+2. Decir «JARVIS, ¿qué está fallando?»: debe listar las comprobaciones reales (por ejemplo, si falta el micrófono).
+3. Pedir algo que no sabe hacer y que sea de cálculo (p. ej. «convertí una lista de tiempos en subtítulos SRT»).
+4. Decir «JARVIS, trabaja en ti mismo». En el chat aparecen los pasos «FÉNIX · …». Esperar a que termine.
+5. En 🔥: aprobar la mejora VERIFICADA. Comprobar en 🧪 que la herramienta está activa.
+6. «JARVIS, PAUSA TOTAL» durante otra misión: debe detenerse y quedar en pausa.

@@ -24,9 +24,10 @@ public final class UiCommands {
         {"editor", "(editor|editor de video|editor de videos|editor multimedia)"},
         {"panel", "(panel|panel de control|ajustes|configuracion|administracion)"},
         {"lab", "(laboratorio|lab|laboratorio de automejora)"},
+        {"evo", "(evolucion|panel de evolucion|fenix|motor de evolucion)"},
     };
 
-    static final String[] NAMES = {"el chat", "los resultados", "el historial", "el editor de vídeo", "el panel", "el laboratorio"};
+    static final String[] NAMES = {"el chat", "los resultados", "el historial", "el editor de vídeo", "el panel", "el laboratorio", "el panel de evolución"};
 
     public static Map<String, Object> parse(String text) {
         if (text == null) return null;

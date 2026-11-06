@@ -101,7 +101,19 @@ public final class Lab {
     public synchronized Map<String, Object> test(String id, int v, Sandbox sb) throws IOException {
         Map<String, Object> meta = meta(id, v);
         if (meta == null) throw new IOException("no existe " + id + " v" + v);
+        Map<String, Object> r = runTests(id, v, sb);
+        boolean ok = Boolean.TRUE.equals(r.get("ok"));
+        meta.put("estado", ok ? "probada" : "fallida");
+        meta.put("pruebas", Json.map("pasan", r.get("pasan"), "total", r.get("total"), "error", r.get("error"), "resultados", r.get("resultados"), "fecha", now()));
+        write(new File(vdir(id, v), "meta.json"), Json.write(meta));
+        log("pruebas", id, v, r.get("pasan") + "/" + r.get("total") + (r.get("error") == null ? "" : " · " + r.get("error")));
+        return Json.map("ok", ok, "pasan", r.get("pasan"), "total", r.get("total"), "error", r.get("error"));
+    }
+
+    /** Ejecuta las pruebas SIN cambiar el estado (para comprobar regresiones de las herramientas activas). */
+    public Map<String, Object> runTests(String id, int v, Sandbox sb) throws IOException {
         String code = read(new File(vdir(id, v), "herramienta.js"));
+        if (code == null) throw new IOException("no existe " + id + " v" + v);
         if (!check(code).isEmpty()) throw new IOException("el código no pasa el control de seguridad: " + check(code));
         List<Object> tests = Json.arr(Json.parse(read(new File(vdir(id, v), "pruebas.json"))));
         int pass = 0; String err = null; List<Object> res = new ArrayList<Object>();
@@ -112,12 +124,20 @@ public final class Lab {
             res = r;
             for (Object o : r) if (Boolean.TRUE.equals(Json.obj(o).get("ok"))) pass++;
         } catch (Exception e) { err = e.getMessage() == null ? e.toString() : e.getMessage(); }
-        boolean ok = err == null && pass == tests.size();
-        meta.put("estado", ok ? "probada" : "fallida");
-        meta.put("pruebas", Json.map("pasan", (long) pass, "total", (long) tests.size(), "error", err, "resultados", res, "fecha", now()));
-        write(new File(vdir(id, v), "meta.json"), Json.write(meta));
-        log("pruebas", id, v, pass + "/" + tests.size() + (err == null ? "" : " · " + err));
-        return Json.map("ok", ok, "pasan", (long) pass, "total", (long) tests.size(), "error", err);
+        return Json.map("ok", err == null && pass == tests.size(), "pasan", (long) pass, "total", (long) tests.size(), "error", err, "resultados", res);
+    }
+
+    /** Pruebas de regresión: todas las herramientas activas deben seguir pasando las suyas. */
+    public Map<String, Object> regression(Sandbox sb) {
+        List<Object> fails = new ArrayList<Object>();
+        int n = 0;
+        for (Map.Entry<String, Object> e : active().entrySet()) {
+            n++;
+            int v = num(Json.obj(e.getValue()).get("version"));
+            try { Map<String, Object> r = runTests(e.getKey(), v, sb); if (!Boolean.TRUE.equals(r.get("ok"))) fails.add(e.getKey() + " v" + v + ": " + r.get("pasan") + "/" + r.get("total")); }
+            catch (Exception x) { fails.add(e.getKey() + " v" + v + ": " + x.getMessage()); }
+        }
+        return Json.map("ok", fails.isEmpty(), "herramientas", (long) n, "fallos", fails);
     }
 
     /** Activa una versión probada. SOLO desde una acción del usuario (byUser = true): respaldo, activación y registro. */
@@ -254,6 +274,7 @@ public final class Lab {
     }
 
     // ================================================================== utilidades
+    public File dirOf(String id) { return new File(dir, "herramientas/" + slug(id)); }
     private File vdir(String id, int v) { return new File(new File(dir, "herramientas/" + slug(id)), "v" + v); }
 
     public static String slug(String s) {

@@ -29,9 +29,32 @@ PY
 cp "$JARVIS/data/demo/inbox.json" "$JARVIS/data/demo/calendar.json" "$JARVIS/data/demo/meta.json" $B/assets/
 for f in index.html cockpit6.js manifest.webmanifest sw.js icon-192.png; do [ -f "$REPO/$f" ] && cp "$REPO/$f" $B/assets/radar/; done
 
+# ---- autoconocimiento: inventario de compilación, código fuente propio y pendientes conocidos
+cp pendientes.json $B/assets/pendientes.json
+python3 - "$B/assets" "$HERE" <<'PY'
+import json, os, re, sys, datetime
+out, here = sys.argv[1], sys.argv[2]
+mods, src = [], {}
+for root, _, files in os.walk(os.path.join(here, "src")):
+    for f in sorted(files):
+        if not f.endswith(".java"): continue
+        p = os.path.join(root, f); t = open(p, encoding="utf-8").read()
+        rel = os.path.relpath(p, os.path.join(here, "src"))
+        src[rel] = t
+        mods.append({"archivo": rel, "lineas": t.count("\n"), "clases": re.findall(r"(?:public |final )*(?:class|interface) (\w+)", t)[:6]})
+man = open(os.path.join(here, "AndroidManifest.xml"), encoding="utf-8").read()
+ver = re.search(r'versionName="([^"]+)"', man).group(1)
+perms = re.findall(r'uses-permission android:name="android\.permission\.(\w+)"', man)
+tests = open(os.path.join(here, ".pruebas.txt"), encoding="utf-8").read().splitlines() if os.path.exists(os.path.join(here, ".pruebas.txt")) else ["sin resultados de pruebas guardados"]
+json.dump({"version": ver, "compilado": datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"), "modulos": mods,
+           "lineas_totales": sum(m["lineas"] for m in mods), "permisos": perms, "pruebas": tests}, open(os.path.join(out, "inventario.json"), "w"), ensure_ascii=False)
+json.dump(src, open(os.path.join(out, "fuente.json"), "w"), ensure_ascii=False)
+PY
+
 if [ "${1:-}" = "test" ]; then
+  exec > >(tee $B/salida-pruebas.txt)  # para guardar el resumen en .pruebas.txt (lo lee el inventario de JARVIS)
   mkdir -p $B/test-obj
-  javac -nowarn -encoding UTF-8 -d $B/test-obj src/com/radar/jarvis/core/*.java src/com/radar/jarvis/core/fin/*.java test/CoreTest.java test/FinTest.java test/MetaApiTest.java test/DisciplineTest.java test/UiTest.java test/LabTest.java test/NodeSandbox.java
+  javac -nowarn -encoding UTF-8 -d $B/test-obj src/com/radar/jarvis/core/*.java src/com/radar/jarvis/core/fin/*.java test/CoreTest.java test/FinTest.java test/MetaApiTest.java test/DisciplineTest.java test/UiTest.java test/LabTest.java test/NodeSandbox.java test/EvolutionTest.java test/FenixTest.java
   PORT=$(python3 -c "import socket;s=socket.socket();s.bind(('127.0.0.1',0));print(s.getsockname()[1])")
   rm -f $B/mock.log; python3 test/mock_anthropic.py $PORT $B/mock.log & MOCK=$!
   sleep 0.6
@@ -56,7 +79,15 @@ if [ "${1:-}" = "test" ]; then
   echo "--- laboratorio y experiencia (aislamiento: Node vm; en el teléfono, WebView sin red):"
   rm -rf $B/test-lab; set +e; LC_ALL=C.UTF-8 java -Dfile.encoding=UTF-8 -cp $B/test-obj LabTest $B/test-lab; rc6=$?; set -e
   [ $rc6 -ne 0 ] && rc=$rc6
+  echo "--- FÉNIX 80 (motor, sin red):"
+  rm -rf $B/test-evo; set +e; LC_ALL=C.UTF-8 java -Dfile.encoding=UTF-8 -cp $B/test-obj EvolutionTest $B/test-evo; rc7=$?; set -e
+  [ $rc7 -ne 0 ] && rc=$rc7
+  echo "--- FÉNIX 80 + VULKAN (misión completa con Claude SIMULADO y aislamiento Node):"
+  rm -rf $B/test-fenix; set +e; LC_ALL=C.UTF-8 java -Dsun.jnu.encoding=UTF-8 -Dfile.encoding=UTF-8 -cp $B/test-obj FenixTest $B/test-fenix $B/assets $PORT $B/mock.log; rc8=$?; set -e
+  [ $rc8 -ne 0 ] && rc=$rc8
   kill $MOCK
+  sleep 0.3
+  { echo "pruebas del $(date -u '+%Y-%m-%d %H:%M UTC'): $([ $rc -eq 0 ] && echo 'TODAS PASAN' || echo 'HAY FALLOS')"; grep -E "^---|PASA ·" $B/salida-pruebas.txt | grep -v "lo que vio"; } > .pruebas.txt
   echo "--- lo que vio la API simulada en cada petición:"; sort $B/mock.log | uniq -c
   exit $rc
 fi

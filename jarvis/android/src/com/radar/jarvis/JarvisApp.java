@@ -7,7 +7,11 @@ import android.os.Handler;
 import android.os.Looper;
 
 import com.radar.jarvis.core.Brain;
+import com.radar.jarvis.core.Evolution;
+import com.radar.jarvis.core.Json;
+import com.radar.jarvis.core.Lab;
 import com.radar.jarvis.core.Vault;
+import com.radar.jarvis.core.Vulkan;
 import com.radar.jarvis.core.fin.Discipline;
 import com.radar.jarvis.core.fin.MetaApi;
 import com.radar.jarvis.core.fin.Mt5;
@@ -69,6 +73,69 @@ public class JarvisApp extends Application {
         }
         return mt5;
     }
+    // ================================================================== FÉNIX 80 (motor de evolución) + VULKAN
+    private static Evolution evo;
+    private static Vulkan vulkan;
+    private static Thread runner;
+    public interface EvoListener { void step(String result); }
+    public static volatile EvoListener evoListener;
+
+    /** Motor de evolución (necesita el cerebro ya creado). */
+    public static synchronized Evolution evolution(Context c) {
+        if (evo == null && brain != null) {
+            final Context app = c.getApplicationContext();
+            evo = new Evolution(app.getFilesDir(), brain.experience);
+            java.util.List<java.util.Map<String, Object>> known = new java.util.ArrayList<java.util.Map<String, Object>>();
+            try { for (Object o : Json.arr(Json.parse(brain.assetText("pendientes.json")))) known.add(Json.obj(o)); } catch (Exception ignored) {}
+            vulkan = new Vulkan(brain, new LabSandbox(app), new Vulkan.Probe() { public java.util.List<java.util.Map<String, Object>> run() { return probes(app); } }, known, evo.dir());
+        }
+        return evo;
+    }
+
+    public static synchronized Vulkan vulkan(Context c) { evolution(c); return vulkan; }
+
+    /** Comprobaciones reales del teléfono, sin red ni coste: claves, permisos, almacenamiento y aislamiento del laboratorio. */
+    public static java.util.List<java.util.Map<String, Object>> probes(Context c) {
+        java.util.List<java.util.Map<String, Object>> l = new java.util.ArrayList<java.util.Map<String, Object>>();
+        l.add(Json.map("modulo", "claude", "ok", brain != null && !brain.apiKey.isEmpty(), "detalle", brain != null && !brain.apiKey.isEmpty() ? "clave guardada" : "falta la clave de Claude", "tipo", "humano"));
+        l.add(Json.map("modulo", "elevenlabs", "ok", voice(c).usesElevenLabs(), "detalle", voice(c).usesElevenLabs() ? "clave guardada" : "falta la clave de ElevenLabs (uso la voz del teléfono)", "tipo", "humano"));
+        boolean mic = Perms.granted(c, "android.permission.RECORD_AUDIO");
+        l.add(Json.map("modulo", "micrófono", "ok", mic, "detalle", mic ? "permiso concedido" : "sin permiso de micrófono", "tipo", "humano"));
+        java.io.File f = new java.io.File(c.getFilesDir(), "estado");
+        l.add(Json.map("modulo", "almacenamiento", "ok", f.isDirectory() && f.canWrite(), "detalle", f.canWrite() ? "se puede escribir" : "no se puede escribir en la memoria de la app", "tipo", "nativo"));
+        String sb;
+        try {
+            java.util.Map<String, Object> r = Json.obj(Json.parse(new LabSandbox(c).run(Lab.single("function run(e){ return e + 1; }", 1L), Lab.TIMEOUT_MS)));
+            sb = r != null && Boolean.TRUE.equals(r.get("ok")) && Long.valueOf(2).equals(r.get("salida")) ? null : "respuesta inesperada " + r;
+        } catch (Exception e) { sb = e.getMessage(); }
+        l.add(Json.map("modulo", "laboratorio", "ok", sb == null, "detalle", sb == null ? "aislamiento WebView funciona" : "el aislamiento falla: " + sb, "tipo", "nativo"));
+        return l;
+    }
+
+    /** «JARVIS, trabaja en ti mismo»: inicia la misión y el bucle en segundo plano (con intervalos y límites). */
+    public static synchronized void startMission(Context c, boolean web) throws java.io.IOException {
+        evolution(c).start(System.currentTimeMillis(), web);
+        ensureRunner();
+    }
+
+    public static synchronized void ensureRunner() {
+        if (evo == null || (runner != null && runner.isAlive())) return;
+        runner = new Thread(new Runnable() { public void run() {
+            while (true) {
+                long now = System.currentTimeMillis(), w = evo.waitMs(now);
+                if (w < 0) break;  // misión pausada, detenida o terminada: el hilo se va
+                if (w > 0) { try { Thread.sleep(Math.min(w, 3000)); } catch (InterruptedException e) { break; } continue; }
+                final String r = evo.tick(now, vulkan);
+                final EvoListener l = evoListener;
+                if (l != null) MAIN.post(new Runnable() { public void run() { l.step(r); } });
+            }
+            final EvoListener l = evoListener;
+            if (l != null) MAIN.post(new Runnable() { public void run() { l.step("fin: misión " + evo.missionState().toLowerCase(java.util.Locale.ROOT)); } });
+        }}, "fenix80");
+        runner.setPriority(Thread.MIN_PRIORITY);
+        runner.start();
+    }
+
     private static Discipline discipline;
     /** Regla de autodisciplina financiera (estado en disco: sobrevive a reinicios). */
     public static synchronized Discipline discipline(Context c) {

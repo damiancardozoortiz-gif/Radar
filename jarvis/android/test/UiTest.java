@@ -25,6 +25,8 @@ public class UiTest {
         is("muestra el historial", "open", "history");
         is("abre el panel", "open", "panel");
         is("JARVIS, abrí el laboratorio", "open", "lab");
+        is("abre la evolución", "open", "evo");
+        is("JARVIS, trabaja en ti mismo", null, null);
         // no son órdenes de pantalla: van a Claude o al enrutador
         is("abre el chat de WhatsApp con Ricardo", null, null);
         is("investigá el mercado de seguros de hogar en Madrid", null, null);

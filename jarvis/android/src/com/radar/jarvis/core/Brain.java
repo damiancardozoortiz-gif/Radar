@@ -600,6 +600,21 @@ public final class Brain {
         return b.toString();
     }
 
+    /** Código fuente de la propia app (empaquetado en fuente.json al compilar): para que los agentes lean el módulo. */
+    public String sourceOf(String module) {
+        try {
+            Map<String, Object> src = Json.obj(Json.parse(assets.read("fuente.json")));
+            if (src == null) return null;
+            String key = module == null ? "" : module.toLowerCase(Locale.ROOT).replaceAll(".*/", "").replace(".java", "");
+            for (Map.Entry<String, Object> e : src.entrySet())
+                if (e.getKey().toLowerCase(Locale.ROOT).replaceAll(".*/", "").replace(".java", "").equals(key)) return String.valueOf(e.getValue());
+        } catch (Exception ignored) {}
+        return null;
+    }
+
+    /** Lee un archivo empaquetado en la app (vacío si no existe). */
+    public String assetText(String p) { return asset(p); }
+
     private String asset(String p) {
         try { return assets.read(p); } catch (IOException e) { return ""; }
     }

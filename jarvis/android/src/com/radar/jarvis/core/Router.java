@@ -38,7 +38,7 @@ public final class Router {
 
     public static boolean isPause(String q) {
         String c = clean(q).trim();
-        return c.equals("pausa") || c.equals("jarvis pausa") || c.equals("pausa jarvis") || c.equals("para")
+        return c.equals("pausa") || c.equals("jarvis pausa") || c.equals("pausa total") || c.equals("jarvis pausa total") || c.equals("pausa jarvis") || c.equals("para")
                 || c.equals("detente") || c.equals("stop") || c.equals("alto");
     }
 

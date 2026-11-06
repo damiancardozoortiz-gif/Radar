@@ -34,6 +34,10 @@ import com.radar.jarvis.core.Brain;
 import com.radar.jarvis.core.Greeting;
 import com.radar.jarvis.core.Json;
 import com.radar.jarvis.core.UiCommands;
+import com.radar.jarvis.core.EvoCommands;
+import com.radar.jarvis.core.Evolution;
+import com.radar.jarvis.core.SelfCheck;
+import com.radar.jarvis.core.Vulkan;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -55,7 +59,9 @@ public class MainActivity extends Activity {
     private WindowHost windows;
     private LinearLayout chat, chatWin, results, historyBox;
     private ScrollView resultsScroll, historyScroll;
-    private TextView chatIcon, resultsIcon, labIcon, thinkingLine;
+    private TextView chatIcon, resultsIcon, labIcon, evoIcon, thinkingLine;
+    private LinearLayout evoBox;
+    private ScrollView evoScroll;
     private boolean unseenChat, unseenResults, unseenLab;
     private LinearLayout labBox;
     private ScrollView labScroll;
@@ -88,6 +94,8 @@ public class MainActivity extends Activity {
             chat.removeAllViews();
             for (Map<String, Object> d : br.pending()) approvalCard(d);  // borradores que sobrevivieron
             refresh();
+            JarvisApp.evoListener = new JarvisApp.EvoListener() { public void step(String r) { evoStep(r); } };
+            if ("ACTIVA".equals(JarvisApp.evolution(MainActivity.this).missionState())) JarvisApp.ensureRunner();  // la misión sigue tras reabrir la app
             if (!JarvisApp.greeted) { JarvisApp.greeted = true; greet(); }
             else say("Sistemas activos, señor Rafael.", "sistema");
         }});
@@ -199,6 +207,9 @@ public class MainActivity extends Activity {
         labBox = Ui.col(this);
         labScroll.addView(labBox);
         sandbox = new LabSandbox(this);
+        evoScroll = new ScrollView(this);
+        evoBox = Ui.col(this);
+        evoScroll.addView(evoBox);
 
         LinearLayout dock = Ui.row(this);
         HorizontalScrollView dockScroll = new HorizontalScrollView(this);
@@ -220,6 +231,8 @@ public class MainActivity extends Activity {
         bar.addView(icon("🕘", "Historial", new View.OnClickListener() { public void onClick(View v) { toggleWin("history"); } }));
         labIcon = icon("🧪", "Laboratorio", new View.OnClickListener() { public void onClick(View v) { toggleWin("lab"); } });
         bar.addView(labIcon);
+        evoIcon = icon("🔥", "Evolución", new View.OnClickListener() { public void onClick(View v) { toggleWin("evo"); } });
+        bar.addView(evoIcon);
         bar.addView(icon("🎬", "Editor", new View.OnClickListener() { public void onClick(View v) { toggleWin("editor"); } }));
         bar.addView(icon("📷", "Cámara", new View.OnClickListener() { public void onClick(View v) { camera(); } }));
         bar.addView(icon("📁", "Archivo", new View.OnClickListener() { public void onClick(View v) { pickFile(); } }));
@@ -267,6 +280,7 @@ public class MainActivity extends Activity {
             windows.open("editor", "Editor de vídeo", e);
         }
         else if ("panel".equals(id)) panel();
+        else if ("evo".equals(id)) { fillEvo(); windows.open("evo", "Evolución · FÉNIX 80", evoScroll); }
         else if ("lab".equals(id)) { unseenLab = false; fillLab(); windows.open("lab", "Laboratorio", labScroll); }
         badges();
     }
@@ -353,6 +367,8 @@ public class MainActivity extends Activity {
     private void ask(final String q) {
         if (brain == null || busy) return;
         say(q, "user");
+        String ek = EvoCommands.parse(q);
+        if (ek != null) { evoCommand(ek); return; }
         Map<String, Object> cmd = UiCommands.parse(q);
         if (cmd != null) { say(String.valueOf(cmd.get("say")), "sistema"); uiCommand(cmd); return; }
         busy = true;
@@ -388,6 +404,150 @@ public class MainActivity extends Activity {
         Map<String, Object> dev = Json.obj(r.get("device"));
         if (dev != null) device(dev);
         speakThen(sayTxt);
+    }
+
+    // ================================================================== FÉNIX 80 · evolución supervisada
+    /** Órdenes de evolución: se resuelven aquí con registros reales (sin Claude). */
+    private void evoCommand(String k) {
+        Evolution evo = JarvisApp.evolution(this);
+        String r;
+        try {
+            if ("pausa_total".equals(k)) {
+                stopAll(true);
+                evo.stop("PAUSA TOTAL");
+                r = "PAUSA TOTAL. Detuve la evolución, la voz y el micrófono. Nada se ejecuta hasta que usted lo autorice.";
+            } else if ("start".equals(k)) {
+                if (brain.isPaused()) r = "Estoy en pausa: quítela antes de que trabaje en mí mismo.";
+                else {
+                    JarvisApp.startMission(this, JarvisApp.store(this).flag("evo_web"));
+                    r = "Inicio la misión de evolución. Trabajo de a una mejora y nada se integra sin su aprobación. Límites: "
+                            + evo.config.maxApiCalls + " consultas, " + evo.config.maxImprovements + " mejoras, " + evo.config.maxMinutes + " minutos.";
+                }
+            } else if ("stop".equals(k)) { evo.stop("orden del usuario"); r = "Evolución detenida."; }
+            else if ("pause".equals(k)) { evo.pause("orden del usuario"); r = "Evolución en pausa."; }
+            else if ("resume".equals(k)) { evo.resume(System.currentTimeMillis()); JarvisApp.ensureRunner(); r = "Reanudo la evolución."; }
+            else if ("improving".equals(k) || "status".equals(k)) r = evo.whatImproving();
+            else if ("learned".equals(k)) r = evo.learnedToday();
+            else if ("fixed".equals(k)) r = evo.errorsFixed();
+            else if ("new_caps".equals(k)) r = evo.newCapabilities();
+            else if ("missing".equals(k)) r = evo.missing();
+            else if ("can_do".equals(k)) r = SelfCheck.canDo(brain);
+            else if ("cannot_do".equals(k)) r = SelfCheck.cannotDo();
+            else r = SelfCheck.failing(JarvisApp.vulkan(this).lastProbes(), brain);
+        } catch (Exception e) { r = "No pude: " + e.getMessage(); }
+        brain.log("evolucion", k);
+        say(r, "jarvis");
+        if (windows.isVisible("evo")) fillEvo();
+        String spoken = r.split("\n")[0];
+        speakThen(spoken.length() > 220 ? spoken.substring(0, 220) : spoken);
+    }
+
+    /** Cada paso de la misión: una línea en el chat (sin abrirlo) y el panel al día. Al terminar, lo dice. */
+    private void evoStep(String r) {
+        if (chat == null) return;
+        say("FÉNIX · " + r, "sistema");
+        unseenLab = unseenLab || r.contains("verificada");
+        badges();
+        if (windows.isVisible("evo")) fillEvo();
+        if (r.startsWith("fin:") && brain != null) {
+            Evolution evo = JarvisApp.evolution(this);
+            speakThen("Misión de evolución " + evo.missionState().toLowerCase(Locale.ROOT) + ". " + evo.newCapabilities().split("\n")[0]);
+        }
+    }
+
+    private void fillEvo() {
+        evoBox.removeAllViews();
+        if (brain == null) return;
+        final Evolution evo = JarvisApp.evolution(this);
+        long now = System.currentTimeMillis();
+        Map<String, Object> st = evo.status(now), mis = Json.obj(st.get("mision")), cfg = Json.obj(st.get("config"));
+        Runtime rt = Runtime.getRuntime();
+        int battery = -1;
+        try { Intent b = registerReceiver(null, new android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED)); if (b != null) battery = b.getIntExtra("level", -1) * 100 / Math.max(1, b.getIntExtra("scale", 100)); } catch (Exception ignored) {}
+        evoBox.addView(Ui.text(this, "Motor FÉNIX 80 dirigido por VULKAN. Una mejora a la vez; nada se integra sin su aprobación. "
+                + "Las mejoras de código Android se preparan aquí pero se compilan fuera del teléfono.", 12, Ui.DIM));
+        String state = String.valueOf(mis.get("estado"));
+        evoBox.addView(Ui.text(this, "Misión: " + state + (mis.get("motivo") != null ? " · " + mis.get("motivo") : "")
+                + "\nTiempo: " + st.get("minutos") + " min de " + cfg.get("max_min") + " · consultas a Claude: " + (mis.get("api") == null ? 0 : mis.get("api")) + " de " + cfg.get("max_api")
+                + " · mejoras verificadas: " + (mis.get("mejoras_verificadas") == null ? 0 : mis.get("mejoras_verificadas")) + " de " + cfg.get("max_mejoras")
+                + (evo.waitMs(now) > 0 ? "\nPróximo paso en " + evo.waitMs(now) / 1000 + " s" : "")
+                + "\nRecursos: RAM de la app " + (rt.totalMemory() - rt.freeMemory()) / (1024 * 1024) + " MB · batería " + (battery < 0 ? "?" : battery + " %")
+                + "\nIntervalos: reintento " + cfg.get("reintento_s") + " s · siguiente " + cfg.get("siguiente_s") + " s · diagnóstico " + cfg.get("ciclo_s") + " s"
+                + "\nInvestigación web: " + (JarvisApp.store(this).flag("evo_web") ? "AUTORIZADA" : "no autorizada"), 12, "ACTIVA".equals(state) ? Ui.ACCENT : Ui.TEXT));
+        LinearLayout row = Ui.row(this);
+        row.addView(Ui.button(this, "ACTIVA".equals(state) ? "Pausar" : "PAUSADA".equals(state) ? "Reanudar" : "Trabajar en mí", Ui.ACCENT, new View.OnClickListener() { public void onClick(View v) {
+            String s = evo.missionState();
+            evoCommand("ACTIVA".equals(s) ? "pause" : "PAUSADA".equals(s) ? "resume" : "start");
+        }}));
+        row.addView(gap());
+        row.addView(Ui.button(this, "Detener", Ui.BAD, new View.OnClickListener() { public void onClick(View v) { evoCommand("stop"); } }));
+        row.addView(gap());
+        row.addView(Ui.button(this, JarvisApp.store(this).flag("evo_web") ? "Web: quitar" : "Web: autorizar", Ui.TEXT, new View.OnClickListener() { public void onClick(View v) {
+            Store s = JarvisApp.store(MainActivity.this); s.flag("evo_web", !s.flag("evo_web")); brain.log("evolucion", "investigación web " + (s.flag("evo_web") ? "autorizada" : "retirada")); fillEvo();
+        }}));
+        evoBox.addView(row, Ui.margins(this, 0, 6, 0, 0));
+
+        Map<String, Object> a = Json.obj(st.get("activa"));
+        evoBox.addView(labTitle("MEJORA EN CURSO (una a la vez)"));
+        if (a == null) evoBox.addView(Ui.text(this, "Ninguna." + (st.get("proxima") != null ? " Próxima: " + st.get("proxima") : ""), 12, Ui.DIM));
+        else {
+            List<Object> pr = Json.arr(a.get("pruebas"));
+            Map<String, Object> last = pr == null || pr.isEmpty() ? null : Json.obj(pr.get(pr.size() - 1));
+            evoBox.addView(Ui.text(this, a.get("id") + " · " + a.get("nombre") + "\nMódulo: " + a.get("modulo") + " · estado: " + a.get("estado") + " · intento " + a.get("intentos")
+                    + "\nProblema: " + a.get("objetivo") + (a.get("diseno") != null ? "\nSolución: " + a.get("diseno") : "")
+                    + (last != null ? "\nÚltimas pruebas: " + last.get("pasan") + "/" + last.get("total") : ""), 12, Ui.TEXT));
+        }
+
+        evoBox.addView(labTitle("VERIFICADAS: esperan su aprobación"));
+        int ver = 0;
+        for (final Map<String, Object> m : evo.all()) {
+            if (!Evolution.VERIFICADA.equals(m.get("estado"))) continue;
+            ver++;
+            LinearLayout c = Ui.card(this);
+            List<Object> evs = Json.arr(m.get("evidencias"));
+            Map<String, Object> ev = evs.isEmpty() ? null : Json.obj(evs.get(evs.size() - 1));
+            c.addView(Ui.mono(this, m.get("id") + " · VERIFICADA", 11, Ui.ACCENT));
+            c.addView(Ui.text(this, m.get("nombre") + "\nPruebas: " + (ev == null ? "?" : ev.get("pasan") + "/" + ev.get("total")) + " · regresión ok"
+                    + "\nErrores corregidos: " + Json.arr(m.get("errores_corregidos")).size() + "\nArchivos: " + m.get("archivos"), 12, Ui.TEXT));
+            LinearLayout r2 = Ui.row(this);
+            r2.addView(Ui.button(this, "Código", Ui.TEXT, new View.OnClickListener() { public void onClick(View v) {
+                new AlertDialog.Builder(MainActivity.this).setTitle(String.valueOf(m.get("herramienta")))
+                        .setMessage(brain.lab.code(String.valueOf(m.get("herramienta")), ((Number) m.get("version_candidata")).intValue())).setPositiveButton("Cerrar", null).show();
+            }}));
+            r2.addView(gap());
+            r2.addView(Ui.button(this, "Aprobar e integrar", Ui.OK, new View.OnClickListener() { public void onClick(View v) {
+                new AlertDialog.Builder(MainActivity.this).setTitle("¿Integrar " + m.get("id") + "?")
+                        .setMessage("Se activa la herramienta verificada. Antes se guarda un respaldo; puede volver a la versión anterior desde el laboratorio.")
+                        .setNegativeButton("Cancelar", null).setPositiveButton("Apruebo", new DialogInterface.OnClickListener() { public void onClick(DialogInterface d, int w) {
+                            try { Vulkan.approve(evo, brain.lab, String.valueOf(m.get("id"))); brain.log("evolucion", "integrada " + m.get("id")); say(m.get("id") + " integrada.", "sistema"); }
+                            catch (Exception e) { say("No se integró: " + e.getMessage(), "sistema"); }
+                            fillEvo();
+                        }}).show();
+            }}));
+            c.addView(r2);
+            evoBox.addView(c, Ui.margins(this, 0, 6, 0, 0));
+        }
+        if (ver == 0) evoBox.addView(Ui.text(this, "Ninguna.", 12, Ui.DIM));
+
+        evoBox.addView(labTitle("QUÉ ME FALTA"));
+        evoBox.addView(Ui.text(this, evo.missing(), 12, Ui.TEXT));
+        evoBox.addView(labTitle("ESTADOS"));
+        evoBox.addView(Ui.text(this, String.valueOf(st.get("por_estado")), 12, Ui.TEXT));
+        evoBox.addView(labTitle("APRENDIZAJES (" + st.get("aprendizajes") + ")"));
+        List<Map<String, Object>> ls = evo.learnings();
+        for (int i = ls.size() - 1; i >= Math.max(0, ls.size() - 5); i--)
+            evoBox.addView(Ui.text(this, "• [" + ls.get(i).get("tipo") + ", confianza " + ls.get(i).get("confianza") + "] " + ls.get(i).get("aprendizaje"), 11, Ui.TEXT));
+        evoBox.addView(labTitle("AGENTES DE VULKAN"));
+        for (Map.Entry<String, Object> e : JarvisApp.vulkan(this).agentsStatus().entrySet()) {
+            Map<String, Object> g = Json.obj(e.getValue());
+            evoBox.addView(Ui.text(this, e.getKey() + " (" + g.get("motor") + "): " + g.get("acciones") + " acciones", 11, ((Number) g.get("acciones")).intValue() > 0 ? Ui.TEXT : Ui.DIM));
+        }
+        evoBox.addView(labTitle("REGISTRO"));
+        List<String> log = evo.log(15);
+        for (int i = log.size() - 1; i >= 0; i--) {
+            try { Map<String, Object> m = Json.obj(Json.parse(log.get(i))); evoBox.addView(Ui.text(this, m.get("fecha") + " · " + m.get("mejora") + " · " + m.get("accion") + " · " + m.get("detalle"), 11, Ui.DIM)); }
+            catch (Exception ignored) {}
+        }
     }
 
     // ================================================================== laboratorio de automejora (supervisado)

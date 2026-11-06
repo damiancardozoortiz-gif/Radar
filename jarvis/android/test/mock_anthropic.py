@@ -20,6 +20,24 @@ class H(BaseHTTPRequestHandler):
         LOG.write(json.dumps({"problems": problems, "turns": len(body["messages"]), "image": has_image, "fallbacks": body.get("fallbacks"),
                               "beta": self.headers.get("anthropic-beta"), "effort": body.get("output_config", {}).get("effort")}) + "\n"); LOG.flush()
         LOG.write(json.dumps({"lessons": "aprendizajes y fallos anteriores" in text, "capabilities": "## Capacidades" in body.get("system", "")}) + "\n"); LOG.flush()
+        if "AGENTE: " in text:  # agentes de VULKAN: respuesta JSON propia de cada agente
+            ag = text.split("AGENTE: ", 1)[1].split("\n", 1)[0].strip()
+            LOG.write(json.dumps({"agente": ag}) + "\n"); LOG.flush()
+            if ag == "arquitectura":
+                rep = {"tipo": "nativo", "criterios": ["no repetir el error"], "diseno": "reintentos", "riesgos": "-"} if "Error repetido" in text else \
+                      {"tipo": "herramienta", "criterios": ["segundos → hh:mm:ss", "0 → 00:00:00"], "diseno": "división entera y relleno con ceros", "riesgos": "ninguno"}
+            elif ag == "android": rep = {"propuesta": "## Archivos\nBrain.java: reintentar ante 529.\n## Pruebas\nCoreTest con 529 simulado."}
+            elif ag == "programacion":
+                good = "CORREGIR" in text
+                code = "function run(entrada){ var h=Math.floor(entrada/3600),m=Math.floor(entrada%3600/60),s=entrada%60; function p(n){return (n<10?'0':'')+n;} return p(h)+':'+p(m)+':'+p(s); }" if good else \
+                       "function run(entrada){ var h=Math.floor(entrada/3600),m=Math.floor(entrada%3600/60),s=entrada%60; return h+':'+m+':'+s; }"
+                rep = {"codigo": code, "pruebas": [{"entrada": 0, "esperado": "00:00:00"}, {"entrada": 3661, "esperado": "01:01:01"}, {"entrada": 59, "esperado": "00:00:59"}],
+                       "descripcion": "segundos → hh:mm:ss", "por_que": "división entera y relleno con ceros a dos cifras"}
+            else: rep = {"hallazgos": "sin datos", "fuentes": []}
+            out = {"type": "message", "stop_reason": "end_turn", "content": [{"type": "text", "text": json.dumps(rep, ensure_ascii=False)}]}
+            data = json.dumps(out).encode(); code = 400 if problems else 200
+            self.send_response(code); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data)
+            return
         text = text.split("Mensaje:", 1)[1].split("\n", 1)[0] if "Mensaje:" in text else text  # solo la frase del usuario
         if "LENTO" in text: time.sleep(5)
         tools = [t.get("type") for t in body.get("tools", [])]
