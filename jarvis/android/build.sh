@@ -2,7 +2,8 @@
 # Compila la app Android de JARVIS sin Gradle (herramientas de Ubuntu/Debian: android-sdk-platform-23, aapt,
 # dalvik-exchange, zipalign, apksigner). Reutiliza el proyecto existente: copia a la app las instrucciones
 # (agent/prompt.md), tu perfil (CLAUDE.md), las notas/correo/agenda (data/demo) y la web de RADAR (raíz del repo).
-#   ./build.sh          -> build/jarvis-debug.apk
+#   ./build.sh          -> build/jarvis-debug.apk (firmada SOLO con la clave original; sin ella, sin firmar)
+#   ./build.sh unsigned -> build/jarvis-sin-firmar.apk (para la compilación externa y las verificaciones)
 #   ./build.sh test     -> prueba del núcleo en el ordenador contra una API de Claude simulada
 # Instalar las herramientas (una vez): sudo apt install android-sdk-platform-23 aapt dalvik-exchange zipalign apksigner
 set -euo pipefail
@@ -99,10 +100,25 @@ dalvik-exchange --dex --output=$B/classes.dex $B/obj
 aapt package -f -M AndroidManifest.xml -S res -A $B/assets -I "$AJ" -F $B/sin-firmar.apk
 (cd $B && aapt add sin-firmar.apk classes.dex >/dev/null)
 zipalign -f 4 $B/sin-firmar.apk $B/alineado.apk
-# clave de depuración (no es secreta; solo para instalar en tu teléfono)
-[ -f debug.keystore ] || keytool -genkeypair -keystore debug.keystore -storepass android -keypass android -alias jarvis \
-  -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=JARVIS debug" >/dev/null 2>&1
-apksigner sign --ks debug.keystore --ks-pass pass:android --key-pass pass:android --out $B/jarvis-debug.apk $B/alineado.apk
+# ---- firma. La identidad de la app instalada es el certificado de abajo: SOLO esa clave produce actualizaciones.
+# Nunca se genera una clave nueva: sin la original sale una APK SIN FIRMAR (sirve para verificar, no para actualizar).
+EXPECTED_CERT=f8004ee25772fc3e3e5d1c7fd9737d64f4773db0f00f4ff6789f9d7dd623750b   # huella pública del certificado (no es secreta)
+KS=${JARVIS_KEYSTORE:-debug.keystore}
+if [ "${1:-}" = "unsigned" ] || [ ! -f "$KS" ]; then
+  [ "${1:-}" = "unsigned" ] || echo "AVISO: no está la clave de firma original ($KS): genero la APK SIN FIRMAR. No sirve para actualizar la app instalada."
+  mv $B/alineado.apk $B/jarvis-sin-firmar.apk
+  rm -f $B/sin-firmar.apk
+  zipalign -c 4 $B/jarvis-sin-firmar.apk
+  ls -l $B/jarvis-sin-firmar.apk
+  exit 0
+fi
+apksigner sign --ks "$KS" --ks-pass pass:${JARVIS_KS_PASS:-android} --key-pass pass:${JARVIS_KS_PASS:-android} --out $B/jarvis-debug.apk $B/alineado.apk
 apksigner verify $B/jarvis-debug.apk
+CERT=$(apksigner verify --print-certs $B/jarvis-debug.apk | sed -n 's/.*certificate SHA-256 digest: //p' | head -1)
+if [ "$CERT" != "$EXPECTED_CERT" ]; then
+  echo "ERROR: la APK quedó firmada con OTRO certificado ($CERT). No es una actualización de la app instalada: la borro."
+  rm -f $B/jarvis-debug.apk; exit 1
+fi
 rm -f $B/sin-firmar.apk $B/alineado.apk
+echo "firma: certificado original (actualiza la app instalada)"
 ls -l $B/jarvis-debug.apk

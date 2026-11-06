@@ -1,0 +1,103 @@
+# JARVIS Android: compilación externa (FÉNIX 80).
+# - Trabajo 1: pruebas automáticas + APK SIN FIRMAR (artefacto). Sin secretos, permisos de solo lectura.
+# - Trabajo 2: instala y abre la APK en un Android emulado (firma de usar y tirar, solo para el emulador).
+# Ningún trabajo usa secretos. La firma compatible con la app instalada NO se hace aquí (ver jarvis/android/CI.md).
+name: JARVIS Android
+
+on:
+  push:
+    branches: [android, "fenix/**"]
+    paths: ["jarvis/**", ".github/workflows/jarvis-android.yml", "index.html", "cockpit6.js", "sw.js", "manifest.webmanifest", "icon-192.png"]
+  pull_request:
+    branches: [android]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: jarvis-android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pruebas-y-compilacion:
+    name: Pruebas y APK sin firmar
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Herramientas (las mismas que en desarrollo)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq android-sdk-platform-23 aapt dalvik-exchange zipalign apksigner openjdk-21-jdk-headless
+      - name: Pruebas automáticas
+        working-directory: jarvis/android
+        run: ./build.sh test 2>&1 | tee pruebas-completas.txt; exit ${PIPESTATUS[0]}
+      - name: Pruebas del canal de firma (sin clave)
+        working-directory: jarvis/android
+        run: ./ci/prueba_firma.sh 2>&1 | tee pruebas-firma.txt; exit ${PIPESTATUS[0]}
+      - name: APK sin firmar
+        working-directory: jarvis/android
+        run: ./build.sh unsigned 2>&1 | tee compilacion.txt; exit ${PIPESTATUS[0]}
+      - name: Verificar la APK
+        working-directory: jarvis/android
+        run: |
+          APK=build/jarvis-sin-firmar.apk
+          zipalign -c 4 $APK
+          aapt dump badging $APK | head -1 | tee verificacion.txt
+          aapt dump badging $APK | grep -q "package: name='com.radar.jarvis'" || { echo "paquete incorrecto"; exit 1; }
+          unzip -l $APK | grep -q classes.dex
+          unzip -l $APK | grep -q assets/inventario.json
+          echo "commit: $GITHUB_SHA" | tee -a verificacion.txt
+          echo "rama: $GITHUB_REF_NAME" | tee -a verificacion.txt
+          sha256sum $APK | tee -a verificacion.txt
+      - name: Guardar APK y registros
+        uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-sin-firmar-${{ github.sha }}
+          path: |
+            jarvis/android/build/jarvis-sin-firmar.apk
+            jarvis/android/pruebas-completas.txt
+            jarvis/android/.pruebas.txt
+            jarvis/android/compilacion.txt
+            jarvis/android/pruebas-firma.txt
+            jarvis/android/verificacion.txt
+          include-hidden-files: true
+          retention-days: 30
+
+  emulador:
+    name: Instalación y arranque en Android emulado
+    needs: pruebas-y-compilacion
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: jarvis-sin-firmar-${{ github.sha }}
+          path: artefacto
+      - name: Herramientas para firmar en el emulador
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq apksigner openjdk-21-jdk-headless
+      - name: Activar KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+      - name: Android 10 emulado (API 29), instalar y abrir
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 29
+          arch: x86_64
+          target: default
+          disable-animations: true
+          script: bash jarvis/android/ci/prueba_emulador.sh artefacto/build/jarvis-sin-firmar.apk salida-emulador
+      - name: Guardar resultados del emulador
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-emulador-${{ github.sha }}
+          path: salida-emulador
+          retention-days: 30
