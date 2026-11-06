@@ -77,8 +77,14 @@ public class CoreTest {
         check("tareas".equals(Router.tool("agregá una tarea: llamar al banco", b.vault)), "«agregá una tarea»");
         // ---- búsqueda web, informe y tareas
         r = b.answer("JARVIS, investigá este producto");
+        String det = String.valueOf(r.get("detail"));
+        check(det.contains("https://fuente-b.com/precios") && !det.contains("inventada.net") && det.contains("enlace retirado"), "investigador: el enlace inventado se retira; los reales se quedan");
+        check(Long.valueOf(2).equals(r.get("sources")) && Long.valueOf(2).equals(r.get("searches")) && det.contains("búsqueda: producto opiniones 2026") && det.contains("lectura: https://fuente-a.org/analisis"),
+                "investigador: registro real de búsquedas y páginas leídas (" + r.get("searches") + " acciones, " + r.get("sources") + " fuentes)");
+        check(String.valueOf(r.get("warning")).contains("se retiraron"), "investigador: avisa de los enlaces retirados");
+        check(new File(data, "aprendizaje/investigacion.jsonl").isFile(), "investigador: guarda el aprendizaje útil");
         String ml = new String(java.nio.file.Files.readAllBytes(new File(a[3]).toPath()), "UTF-8");
-        check(ml.contains("web_search_20260209"), "la investigación usa la búsqueda web de la API");
+        check(ml.contains("web_search_20260209") && ml.contains("web_fetch_20260209"), "la investigación usa la búsqueda web y la lectura de páginas de la API");
         r = b.answer("JARVIS, prepará un informe sobre la competencia");
         check(r.get("report") != null && new File(String.valueOf(r.get("report"))).exists(), "el informe se guarda en el teléfono");
         r = b.answer("agregá una tarea: llamar al banco");

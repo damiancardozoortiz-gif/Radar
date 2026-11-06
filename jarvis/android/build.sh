@@ -31,7 +31,7 @@ for f in index.html cockpit6.js manifest.webmanifest sw.js icon-192.png; do [ -f
 
 if [ "${1:-}" = "test" ]; then
   mkdir -p $B/test-obj
-  javac -nowarn -encoding UTF-8 -d $B/test-obj src/com/radar/jarvis/core/*.java src/com/radar/jarvis/core/fin/*.java test/CoreTest.java test/FinTest.java test/MetaApiTest.java test/DisciplineTest.java
+  javac -nowarn -encoding UTF-8 -d $B/test-obj src/com/radar/jarvis/core/*.java src/com/radar/jarvis/core/fin/*.java test/CoreTest.java test/FinTest.java test/MetaApiTest.java test/DisciplineTest.java test/UiTest.java
   PORT=$(python3 -c "import socket;s=socket.socket();s.bind(('127.0.0.1',0));print(s.getsockname()[1])")
   rm -f $B/mock.log; python3 test/mock_anthropic.py $PORT $B/mock.log & MOCK=$!
   sleep 0.6
@@ -50,6 +50,9 @@ if [ "${1:-}" = "test" ]; then
   echo "--- regla de autodisciplina:"
   rm -rf $B/test-disc; set +e; LC_ALL=C.UTF-8 java -Dfile.encoding=UTF-8 -cp $B/test-obj DisciplineTest $B/test-disc; rc4=$?; set -e
   [ $rc4 -ne 0 ] && rc=$rc4
+  echo "--- órdenes de pantalla:"
+  set +e; LC_ALL=C.UTF-8 java -Dfile.encoding=UTF-8 -cp $B/test-obj UiTest; rc5=$?; set -e
+  [ $rc5 -ne 0 ] && rc=$rc5
   kill $MOCK
   echo "--- lo que vio la API simulada en cada petición:"; sort $B/mock.log | uniq -c
   exit $rc

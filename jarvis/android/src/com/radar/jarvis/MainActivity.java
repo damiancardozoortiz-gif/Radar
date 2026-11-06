@@ -20,7 +20,10 @@ import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.inputmethod.EditorInfo;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -30,6 +33,7 @@ import android.widget.Toast;
 import com.radar.jarvis.core.Brain;
 import com.radar.jarvis.core.Greeting;
 import com.radar.jarvis.core.Json;
+import com.radar.jarvis.core.UiCommands;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -42,12 +46,17 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-/** Pantalla principal de JARVIS: reactor, chat, micrófono, cámara, archivos, RADAR, panel y PAUSA. */
+/** Pantalla principal de JARVIS 3.0: holograma a pantalla completa (pantalla limpia), ventanas flotantes
+ *  (chat, resultados, historial, editor) que solo aparecen cuando usted las pide, por voz o con su icono. */
 public class MainActivity extends Activity {
     static final int REQ_CAMERA = 11, REQ_FILE = 12, REQ_PERM = 13;
     private Brain brain;
-    private Reactor reactor;
-    private LinearLayout chat;
+    private Hologram holo;
+    private WindowHost windows;
+    private LinearLayout chat, chatWin, results, historyBox;
+    private ScrollView resultsScroll, historyScroll;
+    private TextView chatIcon, resultsIcon, thinkingLine;
+    private boolean unseenChat, unseenResults;
     private ScrollView chatScroll;
     private EditText input;
     private TextView status;
@@ -140,62 +149,149 @@ public class MainActivity extends Activity {
 
     // ================================================================== interfaz
     private void build() {
-        LinearLayout root = Ui.col(this);
+        FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Ui.BG);
-        int pad = Ui.dp(this, 12);
-        root.setPadding(pad, Ui.dp(this, 10), pad, pad);
+        int pad = Ui.dp(this, 10);
 
-        LinearLayout top = Ui.row(this);
-        top.addView(Ui.mono(this, "J.A.R.V.I.S.", 13, Ui.TEXT), Ui.lp(0, -2, 1));
+        holo = new Hologram(this);
+        holo.voice = JarvisApp.voice(this);
+        root.addView(holo, new FrameLayout.LayoutParams(-1, -1));
+
         status = Ui.mono(this, "", 10, Ui.DIM);
-        status.setGravity(Gravity.END);
-        top.addView(status, Ui.lp(0, -2, 2));
-        root.addView(top);
+        status.setGravity(Gravity.CENTER_HORIZONTAL);
+        FrameLayout.LayoutParams sp = new FrameLayout.LayoutParams(-1, -2, Gravity.TOP);
+        sp.topMargin = pad;
+        root.addView(status, sp);
 
-        reactor = new Reactor(this);
-        root.addView(reactor, Ui.lp(-1, Ui.dp(this, 190), 0));
-
+        // contenido de las ventanas (se crean una vez: cerrar una ventana no borra nada)
         chatScroll = new ScrollView(this);
         chat = Ui.col(this);
         chatScroll.addView(chat);
-        chatScroll.setBackground(Ui.box(this, Ui.PANEL, Ui.LINE, 10));
-        chatScroll.setPadding(Ui.dp(this, 10), Ui.dp(this, 8), Ui.dp(this, 10), Ui.dp(this, 8));
-        root.addView(chatScroll, Ui.lp(-1, 0, 1));
-
+        chatWin = Ui.col(this);
+        chatWin.addView(chatScroll, Ui.lp(-1, 0, 1));
         LinearLayout in = Ui.row(this);
         input = new EditText(this);
-        input.setHint("Escribe una orden…");
+        input.setHint("Escriba una orden…");
         input.setHintTextColor(Ui.DIM);
         input.setTextColor(Ui.TEXT);
         input.setSingleLine(true);
         input.setImeOptions(EditorInfo.IME_ACTION_SEND);
         input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
-        input.setBackground(Ui.box(this, Ui.PANEL, Ui.LINE, 20));
+        input.setBackground(Ui.box(this, Ui.BG, Ui.LINE, 20));
         input.setPadding(Ui.dp(this, 14), Ui.dp(this, 10), Ui.dp(this, 14), Ui.dp(this, 10));
         input.setOnEditorActionListener(new TextView.OnEditorActionListener() {
             public boolean onEditorAction(TextView v, int id, KeyEvent e) { send(); return true; }
         });
         in.addView(input, Ui.lp(0, -2, 1));
         in.addView(Ui.button(this, "Enviar", Ui.ACCENT, new View.OnClickListener() { public void onClick(View v) { send(); } }));
-        root.addView(in, Ui.margins(this, 0, 8, 0, 0));
+        chatWin.addView(in, Ui.margins(this, 0, 6, 0, 0));
+        resultsScroll = new ScrollView(this);
+        results = Ui.col(this);
+        results.addView(Ui.text(this, "Aquí quedan las investigaciones, informes y análisis. Nada se abre solo.", 12, Ui.DIM));
+        resultsScroll.addView(results);
+        historyScroll = new ScrollView(this);
+        historyBox = Ui.col(this);
+        historyScroll.addView(historyBox);
 
+        LinearLayout dock = Ui.row(this);
+        HorizontalScrollView dockScroll = new HorizontalScrollView(this);
+        dockScroll.addView(dock);
+        windows = new WindowHost(this, dock);
+        windows.setListener(new WindowHost.Listener() { public void changed() { badges(); } });
+        root.addView(windows, new FrameLayout.LayoutParams(-1, -1));
+
+        LinearLayout bottom = Ui.col(this);
+        bottom.addView(dockScroll, Ui.margins(this, 0, 0, 0, 6));
         HorizontalScrollView hs = new HorizontalScrollView(this);
+        hs.setHorizontalScrollBarEnabled(false);
         LinearLayout bar = Ui.row(this);
-        bar.addView(Ui.button(this, "🎤 Hablar", Ui.ACCENT, new View.OnClickListener() { public void onClick(View v) { micToggle(); } }));
-        bar.addView(gap()); bar.addView(Ui.button(this, "📷 Cámara", Ui.TEXT, new View.OnClickListener() { public void onClick(View v) { camera(); } }));
-        bar.addView(gap()); bar.addView(Ui.button(this, "📁 Archivo", Ui.TEXT, new View.OnClickListener() { public void onClick(View v) { pickFile(); } }));
-        bar.addView(gap()); bar.addView(Ui.button(this, "📈 Finanzas", Ui.TEXT, new View.OnClickListener() { public void onClick(View v) { finance(); } }));
-        bar.addView(gap()); bar.addView(Ui.button(this, "📡 RADAR", Ui.TEXT, new View.OnClickListener() { public void onClick(View v) { radar(); } }));
-        bar.addView(gap());
-        voiceBtn = Ui.button(this, "🔊 Voz", Ui.TEXT, new View.OnClickListener() { public void onClick(View v) { toggleVoice(); } });
+        bar.addView(icon("🎤", "Hablar", new View.OnClickListener() { public void onClick(View v) { micToggle(); } }));
+        chatIcon = icon("💬", "Chat", new View.OnClickListener() { public void onClick(View v) { toggleWin("chat"); } });
+        bar.addView(chatIcon);
+        resultsIcon = icon("🔎", "Resultados", new View.OnClickListener() { public void onClick(View v) { toggleWin("results"); } });
+        bar.addView(resultsIcon);
+        bar.addView(icon("🕘", "Historial", new View.OnClickListener() { public void onClick(View v) { toggleWin("history"); } }));
+        bar.addView(icon("🎬", "Editor", new View.OnClickListener() { public void onClick(View v) { toggleWin("editor"); } }));
+        bar.addView(icon("📷", "Cámara", new View.OnClickListener() { public void onClick(View v) { camera(); } }));
+        bar.addView(icon("📁", "Archivo", new View.OnClickListener() { public void onClick(View v) { pickFile(); } }));
+        bar.addView(icon("📈", "Finanzas", new View.OnClickListener() { public void onClick(View v) { finance(); } }));
+        bar.addView(icon("📡", "RADAR", new View.OnClickListener() { public void onClick(View v) { radar(); } }));
+        voiceBtn = icon("🔊", "Voz", new View.OnClickListener() { public void onClick(View v) { toggleVoice(); } });
         bar.addView(voiceBtn);
-        bar.addView(gap()); bar.addView(Ui.button(this, "⚙ Panel", Ui.TEXT, new View.OnClickListener() { public void onClick(View v) { panel(); } }));
-        bar.addView(gap());
-        pauseBtn = Ui.button(this, "⏸ PAUSA", Ui.BAD, new View.OnClickListener() { public void onClick(View v) { togglePause(); } });
+        bar.addView(icon("⚙", "Panel", new View.OnClickListener() { public void onClick(View v) { panel(); } }));
+        pauseBtn = icon("⏸", "PAUSA", new View.OnClickListener() { public void onClick(View v) { togglePause(); } });
+        pauseBtn.setTextColor(Ui.BAD);
         bar.addView(pauseBtn);
         hs.addView(bar);
-        root.addView(hs, Ui.margins(this, 0, 8, 0, 0));
+        bottom.addView(hs);
+        FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
+        bp.leftMargin = pad; bp.rightMargin = pad; bp.bottomMargin = pad;
+        root.addView(bottom, bp);
         setContentView(root);
+    }
+
+    private TextView icon(String glyph, String label, View.OnClickListener l) {
+        TextView t = Ui.text(this, glyph + "\n" + label, 11, Ui.TEXT);
+        t.setGravity(Gravity.CENTER);
+        t.setPadding(Ui.dp(this, 10), Ui.dp(this, 6), Ui.dp(this, 10), Ui.dp(this, 6));
+        t.setBackground(Ui.box(this, (0xB0 << 24) | (Ui.PANEL & 0xFFFFFF), Ui.LINE, Ui.dp(this, 14)));
+        t.setOnClickListener(l);
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-2, -2);
+        p.rightMargin = Ui.dp(this, 6);
+        t.setLayoutParams(p);
+        return t;
+    }
+
+    // ================================================================== ventanas (solo cuando usted las pide)
+    private void toggleWin(String id) {
+        if (windows.isVisible(id)) windows.close(id); else openWin(id);
+    }
+
+    private void openWin(String id) {
+        if ("chat".equals(id)) { unseenChat = false; windows.open("chat", "Chat", chatWin); chatScroll.post(new Runnable() { public void run() { chatScroll.fullScroll(View.FOCUS_DOWN); } }); }
+        else if ("results".equals(id)) { unseenResults = false; windows.open("results", "Resultados", resultsScroll); }
+        else if ("history".equals(id)) { fillHistory(); windows.open("history", "Historial", historyScroll); }
+        else if ("editor".equals(id)) {
+            LinearLayout e = Ui.col(this);
+            e.addView(Ui.text(this, "Editor de vídeo: TODAVÍA NO DISPONIBLE.\n\nSe construye en la fase 5 de JARVIS 3.0 (importar, recortar, unir, "
+                    + "subtítulos, 9:16 y 16:9, exportar) con los componentes de vídeo de Android. No se muestra una maqueta.", 13, Ui.TEXT));
+            windows.open("editor", "Editor de vídeo", e);
+        }
+        else if ("panel".equals(id)) panel();
+        badges();
+    }
+
+    private void fillHistory() {
+        historyBox.removeAllViews();
+        if (brain == null) return;
+        List<String> l = brain.tail("acciones.jsonl", 60);
+        if (l.isEmpty()) historyBox.addView(Ui.text(this, "Sin actividad registrada.", 12, Ui.DIM));
+        for (int i = l.size() - 1; i >= 0; i--) {
+            String line = l.get(i);
+            try {
+                Map<String, Object> m = Json.obj(Json.parse(line));
+                historyBox.addView(Ui.text(this, m.get("fecha") + " · " + m.get("tipo") + " · " + m.get("detalle"), 12, Ui.TEXT), Ui.margins(this, 0, 3, 0, 0));
+            } catch (Exception e) { historyBox.addView(Ui.text(this, line, 11, Ui.DIM)); }
+        }
+    }
+
+    /** Avisos discretos en los iconos (sin abrir nada). */
+    private void badges() {
+        if (chatIcon == null) return;
+        chatIcon.setText((unseenChat ? "💬•" : "💬") + "\nChat");
+        chatIcon.setTextColor(unseenChat ? Ui.ACCENT : Ui.TEXT);
+        resultsIcon.setText((unseenResults ? "🔎•" : "🔎") + "\nResultados");
+        resultsIcon.setTextColor(unseenResults ? Ui.ACCENT : Ui.TEXT);
+    }
+
+    /** Órdenes de pantalla: se resuelven aquí, sin Claude. */
+    private void uiCommand(Map<String, Object> c) {
+        String op = String.valueOf(c.get("op")), target = String.valueOf(c.get("target"));
+        if ("hide_all".equals(op) || "home".equals(op)) windows.hideAll();
+        else if ("open".equals(op)) openWin(target);
+        else if ("close".equals(op)) windows.close(target);
+        if (brain != null) brain.log("pantalla", op + " " + target);
+        speakThen(String.valueOf(c.get("say")));
     }
 
     private View gap() { View v = new View(this); v.setLayoutParams(new LinearLayout.LayoutParams(Ui.dp(this, 6), 1)); return v; }
@@ -203,7 +299,14 @@ public class MainActivity extends Activity {
     private TextView say(String text, String who) {
         TextView t = Ui.text(this, text, "user".equals(who) ? 14 : 15, "user".equals(who) ? Ui.DIM : "sistema".equals(who) ? Ui.WARN : Ui.TEXT);
         if ("user".equals(who)) t.setGravity(Gravity.END);
+        final String copy = text;
+        t.setOnLongClickListener(new View.OnLongClickListener() { public boolean onLongClick(View v) {
+            ((ClipboardManager) getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("JARVIS", copy));
+            Toast.makeText(MainActivity.this, "Copiado.", Toast.LENGTH_SHORT).show();
+            return true;
+        }});
         chat.addView(t, Ui.margins(this, 0, 6, 0, 0));
+        if (!"user".equals(who) && windows != null && !windows.isVisible("chat")) { unseenChat = true; badges(); }
         chatScroll.post(new Runnable() { public void run() { chatScroll.fullScroll(View.FOCUS_DOWN); } });
         return t;
     }
@@ -217,11 +320,14 @@ public class MainActivity extends Activity {
                 + " · voz: " + (!v.enabled ? "DESACTIVADA" : v.usesElevenLabs() ? "ElevenLabs" + (v.voiceName.isEmpty() ? "" : " (" + v.voiceName + ")") : "Android")
                 + " · servicio: " + (JarvisService.running ? "activo" : "parado")
                 + (brain.isPaused() ? "\nPAUSA ACTIVA" : "");
-        status.setText(s);
+        status.setText(brain.isPaused() ? "PAUSA ACTIVA · nada se ejecuta" : "");
         status.setTextColor(brain.isPaused() ? Ui.BAD : Ui.DIM);
-        pauseBtn.setText(brain.isPaused() ? "▶ Quitar pausa" : "⏸ PAUSA");
-        voiceBtn.setText(v.enabled ? "🔊 Voz" : "🔇 Voz");
-        reactor.state = brain.isPaused() ? "en pausa" : busy ? "pensando" : v.isSpeaking() ? "hablando" : conversation ? "escuchando" : "en espera";
+        pauseBtn.setText(brain.isPaused() ? "▶\nQuitar pausa" : "⏸\nPAUSA");
+        voiceBtn.setText(v.enabled ? "🔊\nVoz" : "🔇\nVoz");
+        holo.state = brain.isPaused() ? "en pausa" : busy ? "pensando" : v.isSpeaking() ? "hablando" : conversation ? "escuchando" : "en espera";
+        holo.alert = JarvisApp.discipline(this).blocked() ? "BLOQUEO FINANCIERO · revise el riesgo" : null;
+        if (thinkingLine != null && !busy) { chat.removeView(thinkingLine); thinkingLine = null; }
+        status.setContentDescription(s);  // detalle completo para lectores de pantalla; a la vista solo el holograma
     }
 
     // ================================================================== conversación
@@ -235,7 +341,12 @@ public class MainActivity extends Activity {
     private void ask(final String q) {
         if (brain == null || busy) return;
         say(q, "user");
-        busy = true; refresh();
+        Map<String, Object> cmd = UiCommands.parse(q);
+        if (cmd != null) { say(String.valueOf(cmd.get("say")), "sistema"); uiCommand(cmd); return; }
+        busy = true;
+        thinkingLine = Ui.mono(this, "◌ JARVIS está pensando…", 11, Ui.ACCENT);
+        chat.addView(thinkingLine);
+        refresh();
         new Thread(new Runnable() { public void run() {
             final Map<String, Object> r = brain.answer(q);
             JarvisApp.ui(new Runnable() { public void run() { busy = false; show(r); } });
@@ -250,22 +361,41 @@ public class MainActivity extends Activity {
         TextView m = Ui.mono(this, meta, 10, "claude".equals(r.get("brain")) ? Ui.ACCENT : Ui.WARN);
         chat.addView(m);
         Object det = r.get("detail");
-        if (det != null && !String.valueOf(det).isEmpty() && !"null".equals(String.valueOf(det))) say(String.valueOf(det), "jarvis").setTextSize(13);
+        if (det != null && !String.valueOf(det).isEmpty() && !"null".equals(String.valueOf(det))) {
+            addResult(String.valueOf(r.get("tool")), String.valueOf(det), r.get("report") == null ? null : String.valueOf(r.get("report")));
+            say("↳ resultado completo en «Resultados»", "sistema").setTextSize(11);
+        }
         if (r.get("warning") != null) say(String.valueOf(r.get("warning")), "sistema");
         if (r.get("approval") != null) approvalCard(Json.obj(r.get("approval")));
         if (r.get("task") != null) say("✓ " + r.get("task"), "sistema");
-        if (r.get("report") != null) {
-            final String path = String.valueOf(r.get("report")), report = String.valueOf(det);
-            chat.addView(Ui.button(this, "Compartir informe…", Ui.ACCENT, new View.OnClickListener() { public void onClick(View v) {
-                startActivity(Intent.createChooser(new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, report), "Compartir informe"));
-                brain.log("informe", "compartido por el usuario");
-            }}), Ui.margins(this, 0, 4, 0, 0));
-        }
         if (Boolean.TRUE.equals(r.get("paused"))) stopAll(false);
         refresh();
         Map<String, Object> dev = Json.obj(r.get("device"));
         if (dev != null) device(dev);
         speakThen(sayTxt);
+    }
+
+    /** Guarda un resultado en la ventana «Resultados» (no la abre: usted la pide). */
+    private void addResult(String tool, final String text, String reportPath) {
+        LinearLayout c = Ui.card(this);
+        c.addView(Ui.mono(this, tool.toUpperCase() + " · " + new java.text.SimpleDateFormat("HH:mm", Locale.US).format(new java.util.Date()), 10, Ui.ACCENT));
+        TextView t = Ui.text(this, text, 13, Ui.TEXT);
+        t.setTextIsSelectable(true);
+        c.addView(t);
+        LinearLayout row = Ui.row(this);
+        row.addView(Ui.button(this, "Copiar", Ui.TEXT, new View.OnClickListener() { public void onClick(View v) {
+            ((ClipboardManager) getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("JARVIS", text));
+            Toast.makeText(MainActivity.this, "Copiado.", Toast.LENGTH_SHORT).show();
+        }}));
+        row.addView(gap());
+        row.addView(Ui.button(this, "Compartir…", Ui.ACCENT, new View.OnClickListener() { public void onClick(View v) {
+            startActivity(Intent.createChooser(new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text), "Compartir"));
+            if (brain != null) brain.log("resultado", "compartido por el usuario");
+        }}));
+        c.addView(row);
+        if (reportPath != null) c.addView(Ui.mono(this, "guardado: " + new File(reportPath).getName(), 10, Ui.DIM));
+        results.addView(c, 1, Ui.margins(this, 0, 8, 0, 0));  // lo más nuevo arriba
+        if (!windows.isVisible("results")) { unseenResults = true; badges(); }
     }
 
     private void speakThen(String text) {
@@ -299,7 +429,7 @@ public class MainActivity extends Activity {
         final Voice v = JarvisApp.voice(this);
         if (!v.usesElevenLabs()) { listenAndroid(); return; }
         new Thread(new Runnable() { public void run() {
-            v.record(new Voice.Level() { public void level(float l, long ms) { reactor.level = l; } }, new Voice.Recorded() {
+            v.record(new Voice.Level() { public void level(float l, long ms) { holo.level = l; } }, new Voice.Recorded() {
                 public void done(final File audio, final String err) {
                     if (audio == null) {
                         JarvisApp.ui(new Runnable() { public void run() {
@@ -328,7 +458,7 @@ public class MainActivity extends Activity {
         recognizer.setRecognitionListener(new RecognitionListener() {
             public void onReadyForSpeech(Bundle p) {}
             public void onBeginningOfSpeech() {}
-            public void onRmsChanged(float db) { reactor.level = Math.max(0, Math.min(1, db / 10f)); }
+            public void onRmsChanged(float db) { holo.level = Math.max(0, Math.min(1, db / 10f)); }
             public void onBufferReceived(byte[] b) {}
             public void onEndOfSpeech() {}
             public void onError(int e) { if (conversation && e != SpeechRecognizer.ERROR_CLIENT) { conversation = false; say("No te he oído. Pulsa Hablar cuando quieras.", "sistema"); } refresh(); }
@@ -377,7 +507,7 @@ public class MainActivity extends Activity {
         Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         i.addCategory(Intent.CATEGORY_OPENABLE);
         i.setType("*/*");
-        i.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"image/*", "text/*", "application/json"});
+        i.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"image/*", "text/*", "application/json", "application/pdf"});
         startActivityForResult(i, REQ_FILE);
     }
 
@@ -431,6 +561,7 @@ public class MainActivity extends Activity {
             final Uri uri = data.getData();
             String type = getContentResolver().getType(uri);
             if (type != null && type.startsWith("image/")) visionUri(uri);
+            else if ("application/pdf".equals(type)) readPdf(uri);
             else readTextDoc(uri);
         }
     }
@@ -483,6 +614,23 @@ public class MainActivity extends Activity {
         }}).start();
     }
 
+    private void readPdf(final Uri uri) {
+        busy = true; refresh();
+        new Thread(new Runnable() { public void run() {
+            try {
+                InputStream in = getContentResolver().openInputStream(uri);
+                ByteArrayOutputStream b = new ByteArrayOutputStream();
+                byte[] buf = new byte[16384]; int n; long total = 0;
+                while ((n = in.read(buf)) > 0) { total += n; if (total > 30_000_000) throw new java.io.IOException("el PDF pasa de 30 MB"); b.write(buf, 0, n); }
+                in.close();
+                final Map<String, Object> r = brain.pdf(String.valueOf(uri.getLastPathSegment()), b.toByteArray());
+                JarvisApp.ui(new Runnable() { public void run() { busy = false; say("PDF elegido", "user"); show(r); } });
+            } catch (final Exception e) {
+                JarvisApp.ui(new Runnable() { public void run() { busy = false; say("No pude leer el PDF: " + e.getMessage(), "sistema"); refresh(); } });
+            }
+        }}).start();
+    }
+
     static byte[] jpegSmall(Bitmap bm) {
         float s = Math.min(1f, 1600f / Math.max(bm.getWidth(), bm.getHeight()));
         Bitmap sc = s < 1 ? Bitmap.createScaledBitmap(bm, Math.round(bm.getWidth() * s), Math.round(bm.getHeight() * s), true) : bm;
@@ -502,6 +650,7 @@ public class MainActivity extends Activity {
         row.addView(Ui.button(this, "Descartar", Ui.TEXT, new View.OnClickListener() { public void onClick(View v) { decide(c, row, d, false); } }));
         c.addView(row);
         chat.addView(c, Ui.margins(this, 0, 8, 0, 0));
+        if (windows != null && !windows.isVisible("chat")) { unseenChat = true; badges(); }  // borrador pendiente: aviso en el icono, sin abrir nada
     }
 
     private void decide(LinearLayout card, LinearLayout row, final Map<String, Object> d, boolean ok) {
@@ -721,7 +870,7 @@ public class MainActivity extends Activity {
             startService(i.setAction(JarvisService.ACTION_STOP));
             say("Servicio detenido.", "sistema");
         }
-        reactor.postDelayed(new Runnable() { public void run() { refresh(); } }, 600);
+        holo.postDelayed(new Runnable() { public void run() { refresh(); } }, 600);
     }
 
     @Override public void onRequestPermissionsResult(int code, String[] perms, int[] res) {

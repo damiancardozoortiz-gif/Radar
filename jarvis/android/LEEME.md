@@ -61,3 +61,17 @@ desinstalar la versión anterior antes de instalar la nueva.
   confirmar la revisión del riesgo. El volumen nunca supera el que fija el riesgo y no sube tras una pérdida.
 - Registro de cada operación cerrada con los 15 datos pedidos; Claude la analiza y el aprendizaje se guarda y se da
   al estratega en los análisis siguientes. Panel con acumulados DEMO y REAL por separado.
+
+## JARVIS 3.0 · fases 1 y 2 (en curso)
+- Pantalla limpia: holograma a pantalla completa (`Hologram`): respira en espera, ondas al escuchar, giro y puntos al
+  pensar, boca y anillos que siguen el volumen REAL del audio de ElevenLabs (`Voice.outLevel`, Visualizer; si el teléfono
+  no lo permite, pulso suave), rojo en PAUSA y alerta roja con el bloqueo financiero.
+- Ventanas flotantes (`WindowHost`): aparecen con animación, semitransparentes, se arrastran por la barra, se minimizan
+  al dock, se expanden y se cierran sin perder el contenido. Chat, Resultados, Historial y Editor.
+- Nada se abre solo: las respuestas largas van a «Resultados» y el icono avisa (•). Copiar: pulsación larga en el chat.
+- Órdenes de pantalla resueltas en el teléfono, sin Claude (`core/UiCommands`): «abre el chat», «muéstrame la
+  investigación», «abre el editor», «oculta todas las ventanas», «vuelve a la pantalla principal»…
+- Investigador: búsqueda web + lectura de páginas (`web_fetch_20260209`), proceso de 10 pasos con secciones fijas;
+  la app comprueba cada enlace contra lo que la búsqueda devolvió de verdad, retira los que no salieron de ella y añade
+  el registro real de búsquedas y fuentes. Lee PDF. Guarda aprendizajes en `files/aprendizaje/`.
+- Pendiente: Finanzas, Cámara y RADAR siguen siendo pantallas propias (no ventanas); editor de vídeo; laboratorio.

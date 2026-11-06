@@ -2,7 +2,7 @@
 <!-- JARVIS para Android. Cada permiso se pide en tiempo de ejecución, de uno en uno y solo desde el asistente
      o cuando una función lo necesita. INTERNET, FOREGROUND_SERVICE, WAKE_LOCK y VIBRATE los concede Android al instalar. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.radar.jarvis" android:versionCode="4" android:versionName="1.3-debug">
+    package="com.radar.jarvis" android:versionCode="5" android:versionName="3.0-fase2-debug">
 
     <uses-sdk android:minSdkVersion="23" android:targetSdkVersion="29" />
 
@@ -16,6 +16,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />

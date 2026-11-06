@@ -5,6 +5,7 @@ import android.media.AudioFormat;
 import android.media.AudioManager;
 import android.media.AudioRecord;
 import android.media.MediaPlayer;
+import android.media.audiofx.Visualizer;
 import android.media.MediaRecorder;
 import android.media.audiofx.AcousticEchoCanceler;
 import android.os.Handler;
@@ -52,6 +53,9 @@ public final class Voice {
     private final Handler main = new Handler(Looper.getMainLooper());
     private MediaRecorder rec;
     private MediaPlayer player;
+    private Visualizer viz;
+    /** Volumen real de la voz que suena (0..1), para sincronizar el holograma. 0 si no se puede medir. */
+    public volatile float outLevel = 0;
     private TextToSpeech tts;
     private boolean ttsReady;
     private volatile boolean recording, cancelled, bargeStop, simple;
@@ -258,6 +262,7 @@ public final class Voice {
             player.setVolume(volume, volume);
             player.prepare();
             player.start();
+            meter(player.getAudioSessionId());
             startBargeIn();
         } catch (Exception e) {
             lastError = "no pude reproducir el audio";
@@ -281,7 +286,33 @@ public final class Voice {
         tts.speak(text, TextToSpeech.QUEUE_FLUSH, p);
     }
 
+    /** Mide la forma de onda del audio que reproduce JARVIS (necesita el permiso de micrófono en Android). */
+    private void meter(int session) {
+        releaseMeter();
+        if (!Perms.granted(ctx, "android.permission.RECORD_AUDIO")) return;
+        try {
+            viz = new Visualizer(session);
+            viz.setCaptureSize(Visualizer.getCaptureSizeRange()[0]);
+            viz.setDataCaptureListener(new Visualizer.OnDataCaptureListener() {
+                public void onWaveFormDataCapture(Visualizer v, byte[] wf, int rate) {
+                    double sum = 0;
+                    for (byte b : wf) { int x = (b & 0xFF) - 128; sum += x * x; }
+                    float rms = (float) Math.sqrt(sum / Math.max(1, wf.length)) / 128f;
+                    outLevel = Math.min(1f, rms * 3.2f);
+                }
+                public void onFftDataCapture(Visualizer v, byte[] fft, int rate) {}
+            }, Math.min(Visualizer.getMaxCaptureRate(), 20000), true, false);
+            viz.setEnabled(true);
+        } catch (Throwable e) { viz = null; }  // algunos teléfonos no lo permiten: el holograma usa un pulso suave
+    }
+
+    private void releaseMeter() {
+        if (viz != null) { try { viz.setEnabled(false); viz.release(); } catch (Throwable ignored) {} viz = null; }
+        outLevel = 0;
+    }
+
     public void stopSpeaking() {
+        releaseMeter();
         bargeStop = true;
         if (player != null) { try { player.stop(); } catch (Exception ignored) {} player.release(); player = null; }
         if (tts != null) tts.stop();

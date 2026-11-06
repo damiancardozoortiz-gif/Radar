@@ -30,7 +30,17 @@ class H(BaseHTTPRequestHandler):
         elif "Recuerda" in text: rep = {"decir": "He guardado: la cita del dentista es el jueves.", "detalle": "", "recordar": "la cita del dentista es el jueves"}
         elif "borrador" in text: rep = {"decir": "Borrador listo.", "detalle": "**Borrador**\nHola Ricardo, ¿te va el jueves?", "recordar": None}
         else: rep = {"decir": f"Respuesta simulada número {len(body['messages'])}.", "detalle": "", "recordar": None}
-        out = {"type": "message", "stop_reason": "end_turn", "content": [{"type": "thinking", "thinking": ""}, {"type": "text", "text": json.dumps(rep, ensure_ascii=False)}]}
+        blocks = [{"type": "thinking", "thinking": ""}]
+        if "web_fetch_20260209" in tools and "investig" in text.lower():  # investigación: búsqueda real simulada + un enlace inventado
+            blocks += [{"type": "server_tool_use", "id": "s1", "name": "web_search", "input": {"query": "producto opiniones 2026"}},
+                       {"type": "web_search_tool_result", "tool_use_id": "s1", "content": [
+                           {"type": "web_search_result", "url": "https://fuente-a.org/analisis", "title": "Análisis A"},
+                           {"type": "web_search_result", "url": "https://www.fuente-b.com/precios/", "title": "Precios B"}]},
+                       {"type": "server_tool_use", "id": "s2", "name": "web_fetch", "input": {"url": "https://fuente-a.org/analisis"}},
+                       {"type": "web_fetch_tool_result", "tool_use_id": "s2", "content": {"type": "web_fetch_result", "url": "https://fuente-a.org/analisis",
+                           "content": {"type": "document", "title": "Análisis A (completo)"}}}]
+            rep = {"decir": "El producto tiene buenas opiniones.", "detalle": "## Hallazgos\nPrecio 120 € [1] https://fuente-b.com/precios.\nValoración 4,5 [2] https://inventada.net/dato\n## Fuentes\n[1] https://fuente-a.org/analisis", "recordar": None, "aprender": "Comparar precios en dos tiendas."}
+        out = {"type": "message", "stop_reason": "end_turn", "content": blocks + [{"type": "text", "text": json.dumps(rep, ensure_ascii=False)}]}
         data = json.dumps(out).encode(); code = 400 if problems else 200
         self.send_response(code); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data)
 ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
