@@ -89,6 +89,16 @@ public class CoreTest {
         check(r.get("report") != null && new File(String.valueOf(r.get("report"))).exists(), "el informe se guarda en el teléfono");
         r = b.answer("agregá una tarea: llamar al banco");
         check(b.tasks().size() == 1 && "llamar al banco".equals(b.tasks().get(0).get("texto")), "tarea creada y guardada");
+        // ---- fase 4: aprender, reconocer lo que no sabe, experiencia
+        r = b.answer("JARVIS, aprendé a convertir segundos en formato reloj");
+        check(r.get("labCandidate") != null && b.lab.all().size() == 1 && "candidata".equals(b.lab.all().get(0).get("estado")) && b.lab.active().isEmpty(),
+                "«aprendé a…»: la herramienta queda CANDIDATA en el laboratorio, sin activarse");
+        r = b.answer("JARVIS, editá este vídeo para TikTok");
+        check("editar vídeo".equals(r.get("gap")) && !b.lab.proposals().isEmpty(), "reconoce lo que no sabe y lo anota como propuesta (sin investigar solo)");
+        r = b.answer("JARVIS, investigá este producto otra vez");
+        String ml2 = new String(java.nio.file.Files.readAllBytes(new File(a[3]).toPath()), "UTF-8");
+        check(ml2.contains("\"lessons\": true") && ml2.contains("\"capabilities\": true"), "usa los aprendizajes previos parecidos y conoce sus capacidades");
+        check(((Number) b.experience.stats().get("tareas")).intValue() >= 5, "cada tarea queda registrada en la experiencia (" + b.experience.stats().get("tareas") + ")");
         r = b.analyzeTrade(com.radar.jarvis.core.Json.map("instrumento", "EURUSD", "resultado_neto", -35.0), java.util.Arrays.asList("las rupturas sin volumen fallan"));
         check("No entrar contra la tendencia de H4.".equals(r.get("lesson")) && "claude".equals(r.get("brain")), "aprendizaje tras una operación: lección extraída");
         b.setPause(true, "prueba");

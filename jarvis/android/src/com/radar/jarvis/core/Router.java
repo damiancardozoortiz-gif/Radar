@@ -22,6 +22,7 @@ public final class Router {
     public static String tool(String question, Vault vault) {
         String qs = clean(question);
         if (has(qs, "(agrega|agrega|anade|anadi|crea|crea|apunta|pon) (una |la )?tarea|mis tareas|lista de tareas|(completa|termina|tacha|marca|borra) (la )?tarea|tareas pendientes")) return "tareas";
+        if (has(qs, "(aprende|aprendas|aprender|ensenate|aprende) a |quiero que aprendas|nueva capacidad|nueva herramienta")) return "aprender";
         if (has(qs, "(prepara|haz|hazme|redacta|elabora|genera|arma|arma) (un |el |una )?(informe|reporte|analisis completo)")) return "informe";
         if (has(qs, "recuerda|recordar|apunta|anota|apuntalo|anotalo|guarda|guardalo|no olvides|memoriza")) return "recordar";
         if (has(qs, "internet|en la web|en la red|busca en google|en google|online|investiga\\w*|averigua\\w*|el mercado|del mercado|este producto|ese producto|cotizacion|noticias|precio actual")) return "investigar_en_la_web";

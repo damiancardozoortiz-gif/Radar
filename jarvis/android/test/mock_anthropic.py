@@ -19,11 +19,16 @@ class H(BaseHTTPRequestHandler):
         text = content if isinstance(content, str) else " ".join(c.get("text", "") for c in content if c.get("type") == "text")
         LOG.write(json.dumps({"problems": problems, "turns": len(body["messages"]), "image": has_image, "fallbacks": body.get("fallbacks"),
                               "beta": self.headers.get("anthropic-beta"), "effort": body.get("output_config", {}).get("effort")}) + "\n"); LOG.flush()
+        LOG.write(json.dumps({"lessons": "aprendizajes y fallos anteriores" in text, "capabilities": "## Capacidades" in body.get("system", "")}) + "\n"); LOG.flush()
         text = text.split("Mensaje:", 1)[1].split("\n", 1)[0] if "Mensaje:" in text else text  # solo la frase del usuario
         if "LENTO" in text: time.sleep(5)
         tools = [t.get("type") for t in body.get("tools", [])]
         LOG.write(json.dumps({"tools": tools, "msg": text[:40]}) + "\n"); LOG.flush()
-        if "operación CERRADA" in text: rep = {"decir": "La salida por stop fue correcta.", "detalle": "## Factores\nEntrada contra la tendencia de H4.", "recordar": None, "aprendizaje": "No entrar contra la tendencia de H4."}
+        if "aprendé a" in text: rep = {"decir": "Preparé una herramienta para convertir segundos.", "detalle": "## Qué falta\nNada nativo.", "recordar": None, "tipo": "herramienta",
+            "herramienta": {"id": "reloj", "nombre": "Segundos a reloj", "descripcion": "segundos → hh:mm:ss", "codigo": "function run(entrada){ var h=Math.floor(entrada/3600),m=Math.floor(entrada%3600/60),s=entrada%60; function p(n){return (n<10?'0':'')+n;} return p(h)+':'+p(m)+':'+p(s); }",
+                            "pruebas": [{"entrada": 0, "esperado": "00:00:00"}, {"entrada": 3661, "esperado": "01:01:01"}, {"entrada": 59, "esperado": "00:00:59"}], "por_que": "división entera"}}
+        elif "editá este vídeo" in text: rep = {"decir": "Todavía no sé editar vídeo, señor Rafael.", "detalle": "", "recordar": None, "capacidad_faltante": "editar vídeo"}
+        elif "operación CERRADA" in text: rep = {"decir": "La salida por stop fue correcta.", "detalle": "## Factores\nEntrada contra la tendencia de H4.", "recordar": None, "aprendizaje": "No entrar contra la tendencia de H4."}
         elif has_image: rep = {"decir": "Veo un cuadrado rojo.", "detalle": "", "recordar": None}
         elif "informe" in text.lower(): rep = {"decir": "Informe listo, señor Rafael.", "detalle": "# Informe\n" + "Hallazgo con fuente https://ejemplo.org. " * 10, "recordar": None}
         elif "tarea" in text.lower(): rep = {"decir": "Tarea creada: llamar al banco.", "detalle": "", "recordar": None, "tarea": {"accion": "crear", "texto": "llamar al banco"}}

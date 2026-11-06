@@ -42,6 +42,9 @@ public final class Brain {
     private final File dir;
     private final Vault.Source assets;
     public final Vault vault;
+    /** Aprendizaje por experiencia y laboratorio de automejora (supervisado). */
+    public final Experience experience;
+    public final Lab lab;
     public volatile String apiKey = "", model = DEFAULT_MODEL, baseUrl = "https://api.anthropic.com";
     public Http http = new Http() { public HttpURLConnection open(String u) throws IOException { return (HttpURLConnection) new URL(u).openConnection(); } };
 
@@ -62,6 +65,8 @@ public final class Brain {
         this.vault = new Vault().load(assets, "vault");
         new File(dir, "memory").mkdirs();
         new File(dir, "estado").mkdirs();
+        this.experience = new Experience(dir);
+        this.lab = new Lab(dir);
         String t = new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date());
         try {
             Object meta = Json.parse(assets.read("meta.json"));
@@ -144,8 +149,13 @@ public final class Brain {
                     messages.add(Json.map("role", "assistant", "content", h[1]));
                 }
             }
-            messages.add(Json.map("role", "user", "content", compose(question, tool, context)));
-            boolean web = "investigar_en_la_web".equals(tool) || "informe".equals(tool);
+            String extra = "";
+            List<String> prev = experience.relevant(question, 4);
+            if (!prev.isEmpty()) extra += "\n\n" + untrusted("aprendizajes y fallos anteriores parecidos (úsalos para no repetir errores)", "- " + join2(prev, "\n- "));
+            String labTools = lab.promptList();
+            if (!labTools.isEmpty()) extra += "\n\n" + labTools;
+            messages.add(Json.map("role", "user", "content", compose(question, tool, context) + extra));
+            boolean web = "investigar_en_la_web".equals(tool) || "informe".equals(tool) || "aprender".equals(tool);
             String text = call(messages, systemPrompt(), web);
             if (paused) return paused(question);  // respuesta tardía: la pausa llegó mientras pensaba
             Map<String, Object> rep = parseReply(text);
@@ -165,8 +175,16 @@ public final class Brain {
             if (web) {
                 det = verifySources(det, trace.get(), out);
                 Object learn = rep.get("aprender");
-                if (learn instanceof String && !((String) learn).trim().isEmpty()) saveLearning("investigacion", question, (String) learn);
+                if (learn instanceof String && !((String) learn).trim().isEmpty()) saveLearning("aprender".equals(tool) ? "capacidades" : "investigacion", question, (String) learn);
             }
+            Object gap = rep.get("capacidad_faltante");
+            if (gap instanceof String && !((String) gap).trim().isEmpty()) {  // reconoce que no sabe: lo anota como propuesta, no investiga solo
+                out.put("gap", gap);
+                lab.addProposal("capacidad que falta", (String) gap, "Pedido: " + question + "\n\nPara investigarlo: «JARVIS, aprendé a " + gap + "».");
+            }
+            Map<String, Object> use = Json.obj(rep.get("usar_herramienta"));
+            if (use != null && use.get("id") != null && lab.active().containsKey(String.valueOf(use.get("id")))) out.put("useTool", use);
+            if ("aprender".equals(tool)) learned(question, rep, det, out);
             out.put("say", say); out.put("detail", det); out.put("saved", saved);
             if ("informe".equals(tool) && det.length() > 200) {
                 String file = saveReport(question, det);
@@ -200,6 +218,7 @@ public final class Brain {
         if (paused) return paused(question);
         lastMs = System.currentTimeMillis() - t0;
         out.put("ms", lastMs);
+        experience.record(question, tool, "claude".equals(out.get("brain")), "claude".equals(out.get("brain")) ? null : lastError, lastMs);
         if ("claude".equals(out.get("brain"))) synchronized (history) {  // el respaldo no es Claude: no va al historial
             history.add(new String[]{question, String.valueOf(out.get("say"))});
             while (history.size() > MAX_TURNS) history.removeFirst();
@@ -327,15 +346,76 @@ public final class Brain {
     }
 
     /** Aprendizaje útil de una tarea (se registra; se usa en las siguientes). */
-    void saveLearning(String area, String task, String lesson) {
+    void saveLearning(String area, String task, String lesson) { experience.learn(area, task, lesson); }
+
+    static String join2(List<String> l, String sep) { StringBuilder b = new StringBuilder(); for (String x : l) b.append(b.length() == 0 ? "" : sep).append(x); return b.toString(); }
+
+    /** Instrucciones para «aprendé a …»: investigar, comparar, diseñar y, si es posible, preparar la herramienta con pruebas. */
+    static final String LEARN = "APRENDER UNA CAPACIDAD NUEVA. El señor Rafael quiere que JARVIS aprenda lo que pide el mensaje. Proceso: "
+            + "1) reconoce con honestidad qué no puedes hacer hoy y qué conocimiento o herramienta falta; 2) investiga con web_search/web_fetch "
+            + "documentación oficial y soluciones técnicas; 3) compara alternativas; 4) diseña una solución compatible con Android; 5) decide el tipo:\n"
+            + "- \"herramienta\": se resuelve con una función JavaScript PURA (cálculo o transformación de datos: entrada JSON → salida JSON). "
+            + "Sin red, sin archivos, sin DOM, sin temporizadores. Prohibido usar: " + java.util.Arrays.toString(Lab.FORBIDDEN)
+            + ", comillas invertidas y acceso por texto entre corchetes. Debe definir function run(entrada). Entonces devuelve \"herramienta\": "
+            + "{\"id\": \"nombre-corto\", \"nombre\": ..., \"descripcion\": \"qué hace y qué entrada espera\", \"codigo\": \"function run(entrada){...}\", "
+            + "\"pruebas\": [{\"entrada\": ..., \"esperado\": ...}, …al menos 3, con casos límite], \"por_que\": \"por qué funciona\"}.\n"
+            + "- \"modulo_nativo\": hace falta código Android (cámara, vídeo, sensores, otra API). Entonces NO escribas la herramienta: en \"detalle\" "
+            + "deja la propuesta de implementación para el desarrollador (APIs Android concretas, pasos, riesgos, pruebas).\n"
+            + "- \"no_viable\": explica por qué.\n"
+            + "Devuelve \"tipo\". En \"detalle\" (markdown): ## Qué falta · ## Investigación (con fuentes) · ## Alternativas · ## Diseño · ## Plan de pruebas. "
+            + "Nada se activa sin la aprobación del señor Rafael: dilo. En \"decir\", una frase. Añade \"aprender\" con una frase reutilizable o null.";
+
+    /** Tras «aprendé a …»: la herramienta va al laboratorio como candidata; lo demás, como propuesta. */
+    private void learned(String question, Map<String, Object> rep, String det, Map<String, Object> out) {
+        String tipo = String.valueOf(rep.get("tipo"));
+        Map<String, Object> h = Json.obj(rep.get("herramienta"));
         try {
-            File d = new File(dir, "aprendizaje");
-            d.mkdirs();
-            java.io.FileOutputStream o = new java.io.FileOutputStream(new File(d, area + ".jsonl"), true);
-            o.write((Json.write(Json.map("fecha", new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(new Date()), "tarea", task, "aprendizaje", lesson.trim())) + "\n").getBytes(UTF8));
-            o.close();
-        } catch (IOException e) { error("aprendizaje: " + e.getMessage()); }
+            if ("herramienta".equals(tipo) && h != null) {
+                Map<String, Object> c = lab.addCandidate(Json.str(h.get("id")), String.valueOf(h.get("nombre")), String.valueOf(h.get("descripcion")),
+                        Json.str(h.get("codigo")), Json.arr(h.get("pruebas")), Json.str(h.get("por_que")), question);
+                out.put("labCandidate", c);
+            } else {
+                out.put("proposal", lab.addProposal("modulo_nativo".equals(tipo) ? "módulo nativo (necesita una APK nueva)" : "no viable / sin tipo", question, det));
+            }
+        } catch (IOException e) {
+            out.put("warning", "No pude preparar la herramienta en el laboratorio: " + e.getMessage());
+            try { out.put("proposal", lab.addProposal("herramienta no válida", question, det + "\n\nError: " + e.getMessage())); } catch (IOException ignored) {}
+        }
     }
+
+    /** Laboratorio: analiza capacidades y límites con la experiencia registrada, y propone mejoras (no cambia nada). */
+    public Map<String, Object> analyzeLimits() {
+        if (paused) return paused("laboratorio");
+        long t0 = System.currentTimeMillis();
+        String msg = "Analiza tus capacidades actuales y tus límites como JARVIS en esta app, con estos datos REALES:\n"
+                + "Capacidades: " + CAPABILITIES + "\nHerramientas del laboratorio activas: " + Json.write(lab.active().keySet())
+                + "\nExperiencia registrada: " + Json.write(experience.stats())
+                + "\nEn \"detalle\" (markdown): ## Lo que funciona · ## Límites detectados (con el dato que lo muestra) · ## Mejoras propuestas por prioridad "
+                + "(para cada una: herramienta del laboratorio o módulo nativo) · ## Riesgos. No propongas tocar permisos, claves, PAUSA ni límites de riesgo. "
+                + "En \"decir\", una frase. Responde solo con el JSON.";
+        try {
+            String text = call(Json.list(Json.map("role", "user", "content", msg)), systemPrompt());
+            if (paused) return paused("laboratorio");
+            Map<String, Object> rep = parseReply(text);
+            String det = String.valueOf(rep.get("detalle")).trim();
+            String file = lab.addProposal("análisis de capacidades y límites", "Análisis de límites", det);
+            log("laboratorio", "análisis de límites");
+            return Json.map("say", cleanSpeech(String.valueOf(rep.get("decir"))), "detail", det, "proposal", file, "tool", "laboratorio", "brain", "claude",
+                    "ms", System.currentTimeMillis() - t0);
+        } catch (Exception e) {
+            if (paused) return paused("laboratorio");
+            error("laboratorio: " + e.getMessage());
+            return Json.map("say", "No pude analizar mis límites.", "detail", "", "tool", "laboratorio", "brain", "respaldo",
+                    "warning", "Cerebro no disponible (" + e.getMessage() + ").", "ms", System.currentTimeMillis() - t0);
+        }
+    }
+
+    /** Lo que JARVIS puede y no puede hacer hoy (para que reconozca lo que no sabe). */
+    static final String CAPABILITIES = "PUEDO: conversar; investigar en internet (búsqueda y lectura de páginas) con fuentes; informes; leer imágenes, "
+            + "fotos, PDF y texto; memoria; tareas; borradores (no envío nada); abrir apps con confirmación; ubicación; análisis financiero con velas "
+            + "de MT5 (solo lectura); registro y aprendizaje de operaciones; herramientas aprobadas del laboratorio. "
+            + "NO PUEDO (todavía): editar vídeo; enviar correos o mensajes; operar en MT5; controlar otras apps; ejecutar código fuera del laboratorio; "
+            + "cambiar mis permisos, claves o reglas de seguridad (nunca).";
 
     /** Analiza el texto de un documento elegido (datos no confiables). */
     public Map<String, Object> document(String name, String text) {
@@ -514,6 +594,9 @@ public final class Brain {
         b.append("\n\n## Dónde estás\nEstás dentro de la app JARVIS de Android. Las órdenes del teléfono (cámara, abrir apps, ubicación) "
                 + "las ejecuta la app; tú no ejecutas nada. Además de \"decir\", \"detalle\" y \"recordar\", puedes devolver \"tarea\" "
                 + "cuando el mensaje lo indique.");
+        b.append("\n\n## Capacidades\n").append(CAPABILITIES)
+         .append("\nSi te piden algo que no puedes hacer, NO finjas: dilo, explica qué te falta y devuelve además \"capacidad_faltante\": "
+                + "\"<qué capacidad>\" (frase corta). Sugiere «JARVIS, aprendé a …» para que lo investigues; no investigues por tu cuenta.");
         return b.toString();
     }
 
@@ -554,6 +637,7 @@ public final class Brain {
         }
         if ("recordar".equals(tool)) return "Te pide que recuerdes algo. Devuelve en \"recordar\" UNA cosa autocontenida y di exactamente qué guardas.";
         if ("investigar_en_la_web".equals(tool)) return RESEARCH;
+        if ("aprender".equals(tool)) return LEARN;
         if ("informe".equals(tool)) return "Prepara un INFORME completo en \"detalle\" (markdown): resumen ejecutivo, hallazgos, datos con su fuente (URL o archivo), "
                 + "riesgos y recomendaciones. Usa web_search si hace falta información actual. En \"decir\", una frase que resuma el informe.";
         if ("tareas".equals(tool)) {
@@ -579,7 +663,9 @@ public final class Brain {
                 if (o != null && o.get("decir") instanceof String) {
                     Object det = o.get("detalle");
                     return Json.map("decir", o.get("decir"), "detalle", det instanceof String ? det : det == null ? "" : Json.write(det),
-                            "recordar", o.get("recordar"), "tarea", o.get("tarea"), "aprender", o.get("aprender"), "formato", true);
+                            "recordar", o.get("recordar"), "tarea", o.get("tarea"), "aprender", o.get("aprender"),
+                            "capacidad_faltante", o.get("capacidad_faltante"), "usar_herramienta", o.get("usar_herramienta"),
+                            "tipo", o.get("tipo"), "herramienta", o.get("herramienta"), "formato", true);
                 }
             } catch (Exception ignored) {}
         }

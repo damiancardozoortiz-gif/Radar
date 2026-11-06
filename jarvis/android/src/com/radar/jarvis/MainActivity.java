@@ -55,8 +55,11 @@ public class MainActivity extends Activity {
     private WindowHost windows;
     private LinearLayout chat, chatWin, results, historyBox;
     private ScrollView resultsScroll, historyScroll;
-    private TextView chatIcon, resultsIcon, thinkingLine;
-    private boolean unseenChat, unseenResults;
+    private TextView chatIcon, resultsIcon, labIcon, thinkingLine;
+    private boolean unseenChat, unseenResults, unseenLab;
+    private LinearLayout labBox;
+    private ScrollView labScroll;
+    private LabSandbox sandbox;
     private ScrollView chatScroll;
     private EditText input;
     private TextView status;
@@ -192,6 +195,10 @@ public class MainActivity extends Activity {
         historyScroll = new ScrollView(this);
         historyBox = Ui.col(this);
         historyScroll.addView(historyBox);
+        labScroll = new ScrollView(this);
+        labBox = Ui.col(this);
+        labScroll.addView(labBox);
+        sandbox = new LabSandbox(this);
 
         LinearLayout dock = Ui.row(this);
         HorizontalScrollView dockScroll = new HorizontalScrollView(this);
@@ -211,6 +218,8 @@ public class MainActivity extends Activity {
         resultsIcon = icon("🔎", "Resultados", new View.OnClickListener() { public void onClick(View v) { toggleWin("results"); } });
         bar.addView(resultsIcon);
         bar.addView(icon("🕘", "Historial", new View.OnClickListener() { public void onClick(View v) { toggleWin("history"); } }));
+        labIcon = icon("🧪", "Laboratorio", new View.OnClickListener() { public void onClick(View v) { toggleWin("lab"); } });
+        bar.addView(labIcon);
         bar.addView(icon("🎬", "Editor", new View.OnClickListener() { public void onClick(View v) { toggleWin("editor"); } }));
         bar.addView(icon("📷", "Cámara", new View.OnClickListener() { public void onClick(View v) { camera(); } }));
         bar.addView(icon("📁", "Archivo", new View.OnClickListener() { public void onClick(View v) { pickFile(); } }));
@@ -258,6 +267,7 @@ public class MainActivity extends Activity {
             windows.open("editor", "Editor de vídeo", e);
         }
         else if ("panel".equals(id)) panel();
+        else if ("lab".equals(id)) { unseenLab = false; fillLab(); windows.open("lab", "Laboratorio", labScroll); }
         badges();
     }
 
@@ -282,6 +292,8 @@ public class MainActivity extends Activity {
         chatIcon.setTextColor(unseenChat ? Ui.ACCENT : Ui.TEXT);
         resultsIcon.setText((unseenResults ? "🔎•" : "🔎") + "\nResultados");
         resultsIcon.setTextColor(unseenResults ? Ui.ACCENT : Ui.TEXT);
+        labIcon.setText((unseenLab ? "🧪•" : "🧪") + "\nLaboratorio");
+        labIcon.setTextColor(unseenLab ? Ui.ACCENT : Ui.TEXT);
     }
 
     /** Órdenes de pantalla: se resuelven aquí, sin Claude. */
@@ -368,11 +380,209 @@ public class MainActivity extends Activity {
         if (r.get("warning") != null) say(String.valueOf(r.get("warning")), "sistema");
         if (r.get("approval") != null) approvalCard(Json.obj(r.get("approval")));
         if (r.get("task") != null) say("✓ " + r.get("task"), "sistema");
+        if (r.get("labCandidate") != null) testCandidate(Json.obj(r.get("labCandidate")), true);
+        if (r.get("useTool") != null) useTool(Json.obj(r.get("useTool")));
+        if (r.get("proposal") != null || r.get("gap") != null) { unseenLab = true; badges(); }
         if (Boolean.TRUE.equals(r.get("paused"))) stopAll(false);
         refresh();
         Map<String, Object> dev = Json.obj(r.get("device"));
         if (dev != null) device(dev);
         speakThen(sayTxt);
+    }
+
+    // ================================================================== laboratorio de automejora (supervisado)
+    /** Prueba una versión candidata en el aislamiento (WebView sin red) y avisa. No activa nada. */
+    private void testCandidate(final Map<String, Object> c, final boolean announce) {
+        if (c == null || brain == null) return;
+        final String id = String.valueOf(c.get("id"));
+        final int v = ((Number) c.get("version")).intValue();
+        List<Object> probs = Json.arr(c.get("problemas"));
+        if (probs != null && !probs.isEmpty()) {
+            say("La herramienta «" + id + "» no pasó el control de seguridad: " + probs + ". No se prueba ni se activa.", "sistema");
+            unseenLab = true; badges();
+            return;
+        }
+        new Thread(new Runnable() { public void run() {
+            String msg;
+            try {
+                Map<String, Object> t = brain.lab.test(id, v, sandbox);
+                msg = "Herramienta «" + id + "» v" + v + ": pasó " + t.get("pasan") + " de " + t.get("total") + " pruebas"
+                        + (t.get("error") != null ? " (" + t.get("error") + ")" : "") + ". " + (Boolean.TRUE.equals(t.get("ok"))
+                        ? "Revísela en el laboratorio: no se activa sin su aprobación." : "No se puede aprobar así.");
+            } catch (Exception e) { msg = "No pude probar «" + id + "»: " + e.getMessage(); }
+            final String m = msg;
+            JarvisApp.ui(new Runnable() { public void run() {
+                say(m, "sistema");
+                unseenLab = true; badges();
+                if (windows.isVisible("lab")) fillLab();
+                if (announce) speakThen(m.replaceAll("«|»", ""));
+            }});
+        }}).start();
+    }
+
+    private void useTool(final Map<String, Object> u) {
+        if (u == null || brain == null) return;
+        final String id = String.valueOf(u.get("id"));
+        new Thread(new Runnable() { public void run() {
+            String text;
+            try {
+                Map<String, Object> r = brain.lab.use(id, u.get("entrada"), sandbox);
+                text = Boolean.TRUE.equals(r.get("ok")) ? Json.write(r.get("salida")) : "Error: " + r.get("error");
+            } catch (Exception e) { text = "No pude usar la herramienta: " + e.getMessage(); }
+            final String t = text;
+            JarvisApp.ui(new Runnable() { public void run() { addResult("herramienta " + id, t, null); say("Herramienta «" + id + "» ejecutada en el laboratorio.", "sistema"); } });
+        }}).start();
+    }
+
+    private void fillLab() {
+        labBox.removeAllViews();
+        if (brain == null) return;
+        labBox.addView(Ui.text(this, "Aquí JARVIS prepara herramientas nuevas, las prueba aislado (sin red ni acceso al teléfono) y SOLO se activan "
+                + "con su aprobación. Cada cambio guarda un respaldo y queda registrado. Nunca toca permisos, claves, PAUSA ni límites.", 12, Ui.DIM));
+        LinearLayout in = Ui.row(this);
+        final EditText goal = new EditText(this);
+        goal.setHint("¿Qué quiere que aprenda?");
+        goal.setHintTextColor(Ui.DIM); goal.setTextColor(Ui.TEXT); goal.setSingleLine(true);
+        goal.setBackground(Ui.box(this, Ui.BG, Ui.LINE, 16));
+        goal.setPadding(Ui.dp(this, 12), Ui.dp(this, 8), Ui.dp(this, 12), Ui.dp(this, 8));
+        in.addView(goal, Ui.lp(0, -2, 1));
+        in.addView(Ui.button(this, "Investigar", Ui.ACCENT, new View.OnClickListener() { public void onClick(View v) {
+            String g = goal.getText().toString().trim();
+            if (!g.isEmpty()) ask("JARVIS, aprendé a " + g);
+        }}));
+        labBox.addView(in, Ui.margins(this, 0, 8, 0, 0));
+        labBox.addView(Ui.button(this, "Analizar mis capacidades y límites", Ui.TEXT, new View.OnClickListener() { public void onClick(View v) {
+            if (busy) return;
+            busy = true; refresh();
+            new Thread(new Runnable() { public void run() {
+                final Map<String, Object> r = brain.analyzeLimits();
+                JarvisApp.ui(new Runnable() { public void run() { busy = false; show(r); fillLab(); } });
+            }}).start();
+        }}), Ui.margins(this, 0, 6, 0, 0));
+
+        Map<String, Object> st = brain.experience.stats();
+        labBox.addView(labTitle("EXPERIENCIA"));
+        labBox.addView(Ui.text(this, st.get("tareas") + " tareas · " + st.get("bien") + " bien · " + st.get("fallos") + " fallos"
+                + (st.get("acierto_pct") != null ? " · acierto " + st.get("acierto_pct") + " %" : "") + " · " + st.get("aprendizajes") + " aprendizajes"
+                + "\nFallos por herramienta: " + st.get("fallos_por_herramienta")
+                + (Json.arr(st.get("errores_repetidos")).isEmpty() ? "" : "\nErrores repetidos: " + st.get("errores_repetidos")), 12, Ui.TEXT));
+
+        labBox.addView(labTitle("HERRAMIENTAS ACTIVAS"));
+        Map<String, Object> act = brain.lab.active();
+        if (act.isEmpty()) labBox.addView(Ui.text(this, "Ninguna todavía.", 12, Ui.DIM));
+        for (final Map.Entry<String, Object> e : act.entrySet()) {
+            Map<String, Object> m = Json.obj(e.getValue());
+            LinearLayout c = Ui.card(this);
+            c.addView(Ui.mono(this, e.getKey() + " · v" + m.get("version") + " · ACTIVA", 11, Ui.OK));
+            c.addView(Ui.text(this, String.valueOf(m.get("descripcion")), 12, Ui.TEXT));
+            LinearLayout row = Ui.row(this);
+            row.addView(Ui.button(this, "Probar con…", Ui.ACCENT, new View.OnClickListener() { public void onClick(View v) { tryTool(e.getKey()); } }));
+            row.addView(gap());
+            row.addView(Ui.button(this, "Versión anterior", Ui.TEXT, new View.OnClickListener() { public void onClick(View v) {
+                try { say("«" + e.getKey() + "»: " + brain.lab.rollback(e.getKey()) + ".", "sistema"); } catch (Exception x) { say(x.getMessage(), "sistema"); }
+                fillLab();
+            }}));
+            row.addView(gap());
+            row.addView(Ui.button(this, "Desactivar", Ui.BAD, new View.OnClickListener() { public void onClick(View v) {
+                try { brain.lab.deactivate(e.getKey()); } catch (Exception x) { say(x.getMessage(), "sistema"); }
+                fillLab();
+            }}));
+            c.addView(row);
+            labBox.addView(c, Ui.margins(this, 0, 6, 0, 0));
+        }
+
+        labBox.addView(labTitle("VERSIONES PREPARADAS"));
+        int shown = 0;
+        for (final Map<String, Object> m : brain.lab.all()) {
+            String state = String.valueOf(m.get("estado"));
+            if ("activa".equals(state) || shown++ >= 12) continue;
+            final String id = String.valueOf(m.get("id"));
+            final int v = ((Number) m.get("version")).intValue();
+            Map<String, Object> pr = Json.obj(m.get("pruebas"));
+            LinearLayout c = Ui.card(this);
+            c.addView(Ui.mono(this, id + " · v" + v + " · " + state.toUpperCase(), 11, "probada".equals(state) ? Ui.ACCENT : state.startsWith("rechazada") || "fallida".equals(state) ? Ui.BAD : Ui.WARN));
+            c.addView(Ui.text(this, m.get("descripcion") + (m.get("por_que") != null ? "\nPor qué funciona: " + m.get("por_que") : "")
+                    + (pr != null ? "\nPruebas: " + pr.get("pasan") + "/" + pr.get("total") + (pr.get("error") != null ? " · " + pr.get("error") : "") : "")
+                    + (Json.arr(m.get("problemas")) != null && !Json.arr(m.get("problemas")).isEmpty() ? "\nSeguridad: " + m.get("problemas") : ""), 12, Ui.TEXT));
+            LinearLayout row = Ui.row(this);
+            row.addView(Ui.button(this, "Código", Ui.TEXT, new View.OnClickListener() { public void onClick(View x) {
+                new AlertDialog.Builder(MainActivity.this).setTitle(id + " v" + v).setMessage(brain.lab.code(id, v)).setPositiveButton("Cerrar", null).show();
+            }}));
+            row.addView(gap());
+            if ("candidata".equals(state) || "fallida".equals(state)) {
+                row.addView(Ui.button(this, "Probar", Ui.ACCENT, new View.OnClickListener() { public void onClick(View x) {
+                    testCandidate(Json.map("id", id, "version", (long) v, "problemas", new ArrayList<Object>()), false);
+                }}));
+                row.addView(gap());
+            }
+            if ("probada".equals(state)) {
+                row.addView(Ui.button(this, "Aprobar", Ui.OK, new View.OnClickListener() { public void onClick(View x) { approveTool(id, v); } }));
+                row.addView(gap());
+            }
+            if (!state.startsWith("rechazada")) row.addView(Ui.button(this, "Rechazar", Ui.BAD, new View.OnClickListener() { public void onClick(View x) {
+                try { brain.lab.reject(id, v); } catch (Exception e) { say(e.getMessage(), "sistema"); }
+                fillLab();
+            }}));
+            c.addView(row);
+            labBox.addView(c, Ui.margins(this, 0, 6, 0, 0));
+        }
+        if (shown == 0) labBox.addView(Ui.text(this, "Ninguna. Pídale «JARVIS, aprendé a …».", 12, Ui.DIM));
+
+        labBox.addView(labTitle("PROPUESTAS (capacidades que faltan, módulos nativos, análisis)"));
+        List<String> props = brain.lab.proposals();
+        if (props.isEmpty()) labBox.addView(Ui.text(this, "Ninguna.", 12, Ui.DIM));
+        for (int i = 0; i < Math.min(10, props.size()); i++) {
+            final File f = new File(props.get(i));
+            TextView t = Ui.text(this, "• " + f.getName(), 12, Ui.ACCENT);
+            t.setPadding(0, Ui.dp(this, 4), 0, Ui.dp(this, 4));
+            t.setOnClickListener(new View.OnClickListener() { public void onClick(View v) {
+                String body;
+                try { body = JarvisApp.readAll(new java.io.FileInputStream(f)); } catch (Exception e) { body = e.getMessage(); }
+                final String b = body;
+                new AlertDialog.Builder(MainActivity.this).setTitle(f.getName()).setMessage(b).setNegativeButton("Cerrar", null)
+                        .setPositiveButton("Compartir…", new DialogInterface.OnClickListener() { public void onClick(DialogInterface d, int w) {
+                            startActivity(Intent.createChooser(new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, b), "Compartir propuesta"));
+                        }}).show();
+            }});
+            labBox.addView(t);
+        }
+
+        labBox.addView(labTitle("REGISTRO DE MODIFICACIONES"));
+        List<String> log = brain.lab.log(20);
+        if (log.isEmpty()) labBox.addView(Ui.text(this, "Vacío.", 12, Ui.DIM));
+        for (int i = log.size() - 1; i >= 0; i--) {
+            try {
+                Map<String, Object> m = Json.obj(Json.parse(log.get(i)));
+                labBox.addView(Ui.text(this, m.get("fecha") + " · " + m.get("accion") + " · " + m.get("herramienta") + (((Number) m.get("version")).intValue() > 0 ? " v" + m.get("version") : "")
+                        + (String.valueOf(m.get("detalle")).isEmpty() ? "" : " · " + m.get("detalle")), 11, Ui.DIM));
+            } catch (Exception ignored) {}
+        }
+    }
+
+    private TextView labTitle(String s) { TextView t = Ui.mono(this, s, 10, Ui.DIM); t.setPadding(0, Ui.dp(this, 14), 0, Ui.dp(this, 4)); return t; }
+
+    /** Aprobación humana: muestra el código y exige confirmar. Se guarda respaldo antes de activar. */
+    private void approveTool(final String id, final int v) {
+        new AlertDialog.Builder(this).setTitle("¿Activar «" + id + "» v" + v + "?")
+                .setMessage("Pasó todas sus pruebas en el aislamiento. Se activará para que JARVIS pueda usarla (solo cálculo, sin red ni acceso al teléfono). "
+                        + "Se guarda un respaldo y podrá volver a la versión anterior.\n\n" + brain.lab.code(id, v))
+                .setNegativeButton("Cancelar", null)
+                .setPositiveButton("Apruebo", new DialogInterface.OnClickListener() { public void onClick(DialogInterface d, int w) {
+                    try { brain.lab.approve(id, v, true); brain.log("laboratorio", "aprobada " + id + " v" + v); say("«" + id + "» v" + v + " activada.", "sistema"); }
+                    catch (Exception e) { say("No se activó: " + e.getMessage(), "sistema"); }
+                    fillLab();
+                }}).show();
+    }
+
+    private void tryTool(final String id) {
+        final EditText e = new EditText(this);
+        e.setHint("Entrada en JSON, p. ej. {\"texto\": \"hola\"}");
+        new AlertDialog.Builder(this).setTitle("Probar «" + id + "»").setView(e).setNegativeButton("Cancelar", null)
+                .setPositiveButton("Ejecutar", new DialogInterface.OnClickListener() { public void onClick(DialogInterface d, int w) {
+                    Object in;
+                    try { in = Json.parse(e.getText().toString().trim()); } catch (Exception x) { in = e.getText().toString(); }
+                    useTool(Json.map("id", id, "entrada", in));
+                }}).show();
     }
 
     /** Guarda un resultado en la ventana «Resultados» (no la abre: usted la pide). */

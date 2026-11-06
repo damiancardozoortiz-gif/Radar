@@ -75,3 +75,17 @@ desinstalar la versión anterior antes de instalar la nueva.
   la app comprueba cada enlace contra lo que la búsqueda devolvió de verdad, retira los que no salieron de ella y añade
   el registro real de búsquedas y fuentes. Lee PDF. Guarda aprendizajes en `files/aprendizaje/`.
 - Pendiente: Finanzas, Cámara y RADAR siguen siendo pantallas propias (no ventanas); editor de vídeo; laboratorio.
+
+## JARVIS 3.0 · fase 4: automejora y aprendizaje supervisado
+- Reconoce lo que no sabe: conoce sus capacidades (`Brain.CAPABILITIES`); si le piden algo fuera de ellas lo dice,
+  devuelve `capacidad_faltante` y lo anota como propuesta en el laboratorio. No investiga por su cuenta.
+- «JARVIS, aprendé a …»: investiga (web), compara alternativas, diseña y decide: herramienta del laboratorio
+  (JavaScript puro con pruebas) o módulo nativo (propuesta para el desarrollador: necesita una APK nueva).
+- Laboratorio (`core/Lab`, ventana 🧪): versiones guardadas aparte; control de seguridad del código (sin red, sin
+  escapes, sin temporizadores); pruebas en aislamiento (`LabSandbox`: WebView nuevo, red bloqueada, sin archivos ni
+  puente con la app, límite de 4 s); aprobación SOLO del usuario; respaldo antes de cada cambio; volver a la versión
+  anterior; desactivar; registro de modificaciones; análisis de capacidades y límites.
+- Experiencia (`core/Experience`): cada tarea con su resultado y error; aprendizajes de investigaciones, capacidades y
+  operaciones; antes de cada tarea se recuperan los aprendizajes y fallos parecidos y se le dan a Claude.
+- Límite honesto: una herramienta del laboratorio solo calcula o transforma datos. Lo que necesita Android (vídeo,
+  cámara, sensores) no se puede crear dentro del teléfono: queda como propuesta y llega en una APK nueva.
