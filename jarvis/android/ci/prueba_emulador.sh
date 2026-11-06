@@ -43,13 +43,18 @@ import re,sys
 x=open(sys.argv[1],encoding='utf-8',errors='ignore').read()
 for m in re.finditer(r'<node [^>]*>',x):
   n=m.group(0); t=re.search(r' text=\"([^\"]*)\"',n)
-  if t and sys.argv[2] in t.group(1):
+  if t and sys.argv[2].lower() in t.group(1).lower():
     b=re.search(r'bounds=\"\[(\d+),(\d+)\]\[(\d+),(\d+)\]\"',n)
     if b: a=list(map(int,b.groups())); print((a[0]+a[2])//2,(a[1]+a[3])//2); break
 " "$OUT/ui.xml" "$1")
     if [ -n "$XY" ]; then adb shell input tap $XY; sleep 2; return 0; fi
     adb shell input swipe 500 1600 500 500 300; sleep 1
   done
+  echo "no encontré «$1»; textos en pantalla:"; python3 -c "
+import re,sys
+x=open(sys.argv[1],encoding='utf-8',errors='ignore').read()
+print([t for t in re.findall(r' text=\"([^\"]+)\"',x)][:25]); print('tamaño del volcado:',len(x))
+" "$OUT/ui.xml" 2>&1 | head -5
   return 1
 }
 captura() {  # captura y la deja también en el registro (reducida) para poder verla sin descargar artefactos
