@@ -294,6 +294,25 @@ public final class Market {
         return out;
     }
 
+    /** Análisis multitemporal con velas propias de cada temporalidad (p. ej. leídas de MT5): {"M15": velas, "H1": velas…}. */
+    public static Map<String, Object> multiTf(Map<String, List<Candle>> byTf) {
+        Map<String, Object> out = new LinkedHashMap<String, Object>();
+        List<Object> tfs = new ArrayList<Object>();
+        List<Candle> first = null;
+        for (String tf : TF) {
+            List<Candle> cs = byTf.get(tf);
+            if (cs == null) continue;
+            if (first == null && !cs.isEmpty()) { first = cs; out.put("temporalidad_base", tf); }
+            tfs.add(analyze(cs, tf));
+        }
+        if (first == null) { out.put("aviso", "no llegaron velas"); return out; }
+        out.put("desde", fmt(first.get(0).t));
+        out.put("hasta", fmt(first.get(first.size() - 1).t));
+        out.put("fuente", "MT5 vía MetaApi");
+        out.put("analisis", tfs);
+        return out;
+    }
+
     static String fmt(long t) {
         SimpleDateFormat f = new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US);
         f.setTimeZone(TimeZone.getTimeZone("UTC"));

@@ -8,6 +8,8 @@ import android.os.Looper;
 
 import com.radar.jarvis.core.Brain;
 import com.radar.jarvis.core.Vault;
+import com.radar.jarvis.core.fin.MetaApi;
+import com.radar.jarvis.core.fin.Mt5;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -55,6 +57,19 @@ public class JarvisApp extends Application {
     }
 
     public static Brain brainOrNull() { return brain; }
+
+    private static Mt5 mt5;
+    /** Conector MT5: MetaApi (solo lectura) si hay token y cuenta guardados; si no, sin conexión. */
+    public static synchronized Mt5 mt5(Context c) {
+        if (mt5 == null) {
+            Store s = store(c);
+            String tok = s.secret("metaapi_token"), acc = s.get("metaapi_account", "");
+            mt5 = tok.isEmpty() || acc.isEmpty() ? new Mt5.NotConnected() : new MetaApi(tok, acc);
+        }
+        return mt5;
+    }
+    /** Tras cambiar el token o la cuenta. */
+    public static synchronized void resetMt5() { mt5 = null; }
 
     /** Crea el cerebro en segundo plano (lee las notas de la app) y avisa en el hilo principal. */
     public static void brain(final Context c, final Ready r) {

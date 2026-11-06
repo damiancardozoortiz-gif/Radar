@@ -43,3 +43,12 @@ desinstalar la versión anterior antes de instalar la nueva.
   con reglas fijas; ticket de orden con autorización; auditoría.
 - MetaTrader 5: NO CONECTADO. No hay API oficial de MetaQuotes para apps; la vía sin ordenador es MetaApi (terceros),
   pendiente de verificar su documentación (inaccesible desde el entorno de desarrollo). Operaciones reales deshabilitadas.
+
+## Versión 1.2: MetaTrader 5 por MetaApi (fase 1, SOLO LECTURA)
+- Panel financiero → «Conexión MT5»: ID de la cuenta en MetaApi + token (cifrado en el teléfono). Lee estado, tipo de cuenta
+  (DEMO/REAL según el servidor de MT5), saldo, posiciones y velas reales M5…D1 («Velas MT5») para el análisis.
+- NO envía órdenes: el conector se niega siempre (`canTrade()=false`, `execute()` falla sin tocar la red).
+- Recomendado: registrar en MetaApi la cuenta DEMO con la contraseña de INVERSOR y limitar el token a esa cuenta.
+- Rutas tomadas del SDK oficial `metaapi.cloud-sdk` 29.3.4. Sin confirmar contra el servicio real (inaccesible desde el
+  entorno de desarrollo): `…/account-information` y `…/positions` de la API REST de cliente.
+- Pruebas: `./build.sh test` incluye 16 comprobaciones contra una MetaApi SIMULADA (`test/mock_metaapi.py`).

@@ -17,21 +17,26 @@ import android.widget.Toast;
 import com.radar.jarvis.core.Brain;
 import com.radar.jarvis.core.Json;
 import com.radar.jarvis.core.fin.Market;
+import com.radar.jarvis.core.fin.MetaApi;
 import com.radar.jarvis.core.fin.Mt5;
 import com.radar.jarvis.core.fin.Risk;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-/** JARVIS FINANCIAL INTELLIGENCE: análisis multitemporal, estratega, gestor de riesgo y ticket de orden (solo DEMO). */
+/** JARVIS FINANCIAL INTELLIGENCE: análisis multitemporal, estratega, gestor de riesgo y ticket de orden (solo DEMO).
+ *  MT5 por MetaApi en fase de SOLO LECTURA: lee cuenta, posiciones y velas; no envía órdenes. */
 public class FinanceActivity extends Activity {
     static final int REQ_CSV = 21;
     private Brain brain;
-    private final Mt5 mt5 = new Mt5.NotConnected();  // no hay conexión real todavía: no se simula
+    private Mt5 mt5;              // MetaApi (solo lectura) si está configurado; si no, sin conexión (no se simula)
+    private Map<String, Object> mt5Info;  // última lectura de la cuenta
+    private String mt5Error;
     private List<Market.Candle> candles = new ArrayList<Market.Candle>();
     private Map<String, Object> analysis;
     private Map<String, Object> proposal;
@@ -45,6 +50,7 @@ public class FinanceActivity extends Activity {
         getWindow().setStatusBarColor(Ui.BG);
         brain = JarvisApp.brainOrNull();
         if (brain == null) { finish(); return; }
+        mt5 = JarvisApp.mt5(this);
         ScrollView sv = new ScrollView(this);
         sv.setBackgroundColor(Ui.BG);
         body = Ui.col(this);
@@ -53,6 +59,31 @@ public class FinanceActivity extends Activity {
         sv.addView(body);
         setContentView(sv);
         build();
+        checkMt5();
+    }
+
+    /** Lee de verdad la cuenta en MetaApi (segundo plano) y refresca la pantalla. */
+    private void checkMt5() {
+        if (!(mt5 instanceof MetaApi)) return;
+        final MetaApi m = (MetaApi) mt5;
+        new Thread(new Runnable() { public void run() {
+            Map<String, Object> info = null; String err = null;
+            try { info = m.refresh(); if (!m.connected()) err = m.lastError(); } catch (Exception e) { err = e.getMessage(); }
+            final Map<String, Object> fi = info; final String fe = err;
+            JarvisApp.ui(new Runnable() { public void run() {
+                mt5Info = fi; mt5Error = fe;
+                if (fi != null && fi.get("saldo") instanceof Number) JarvisApp.store(FinanceActivity.this).put("fin_balance", String.valueOf(((Number) fi.get("saldo")).doubleValue()));
+                brain.log("finanzas", "MT5 comprobado: " + (fe == null ? "conectado" : fe));
+                build();
+            }});
+        }}).start();
+    }
+
+    private String mt5Line() {
+        if (!(mt5 instanceof MetaApi)) return "NO CONFIGURADO (ver «Conexión MT5»)";
+        if (mt5Error != null) return "ERROR: " + mt5Error;
+        if (mt5Info == null) return "comprobando…";
+        return "conectado vía MetaApi · cuenta " + mt5Info.get("tipo") + " · SOLO LECTURA";
     }
 
     private void build() {
@@ -71,15 +102,21 @@ public class FinanceActivity extends Activity {
               + "• Analista técnico, de tendencias y de liquidez (cálculo en el teléfono): listo · datos: " + (candles.isEmpty() ? "ninguno" : candles.size() + " velas") + "\n"
               + "• Estratega de operaciones (Claude, solo con los números calculados): " + (brain.apiKey.isEmpty() ? "sin clave" : "listo") + "\n"
               + "• Gestor de riesgo (reglas fijas): activo\n"
-              + "• Ejecutor MT5: NO CONECTADO (ver «Conexión MT5»)\n"
+              + "• Ejecutor MT5: " + mt5Line() + "\n"
               + "• Auditor de resultados: registra cada propuesta y decisión", 12, Ui.TEXT));
 
         section("DATOS Y ANÁLISIS");
         symbol = field("Instrumento (p. ej. EURUSD)", JarvisApp.store(this).get("fin_symbol", "EURUSD"), false);
         body.addView(symbol);
-        body.addView(Ui.text(this, "Sin conexión a MT5, importe velas reales: en MetaTrader 5 de escritorio, Ver → Símbolos → Barras → Exportar (CSV). "
+        body.addView(Ui.text(this, mt5 instanceof MetaApi
+                ? "«Velas MT5» lee de su cuenta, vía MetaApi, M5, M15, H1, H4 y D1 del instrumento. También puede importar un CSV."
+                : "Sin conexión a MT5, importe velas reales: en MetaTrader 5 de escritorio, Ver → Símbolos → Barras → Exportar (CSV). "
                 + "Cualquier temporalidad de M1 a D1: JARVIS calcula las mayores.", 12, Ui.DIM));
         LinearLayout r = Ui.row(this);
+        if (mt5 instanceof MetaApi) {
+            r.addView(Ui.button(this, "Velas MT5", Ui.ACCENT, new View.OnClickListener() { public void onClick(View v) { loadMt5Candles(); } }));
+            r.addView(gap());
+        }
         r.addView(Ui.button(this, "Importar CSV", Ui.ACCENT, new View.OnClickListener() { public void onClick(View v) { pickCsv(); } }));
         r.addView(gap());
         r.addView(Ui.button(this, "Estratega", Ui.TEXT, new View.OnClickListener() { public void onClick(View v) { strategist(); } }));
@@ -121,12 +158,44 @@ public class FinanceActivity extends Activity {
         body.addView(Ui.button(this, proposal == null ? "Preparar orden (pida antes una estrategia)" : "Preparar orden propuesta", Ui.ACCENT,
                 new View.OnClickListener() { public void onClick(View v) { ticket(); } }), Ui.margins(this, 0, 8, 0, 0));
 
-        section("CONEXIÓN MT5");
-        body.addView(Ui.text(this, "Estado: NO CONECTADO. No hay API oficial de MetaQuotes para apps. Vías reales:\n"
-                + "1) MetaApi (servicio en la nube de terceros con API REST): la única sin ordenador ni servidor propio. "
-                + "Requiere crear cuenta en MetaApi y darle el acceso a su cuenta DEMO. Pendiente de verificar su documentación.\n"
-                + "2) Expert Advisor MQL5 en un MT5 de escritorio encendido (VPS) + un servidor intermedio.\n"
-                + "Operaciones reales: DESHABILITADAS en esta versión.", 12, Ui.DIM));
+        section("CONEXIÓN MT5 (MetaApi · solo lectura)");
+        StringBuilder st = new StringBuilder("Estado: ").append(mt5Line());
+        if (mt5Info != null) for (Map.Entry<String, Object> e : mt5Info.entrySet()) st.append("\n").append(e.getKey()).append(": ").append(e.getValue());
+        body.addView(Ui.text(this, st.toString(), 12, mt5Error == null ? Ui.TEXT : Ui.BAD));
+        body.addView(Ui.text(this, "Cómo conectar (una vez, desde el navegador del teléfono):\n"
+                + "1) Cree una cuenta en metaapi.cloud.\n"
+                + "2) Añada su cuenta DEMO de MT5 con la CONTRASEÑA DE INVERSOR (así MetaApi solo puede leer) y espere a que quede «Deployed».\n"
+                + "3) Copie el ID de la cuenta y genere un token de acceso; lo más seguro es limitarlo a esa cuenta y a lectura.\n"
+                + "4) Péguelos aquí. El token se guarda cifrado en el teléfono y no se muestra.\n"
+                + "MetaApi es un servicio de terceros (de pago, con prueba): su contraseña de MT5 queda en su nube.", 12, Ui.DIM));
+        final EditText acc = field("ID de la cuenta en MetaApi", JarvisApp.store(this).get("metaapi_account", ""), false);
+        acc.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD);
+        final EditText tok = field(JarvisApp.store(this).hasSecret("metaapi_token") ? "Token guardado (escriba otro para cambiarlo)" : "Token de MetaApi", "", false);
+        tok.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        body.addView(acc, Ui.margins(this, 0, 6, 0, 0));
+        body.addView(tok, Ui.margins(this, 0, 6, 0, 0));
+        LinearLayout cr = Ui.row(this);
+        cr.addView(Ui.button(this, "Guardar y comprobar", Ui.ACCENT, new View.OnClickListener() { public void onClick(View v) {
+            Store s = JarvisApp.store(FinanceActivity.this);
+            String a = acc.getText().toString().trim(), t = tok.getText().toString().trim();
+            if (a.isEmpty() || (t.isEmpty() && !s.hasSecret("metaapi_token"))) { Toast.makeText(FinanceActivity.this, "Faltan el ID de la cuenta o el token.", Toast.LENGTH_LONG).show(); return; }
+            s.put("metaapi_account", a);
+            if (!t.isEmpty()) s.secret("metaapi_token", t);
+            brain.log("finanzas", "conexión MetaApi configurada por el usuario");
+            JarvisApp.resetMt5(); mt5 = JarvisApp.mt5(FinanceActivity.this); mt5Info = null; mt5Error = null;
+            build(); checkMt5();
+        }}));
+        cr.addView(gap());
+        cr.addView(Ui.button(this, "Olvidar conexión", Ui.BAD, new View.OnClickListener() { public void onClick(View v) {
+            Store s = JarvisApp.store(FinanceActivity.this);
+            s.secret("metaapi_token", ""); s.put("metaapi_account", "");
+            brain.log("finanzas", "conexión MetaApi borrada por el usuario");
+            JarvisApp.resetMt5(); mt5 = JarvisApp.mt5(FinanceActivity.this); mt5Info = null; mt5Error = null;
+            build();
+        }}));
+        body.addView(cr, Ui.margins(this, 0, 6, 0, 0));
+        body.addView(Ui.text(this, "Esta versión NO envía órdenes a MT5 (solo lectura). Operaciones reales: DESHABILITADAS.", 12, Ui.DIM),
+                Ui.margins(this, 0, 6, 0, 0));
         section("AUDITORÍA (últimas acciones financieras)");
         StringBuilder au = new StringBuilder();
         for (String l : brain.tail("acciones.jsonl", 40)) if (l.contains("finanzas")) au.append(l).append('\n');
@@ -135,7 +204,7 @@ public class FinanceActivity extends Activity {
     }
 
     private void refreshStatus() {
-        status.setText("MT5: " + (mt5.connected() ? "conectado" : "NO CONECTADO") + " · Modo: DEMO únicamente · Operaciones reales: DESHABILITADAS"
+        status.setText("MT5: " + mt5Line() + " · Operaciones reales: DESHABILITADAS"
                 + (brain.isPaused() ? "\nPAUSA ACTIVA: nada se ejecuta" : ""));
         status.setTextColor(brain.isPaused() ? Ui.BAD : Ui.TEXT);
     }
@@ -170,6 +239,30 @@ public class FinanceActivity extends Activity {
             } catch (final Exception e) {
                 JarvisApp.ui(new Runnable() { public void run() { Toast.makeText(FinanceActivity.this, "No pude leer el archivo: " + e.getMessage(), Toast.LENGTH_LONG).show(); } });
             }
+        }}).start();
+    }
+
+    /** Velas reales de la cuenta MT5 (MetaApi) en varias temporalidades, y análisis. */
+    private void loadMt5Candles() {
+        final String sym = symbol.getText().toString().trim().toUpperCase(Locale.US);
+        if (sym.isEmpty()) return;
+        JarvisApp.store(this).put("fin_symbol", sym);
+        result.setText("Leyendo velas de " + sym + " en MT5…");
+        new Thread(new Runnable() { public void run() {
+            final Map<String, List<Market.Candle>> by = new LinkedHashMap<String, List<Market.Candle>>();
+            String err = null;
+            for (String tf : new String[]{"M5", "M15", "H1", "H4", "D1"}) {
+                try { by.put(tf, mt5.candles(sym, tf, 300)); }
+                catch (Exception e) { err = tf + ": " + e.getMessage(); break; }
+            }
+            final String fe = err;
+            final Map<String, Object> an = fe == null ? Market.multiTf(by) : null;
+            JarvisApp.ui(new Runnable() { public void run() {
+                if (fe != null) { result.setText("No pude leer las velas de MT5 (" + fe + ")."); brain.log("finanzas", "velas MT5 fallidas: " + fe); return; }
+                analysis = an; candles = by.get("M5");
+                brain.log("finanzas", "velas MT5 leídas: " + sym);
+                build();
+            }});
         }}).start();
     }
 
@@ -247,6 +340,7 @@ public class FinanceActivity extends Activity {
         boolean demo = false;
         try { demo = mt5.isDemo(); } catch (Exception ignored) {}
         List<String> no = Risk.check(o, lim, bal, cs, brain.isPaused(), mt5.connected(), demo, 0, new ArrayList<Risk.Order>(), recent, o.createdMs);
+        if (!mt5.canTrade()) no.add("el conector MT5 está en modo SOLO LECTURA: JARVIS no envía órdenes (puede copiarla a mano en MT5)");
         String t = String.format(Locale.US, "%s %s\nEntrada %.5f · SL %.5f · TP %s\nLote calculado: %.2f (riesgo %.2f %% de %.2f)\nPérdida si salta el stop: %.2f",
                 o.side.toUpperCase(Locale.US), o.symbol, o.entry, o.sl, o.tp > 0 ? String.format(Locale.US, "%.5f", o.tp) : "—",
                 o.lots, lim.riskPct, bal, Risk.lossAtStop(o, cs));

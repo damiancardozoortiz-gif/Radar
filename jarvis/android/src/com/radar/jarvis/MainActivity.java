@@ -125,7 +125,14 @@ public class MainActivity extends Activity {
         if (!mem.isDirectory() || !mem.canWrite()) { p.add("la memoria no está disponible"); h.append(" · memoria: no disponible"); }
         else h.append(" · memoria: ").append(brain.memories().size()).append(" recuerdos");
         if (!Perms.granted(this, "android.permission.RECORD_AUDIO")) { p.add("el micrófono no tiene permiso"); h.append(" · micrófono: sin permiso"); }
-        h.append(" · MT5: no conectado");
+        com.radar.jarvis.core.fin.Mt5 m5 = JarvisApp.mt5(this);
+        if (m5 instanceof com.radar.jarvis.core.fin.MetaApi) {
+            try {
+                ((com.radar.jarvis.core.fin.MetaApi) m5).refresh();
+                if (m5.connected()) h.append(" · MT5: conectado (").append(m5.isDemo() ? "DEMO" : "NO DEMO").append(", solo lectura)");
+                else { p.add("MetaTrader no está conectado"); h.append(" · MT5: ").append(((com.radar.jarvis.core.fin.MetaApi) m5).lastError()); }
+            } catch (Exception e) { p.add("MetaTrader no responde"); h.append(" · MT5: ").append(e.getMessage()); }
+        } else h.append(" · MT5: no configurado");
         health = h.toString();
         return p;
     }
@@ -552,7 +559,7 @@ public class MainActivity extends Activity {
                 + "\nServicio en segundo plano: " + (JarvisService.running ? "ACTIVO" + (JarvisService.clapOn ? " (escucha palmadas)" : "") : "parado")
                 + "\nNotas: " + brain.vault.notes.size() + " · memoria: " + brain.memories().size() + " · borradores pendientes: " + brain.pending().size()
                 + "\nComprobación al arrancar: " + health
-                + "\nAgentes: investigador · analistas técnico/tendencias/liquidez · estratega · gestor de riesgo · ejecutor MT5 (no conectado) · auditor"
+                + "\nAgentes: investigador · analistas técnico/tendencias/liquidez · estratega · gestor de riesgo · ejecutor MT5 (MetaApi, solo lectura) · auditor"
                 + "\nPAUSA: " + (brain.isPaused() ? "SÍ (" + brain.pausedBy() + ")" : "no")
                 + (brain.lastError.isEmpty() ? "" : "\nÚltimo error: " + brain.lastError), 13, Ui.TEXT));
         LinearLayout r1 = Ui.row(this);
