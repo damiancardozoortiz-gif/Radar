@@ -1,6 +1,8 @@
 import com.radar.jarvis.core.*;
 import java.io.*;
 import java.util.*;
+import com.radar.jarvis.core.Greeting;
+import com.radar.jarvis.core.Router;
 
 /** Prueba del núcleo en el ordenador (sin Android) contra la API simulada. */
 public class CoreTest {
@@ -59,6 +61,28 @@ public class CoreTest {
         b.setPause(false, "");
         String log = new String(java.nio.file.Files.readAllBytes(new File(data, "estado/acciones.jsonl").toPath()), "UTF-8");
         check(!log.contains("dentista") && !log.contains("Ricardo"), "el registro no guarda contenido privado");
+        // ---- saludo y personalidad
+        check(Greeting.text(8, new ArrayList<String>()).equals("Buen día, señor Rafael. JARVIS está a su servicio. Todos los sistemas están operativos. ¿En qué puedo ayudarlo hoy?"), "saludo de mañana, todo operativo");
+        check(Greeting.text(15, new ArrayList<String>()).startsWith("Buenas tardes, señor Rafael") && Greeting.text(22, new ArrayList<String>()).startsWith("Buenas noches"), "buenas tardes / buenas noches según la hora");
+        String g = Greeting.text(9, Arrays.asList("ElevenLabs no responde", "el micrófono no tiene permiso"));
+        check(!g.contains("Todos los sistemas") && g.contains("Atención: ElevenLabs no responde y el micrófono no tiene permiso"), "con fallos NO dice «todos operativos»: " + g);
+        check(b.systemPrompt().contains("señor Rafael") && b.systemPrompt().contains("Rafael"), "la personalidad y el nombre van en las instrucciones");
+        // ---- órdenes con voseo
+        check("stop_all".equals(Router.device("JARVIS, pausá todas las operaciones").get("action")), "«pausá todas las operaciones» → detener todo");
+        check("camera_open".equals(Router.device("abrí la cámara").get("action")), "«abrí la cámara»");
+        check("finance".equals(Router.device("abrí el panel financiero").get("action")), "«abrí el panel financiero»");
+        check("investigar_en_la_web".equals(Router.tool("JARVIS, investigá este producto", b.vault)), "«investigá este producto» → investigación web");
+        check("investigar_en_la_web".equals(Router.tool("JARVIS, analizá el mercado", b.vault)), "«analizá el mercado» → investigación web");
+        check("informe".equals(Router.tool("JARVIS, prepará un informe sobre la competencia", b.vault)), "«prepará un informe»");
+        check("tareas".equals(Router.tool("agregá una tarea: llamar al banco", b.vault)), "«agregá una tarea»");
+        // ---- búsqueda web, informe y tareas
+        r = b.answer("JARVIS, investigá este producto");
+        String ml = new String(java.nio.file.Files.readAllBytes(new File(a[3]).toPath()), "UTF-8");
+        check(ml.contains("web_search_20260209"), "la investigación usa la búsqueda web de la API");
+        r = b.answer("JARVIS, prepará un informe sobre la competencia");
+        check(r.get("report") != null && new File(String.valueOf(r.get("report"))).exists(), "el informe se guarda en el teléfono");
+        r = b.answer("agregá una tarea: llamar al banco");
+        check(b.tasks().size() == 1 && "llamar al banco".equals(b.tasks().get(0).get("texto")), "tarea creada y guardada");
         System.out.println(ok + " PASA · " + bad + " FALLA");
         System.exit(bad == 0 ? 0 : 1);
     }

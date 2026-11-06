@@ -145,7 +145,8 @@ public final class Brain {
                 }
             }
             messages.add(Json.map("role", "user", "content", compose(question, tool, context)));
-            String text = call(messages, systemPrompt());
+            boolean web = "investigar_en_la_web".equals(tool) || "informe".equals(tool);
+            String text = call(messages, systemPrompt(), web);
             if (paused) return paused(question);  // respuesta tardía: la pausa llegó mientras pensaba
             Map<String, Object> rep = parseReply(text);
             String said = String.valueOf(rep.get("decir"));
@@ -162,6 +163,17 @@ public final class Brain {
             String det = String.valueOf(rep.get("detalle")).trim();
             if (Vault.norm(det).equals(Vault.norm(say))) det = "";
             out.put("say", say); out.put("detail", det); out.put("saved", saved);
+            if ("informe".equals(tool) && det.length() > 200) {
+                String file = saveReport(question, det);
+                if (file == null) return paused(question);
+                out.put("report", file);
+            }
+            Object tarea = rep.get("tarea");
+            if (tarea instanceof Map) {
+                String t = applyTask(Json.obj(tarea));
+                if (t == null && paused) return paused(question);
+                if (t != null) out.put("task", t);
+            }
             if (!det.isEmpty() && Vault.norm(det + " " + said).contains("borrador")) {
                 Map<String, Object> d = addDraft(det, question);
                 if (d == null) return paused(question);
@@ -215,6 +227,37 @@ public final class Brain {
         }
     }
 
+    /** Estratega financiero: Claude razona SOLO con el análisis calculado (no inventa precios) y no toca los límites. */
+    public Map<String, Object> strategy(String symbol, Map<String, Object> analysis, Map<String, Object> limits) {
+        if (paused) return paused("estrategia");
+        long t0 = System.currentTimeMillis();
+        String msg = "Actúa como el equipo de JARVIS FINANCIAL INTELLIGENCE (investigador, analista técnico, de tendencias y de liquidez, "
+                + "estratega y gestor de riesgo) para el señor Rafael. Instrumento: " + symbol + ".\n"
+                + "Análisis multitemporal CALCULADO por la app (son los únicos datos de precio válidos; no inventes otros):\n"
+                + Json.write(analysis) + "\nLímites de riesgo fijados por el señor Rafael (no los cambies ni propongas cambiarlos): " + Json.write(limits)
+                + "\n\nEn \"detalle\" (markdown): 1) lectura de cada temporalidad, 2) confluencias y contradicciones, 3) escenario principal y alternativo, "
+                + "4) si hay oportunidad: dirección, zona de entrada, stop loss y take profit basados en niveles del análisis (cita el nivel y la temporalidad), "
+                + "5) qué la invalidaría. Si no hay oportunidad clara, dilo. Nada es una certeza; solo cuenta DEMO. "
+                + "Si propones una operación, añade el campo \"propuesta\": {\"direccion\": \"buy\"|\"sell\", \"entrada\": n, \"sl\": n, \"tp\": n}. "
+                + "En \"decir\" la conclusión en una frase. Responde solo con el JSON.";
+        try {
+            String text = call(Json.list(Json.map("role", "user", "content", msg)), systemPrompt());
+            if (paused) return paused("estrategia");
+            Map<String, Object> rep = parseReply(text);
+            Object prop = null;
+            int a = text.indexOf('{'), z = text.lastIndexOf('}');
+            try { prop = Json.obj(Json.parse(text.substring(a, z + 1))).get("propuesta"); } catch (Exception ignored) {}
+            log("finanzas", "estrategia pedida para " + symbol);
+            return Json.map("say", cleanSpeech(String.valueOf(rep.get("decir"))), "detail", String.valueOf(rep.get("detalle")).trim(),
+                    "proposal", prop, "tool", "estratega", "brain", "claude", "ms", System.currentTimeMillis() - t0);
+        } catch (Exception e) {
+            if (paused) return paused("estrategia");
+            error("estratega: " + e.getMessage());
+            return Json.map("say", "No pude consultar al estratega.", "detail", "", "tool", "estratega", "brain", "respaldo",
+                    "warning", "Cerebro no disponible (" + e.getMessage() + ").", "ms", System.currentTimeMillis() - t0);
+        }
+    }
+
     /** Analiza el texto de un documento elegido (datos no confiables). */
     public Map<String, Object> document(String name, String text) {
         log("archivo", "documento analizado (" + text.length() + " caracteres)");
@@ -227,10 +270,32 @@ public final class Brain {
     }
 
     // ================================================================== API de Claude
-    String call(List<Object> messages, String system) throws IOException {
+    String call(List<Object> messages, String system) throws IOException { return call(messages, system, false); }
+
+    /** web = true: añade la búsqueda web de Anthropic (se ejecuta en sus servidores; cuesta por búsqueda). */
+    String call(List<Object> messages, String system, boolean web) throws IOException {
+        StringBuilder all = new StringBuilder();
+        List<Object> msgs = new ArrayList<Object>(messages);
+        for (int round = 0; round < 4; round++) {  // pause_turn: la búsqueda larga se continúa reenviando el turno
+            Map<String, Object> o = request(msgs, system, web);
+            for (Object b : Json.arr(o.get("content"))) {
+                Map<String, Object> blk = Json.obj(b);
+                if ("text".equals(blk.get("type"))) all.append(Json.str(blk.get("text")));
+            }
+            if (!"pause_turn".equals(o.get("stop_reason"))) {
+                if ("refusal".equals(o.get("stop_reason"))) return "{\"decir\": \"No puedo ayudarle con eso, señor Rafael.\", \"detalle\": \"\", \"recordar\": null}";
+                return all.toString();
+            }
+            msgs.add(Json.map("role", "assistant", "content", o.get("content")));
+        }
+        return all.toString();
+    }
+
+    private Map<String, Object> request(List<Object> messages, String system, boolean web) throws IOException {
         if (apiKey == null || apiKey.trim().isEmpty()) throw new IOException("falta la clave de API de Anthropic (ajústala en el panel)");
         Map<String, Object> body = Json.map("model", model, "max_tokens", 16000L, "system", system, "messages", messages,
-                "output_config", Json.map("effort", "low"));
+                "output_config", Json.map("effort", web ? "medium" : "low"));
+        if (web) body.put("tools", Json.list(Json.map("type", "web_search_20260209", "name", "web_search", "max_uses", 5L)));
         if (useFallbacks) body.put("fallbacks", "default");
         HttpURLConnection c;
         synchronized (lock) {  // comprobar la pausa y abrir la conexión bajo el mismo candado que setPause
@@ -242,7 +307,7 @@ public final class Brain {
         try {
             c.setRequestMethod("POST");
             c.setConnectTimeout(15000);
-            c.setReadTimeout(60000);
+            c.setReadTimeout(web ? 150000 : 60000);
             c.setDoOutput(true);
             c.setRequestProperty("content-type", "application/json");
             c.setRequestProperty("x-api-key", apiKey.trim());
@@ -255,21 +320,14 @@ public final class Brain {
             String resp = readAll(code >= 400 ? c.getErrorStream() : c.getInputStream());
             if (code == 400 && useFallbacks && resp.contains("fallback")) {  // cuenta sin fallbacks: reintenta sin ellos
                 useFallbacks = false;
-                return call(messages, system);
+                return request(messages, system, web);
             }
             if (code >= 400) {
                 String msg = resp;
                 try { msg = Json.str(Json.obj(Json.obj(Json.parse(resp)).get("error")).get("message")); } catch (Exception ignored) {}
                 throw new IOException("API " + code + ": " + (msg == null ? "" : msg.length() > 160 ? msg.substring(0, 160) : msg));
             }
-            Map<String, Object> o = Json.obj(Json.parse(resp));
-            if ("refusal".equals(o.get("stop_reason"))) return "{\"decir\": \"No puedo ayudarte con eso.\", \"detalle\": \"\", \"recordar\": null}";
-            StringBuilder text = new StringBuilder();
-            for (Object b : Json.arr(o.get("content"))) {
-                Map<String, Object> blk = Json.obj(b);
-                if ("text".equals(blk.get("type"))) text.append(Json.str(blk.get("text")));
-            }
-            return text.toString();
+            return Json.obj(Json.parse(resp));
         } catch (IOException e) {
             if (cancelled) throw new IOException("cancelado por la pausa");
             throw e;
@@ -296,7 +354,8 @@ public final class Brain {
         b.append("\n\n## Lo que te ha pedido recordar (memory/)\n").append(memoryText());
         b.append("\n\n## Fecha\nHoy es ").append(today).append(".");
         b.append("\n\n## Dónde estás\nEstás dentro de la app JARVIS de Android. Las órdenes del teléfono (cámara, abrir apps, ubicación) "
-                + "las ejecuta la app; tú no ejecutas nada.");
+                + "las ejecuta la app; tú no ejecutas nada. Además de \"decir\", \"detalle\" y \"recordar\", puedes devolver \"tarea\" "
+                + "cuando el mensaje lo indique.");
         return b.toString();
     }
 
@@ -336,7 +395,16 @@ public final class Brain {
             return untrusted("agenda y archivos", b.toString());
         }
         if ("recordar".equals(tool)) return "Te pide que recuerdes algo. Devuelve en \"recordar\" UNA cosa autocontenida y di exactamente qué guardas.";
-        if ("investigar_en_la_web".equals(tool)) return "En la app aún no hay búsqueda web: dilo en pocas palabras y responde con lo que sepas, avisando de que puede no estar actualizado.";
+        if ("investigar_en_la_web".equals(tool)) return "Investiga con la herramienta web_search (fuentes recientes y fiables). En \"decir\" la conclusión en una frase; "
+                + "en \"detalle\" el resumen con cifras y las fuentes (URL). Si es de mercados o inversiones, separa datos de opinión y no des recomendaciones como certezas.";
+        if ("informe".equals(tool)) return "Prepara un INFORME completo en \"detalle\" (markdown): resumen ejecutivo, hallazgos, datos con su fuente (URL o archivo), "
+                + "riesgos y recomendaciones. Usa web_search si hace falta información actual. En \"decir\", una frase que resuma el informe.";
+        if ("tareas".equals(tool)) {
+            StringBuilder b = new StringBuilder("Gestión de tareas. Tareas actuales:\n");
+            for (Map<String, Object> t : tasks()) b.append("- [").append(t.get("estado")).append("] ").append(t.get("texto")).append(" (id ").append(t.get("id")).append(")\n");
+            return b.append("Para crear o completar una, devuelve además el campo \"tarea\": {\"accion\": \"crear\"|\"completar\", \"texto\": \"...\"} "
+                    + "(para completar, el texto de la tarea). Di en \"decir\" exactamente qué has hecho.").toString();
+        }
         return "";
     }
 
@@ -354,7 +422,7 @@ public final class Brain {
                 if (o != null && o.get("decir") instanceof String) {
                     Object det = o.get("detalle");
                     return Json.map("decir", o.get("decir"), "detalle", det instanceof String ? det : det == null ? "" : Json.write(det),
-                            "recordar", o.get("recordar"), "formato", true);
+                            "recordar", o.get("recordar"), "tarea", o.get("tarea"), "formato", true);
                 }
             } catch (Exception ignored) {}
         }
@@ -420,6 +488,53 @@ public final class Brain {
         StringBuilder b = new StringBuilder();
         for (String s : m) b.append("- ").append(s).append("\n");
         return b.toString();
+    }
+
+    // ================================================================== informes y tareas
+    String saveReport(String question, String text) {
+        synchronized (lock) {
+            if (paused) return null;
+            File d = new File(dir, "informes");
+            d.mkdirs();
+            String slug = Vault.norm(question).replaceAll("[^a-z0-9]+", "-").replaceAll("^-|-$", "");
+            if (slug.length() > 40) slug = slug.substring(0, 40);
+            File f = new File(d, today + "-" + slug + ".md");
+            writeAtomic(f, "# " + question + "\n\n" + text + "\n");
+            log("informe", "guardado (" + text.length() + " caracteres)");
+            return f.getAbsolutePath();
+        }
+    }
+
+    public List<Map<String, Object>> tasks() {
+        List<Map<String, Object>> out = new ArrayList<Map<String, Object>>();
+        try { for (Object o : Json.arr(Json.parse(read(f("tareas.json"))))) out.add(Json.obj(o)); } catch (Exception ignored) {}
+        return out;
+    }
+
+    /** Crea o completa una tarea (en pausa no se escribe: devuelve null). */
+    String applyTask(Map<String, Object> t) {
+        String accion = String.valueOf(t.get("accion")), texto = String.valueOf(t.get("texto")).trim();
+        if (texto.isEmpty() || "null".equals(texto)) return null;
+        synchronized (lock) {
+            if (paused) return null;
+            List<Map<String, Object>> all = tasks();
+            String res = null;
+            if ("crear".equals(accion)) {
+                all.add(Json.map("id", UUID.randomUUID().toString().substring(0, 8), "texto", texto, "estado", "pendiente", "creada", now()));
+                res = "tarea creada: " + texto;
+            } else if ("completar".equals(accion)) {
+                for (Map<String, Object> x : all) {
+                    if ("pendiente".equals(x.get("estado")) && Vault.norm(String.valueOf(x.get("texto"))).contains(Vault.norm(texto).trim())) {
+                        x.put("estado", "hecha"); x.put("hecha", now()); res = "tarea completada: " + x.get("texto"); break;
+                    }
+                }
+            }
+            if (res != null) {
+                writeAtomic(f("tareas.json"), Json.write(all));
+                log("tarea", res.startsWith("tarea creada") ? "creada" : "completada");
+            }
+            return res;
+        }
     }
 
     // ================================================================== borradores (persistentes)

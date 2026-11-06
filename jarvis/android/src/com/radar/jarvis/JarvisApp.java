@@ -22,6 +22,8 @@ public class JarvisApp extends Application {
     private static Store store;
     private static Voice voice;
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
+    /** El saludo suena UNA vez por arranque de la app (no al volver a la pantalla ni al refrescarla). */
+    public static volatile boolean greeted;
 
     public interface Ready { void ready(Brain b); }
 
@@ -75,8 +77,14 @@ public class JarvisApp extends Application {
         b.apiKey = s.secret("anthropic");
         String m = s.get("model", Brain.DEFAULT_MODEL);
         b.model = m.isEmpty() ? Brain.DEFAULT_MODEL : m;
-        voice(c).elevenKey = s.secret("elevenlabs");
-        voice(c).voiceId = s.get("voice_id", "");
+        Voice v = voice(c);
+        v.elevenKey = s.secret("elevenlabs");
+        v.voiceId = s.get("voice_id", "");
+        v.voiceName = s.get("voice_name", "");
+        v.model = s.get("voice_model", "eleven_multilingual_v2");
+        v.volume = s.num("volume_set") == 1 ? s.num("volume") / 100f : 1f;
+        v.enabled = !s.flag("voice_off");
+        v.bargeIn = !s.flag("bargein_off");
     }
 
     static String readAll(InputStream in) throws IOException {

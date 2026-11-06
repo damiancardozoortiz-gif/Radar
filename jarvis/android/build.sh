@@ -31,12 +31,15 @@ for f in index.html cockpit6.js manifest.webmanifest sw.js icon-192.png; do [ -f
 
 if [ "${1:-}" = "test" ]; then
   mkdir -p $B/test-obj
-  javac -nowarn -d $B/test-obj src/com/radar/jarvis/core/*.java test/CoreTest.java
+  javac -nowarn -encoding UTF-8 -d $B/test-obj src/com/radar/jarvis/core/*.java src/com/radar/jarvis/core/fin/*.java test/CoreTest.java test/FinTest.java
   PORT=$(python3 -c "import socket;s=socket.socket();s.bind(('127.0.0.1',0));print(s.getsockname()[1])")
   rm -f $B/mock.log; python3 test/mock_anthropic.py $PORT $B/mock.log & MOCK=$!
   sleep 0.6
   rm -rf $B/test-data; mkdir -p $B/test-data
-  set +e; LC_ALL=C.UTF-8 java -Dsun.jnu.encoding=UTF-8 -Dfile.encoding=UTF-8 -cp $B/test-obj CoreTest $B/assets $B/test-data $PORT; rc=$?; set -e
+  set +e; LC_ALL=C.UTF-8 java -Dsun.jnu.encoding=UTF-8 -Dfile.encoding=UTF-8 -cp $B/test-obj CoreTest $B/assets $B/test-data $PORT $B/mock.log; rc=$?
+  echo "--- módulo financiero:"
+  LC_ALL=C.UTF-8 java -Dfile.encoding=UTF-8 -cp $B/test-obj FinTest; rc2=$?; set -e
+  [ $rc2 -ne 0 ] && rc=$rc2
   kill $MOCK
   echo "--- lo que vio la API simulada en cada petición:"; sort $B/mock.log | uniq -c
   exit $rc

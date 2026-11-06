@@ -21,8 +21,10 @@ public final class Router {
      *  buscar_en_mi_cerebro o conversacion. */
     public static String tool(String question, Vault vault) {
         String qs = clean(question);
+        if (has(qs, "(agrega|agrega|anade|anadi|crea|crea|apunta|pon) (una |la )?tarea|mis tareas|lista de tareas|(completa|termina|tacha|marca|borra) (la )?tarea|tareas pendientes")) return "tareas";
+        if (has(qs, "(prepara|haz|hazme|redacta|elabora|genera|arma|arma) (un |el |una )?(informe|reporte|analisis completo)")) return "informe";
         if (has(qs, "recuerda|recordar|apunta|anota|apuntalo|anotalo|guarda|guardalo|no olvides|memoriza")) return "recordar";
-        if (has(qs, "internet|en la web|en la red|busca en google|en google|online")) return "investigar_en_la_web";
+        if (has(qs, "internet|en la web|en la red|busca en google|en google|online|investiga\\w*|averigua\\w*|el mercado|del mercado|este producto|ese producto|cotizacion|noticias|precio actual")) return "investigar_en_la_web";
         if (has(qs, "correos?|e ?mails?|mails?|bandeja|me ha escrito|me han escrito|me escribio|mensajes?")) return "leer_correo";
         if (has(qs, "planea\\w*|planifica\\w*|prioridades|organiza(me)? el dia")
                 || (has(qs, "plan") && !has(qs, "plan de (pensiones|ahorro|jubilacion|salud|vida|empresa)"))) return "planear_el_dia";
@@ -49,13 +51,14 @@ public final class Router {
         String q = Vault.norm(orig);
         if (q.length() != orig.length()) orig = q;
         String qs = clean(question);
-        if (has(qs, "(detener|deten|para|parar) todo")) return Json.map("action", "stop_all", "say", "Detengo todo.");
-        if (has(qs, "(abre|abrir|enciende|activa|pon) (la )?camara")) return Json.map("action", "camera_open", "say", "Abro la cámara.");
+        if (has(qs, "(detener|deten|detene|para|parar) todo|pausa(r)? (todas las |todo|las )?operaciones|pausa todo|emergencia")) return Json.map("action", "stop_all", "say", "Detengo todo.");
+        if (has(qs, "(abre|abri|abrir|enciende|encende|activa|pon|prende|prende) (la )?camara")) return Json.map("action", "camera_open", "say", "Abro la cámara.");
         if (has(qs, "(haz|saca|toma|hazme|sacame|captura) (una )?(foto|fotografia)")) return Json.map("action", "camera_open", "say", "Abro la cámara: pulsa capturar.");
         if (has(qs, "que ves|que estas viendo|lee (este|el) (documento|texto|papel)|que es esto|que pone")) return Json.map("action", "camera_open", "say", "Enséñamelo y pulsa capturar.");
         if (has(qs, "donde estoy|mi ubicacion|en que calle estoy")) return Json.map("action", "location", "say", "Miro dónde estás.");
-        if (has(qs, "(elige|abre|selecciona|busca) (un |el |una )?(archivo|documento|pdf|foto|imagen)")) return Json.map("action", "pick_file", "say", "Elige el archivo.");
-        if (has(qs, "abre radar|radar")) return Json.map("action", "radar", "say", "Abro RADAR.");
+        if (has(qs, "(elige|elegi|abre|abri|selecciona|busca) (un |el |una )?(archivo|documento|pdf|foto|imagen)")) return Json.map("action", "pick_file", "say", "Elija el archivo, señor Rafael.");
+        if (has(qs, "(abre|abri) (el )?(panel )?financiero|jarvis financial|metatrader|mt5|panel de trading")) return Json.map("action", "finance", "say", "Abro el panel financiero.");
+        if (has(qs, "abre radar|abri radar|radar")) return Json.map("action", "radar", "say", "Abro RADAR.");
         Matcher m = Pattern.compile("\\b(?:busca|pon|ponme|abre)\\b(?: en)? youtube (.+)$|\\b(?:busca|pon|ponme) (.+?) en youtube\\b").matcher(q);
         if (m.find()) { String t = g(orig, m, 1, 2); return open("YouTube", "https://www.youtube.com/results?search_query=" + enc(t), "Buscar «" + t + "» en YouTube"); }
         m = Pattern.compile("\\b(?:como llego|llevame|ruta|indicaciones)\\b(?: a| hasta| hacia)? (.+)$").matcher(q);

@@ -7,6 +7,7 @@ import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.location.Location;
+import android.media.AudioManager;
 import android.location.LocationListener;
 import android.location.LocationManager;
 import android.net.Uri;
@@ -27,12 +28,16 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import com.radar.jarvis.core.Brain;
+import com.radar.jarvis.core.Greeting;
 import com.radar.jarvis.core.Json;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -46,9 +51,10 @@ public class MainActivity extends Activity {
     private ScrollView chatScroll;
     private EditText input;
     private TextView status;
-    private TextView pauseBtn;
+    private TextView pauseBtn, voiceBtn;
     private boolean conversation, busy, muted;
     private SpeechRecognizer recognizer;
+    private volatile String health = "comprobando sistemas…";
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
@@ -58,18 +64,70 @@ public class MainActivity extends Activity {
             finish();
             return;
         }
+        setVolumeControlStream(AudioManager.STREAM_MUSIC);  // las teclas de volumen controlan la voz de JARVIS
         build();
-        say("Cargando mis notas…", "sistema");
+        say("Iniciando sistemas…", "sistema");
         JarvisApp.brain(this, new JarvisApp.Ready() { public void ready(Brain br) {
             brain = br;
             JarvisApp.applySettings(MainActivity.this, br);
+            JarvisApp.voice(MainActivity.this).setOnInterrupt(new Runnable() { public void run() {  // usted habla: JARVIS se calla y escucha
+                if (brain != null && !brain.isPaused()) { conversation = true; listen(); }
+            }});
             chat.removeAllViews();
-            String hello = br.apiKey.isEmpty() ? "Sin clave de API de Claude: funciono en modo respaldo. Ponla en el panel."
-                    : "Listo. " + br.vault.notes.size() + " notas cargadas. ¿Qué necesitas?";
-            say(hello, "jarvis");
             for (Map<String, Object> d : br.pending()) approvalCard(d);  // borradores que sobrevivieron
             refresh();
+            if (!JarvisApp.greeted) { JarvisApp.greeted = true; greet(); }
+            else say("Sistemas activos, señor Rafael.", "sistema");
         }});
+    }
+
+    // ================================================================== arranque: comprobación real y saludo (una vez)
+    private void greet() {
+        new Thread(new Runnable() { public void run() {
+            final List<String> problems = checkSystems();
+            int hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY);
+            final String text = Greeting.text(hour, problems);
+            brain.log("arranque", problems.isEmpty() ? "todos los sistemas operativos" : "avisos: " + problems.size());
+            JarvisApp.ui(new Runnable() { public void run() {
+                say(text, "jarvis");
+                refresh();
+                speakThen(text);
+            }});
+        }}).start();
+    }
+
+    /** Comprueba de verdad cada sistema. Devuelve lo que NO funciona (vacío = todo bien). */
+    private List<String> checkSystems() {
+        List<String> p = new ArrayList<String>();
+        StringBuilder h = new StringBuilder();
+        if (brain.isPaused()) p.add("estoy en pausa");
+        if (brain.apiKey.isEmpty()) { p.add("el cerebro Claude no tiene clave"); h.append("Claude: sin clave"); }
+        else {
+            try {
+                HttpURLConnection c = (HttpURLConnection) new URL(brain.baseUrl + "/v1/models?limit=1").openConnection();
+                c.setConnectTimeout(8000); c.setReadTimeout(8000);
+                c.setRequestProperty("x-api-key", brain.apiKey);
+                c.setRequestProperty("anthropic-version", Brain.API_VERSION);
+                int code = c.getResponseCode();
+                c.disconnect();
+                if (code == 200) h.append("Claude: conectado");
+                else if (code == 401 || code == 403) { p.add("la clave de Claude no es válida"); h.append("Claude: clave no válida"); }
+                else { p.add("Claude responde con error " + code); h.append("Claude: error ").append(code); }
+            } catch (Exception e) { p.add("no hay conexión con Claude"); h.append("Claude: sin conexión"); }
+        }
+        Voice v = JarvisApp.voice(this);
+        if (!v.usesElevenLabs()) { p.add("ElevenLabs no está configurado, uso la voz del teléfono"); h.append(" · ElevenLabs: sin clave"); }
+        else {
+            try { v.chooseVoice(); v.voices(); h.append(" · ElevenLabs: conectado"); }
+            catch (Exception e) { p.add("ElevenLabs no responde, uso la voz del teléfono"); h.append(" · ElevenLabs: ").append(e.getMessage()); }
+        }
+        File mem = new File(getFilesDir(), "memory");
+        if (!mem.isDirectory() || !mem.canWrite()) { p.add("la memoria no está disponible"); h.append(" · memoria: no disponible"); }
+        else h.append(" · memoria: ").append(brain.memories().size()).append(" recuerdos");
+        if (!Perms.granted(this, "android.permission.RECORD_AUDIO")) { p.add("el micrófono no tiene permiso"); h.append(" · micrófono: sin permiso"); }
+        h.append(" · MT5: no conectado");
+        health = h.toString();
+        return p;
     }
 
     // ================================================================== interfaz
@@ -118,7 +176,11 @@ public class MainActivity extends Activity {
         bar.addView(Ui.button(this, "🎤 Hablar", Ui.ACCENT, new View.OnClickListener() { public void onClick(View v) { micToggle(); } }));
         bar.addView(gap()); bar.addView(Ui.button(this, "📷 Cámara", Ui.TEXT, new View.OnClickListener() { public void onClick(View v) { camera(); } }));
         bar.addView(gap()); bar.addView(Ui.button(this, "📁 Archivo", Ui.TEXT, new View.OnClickListener() { public void onClick(View v) { pickFile(); } }));
+        bar.addView(gap()); bar.addView(Ui.button(this, "📈 Finanzas", Ui.TEXT, new View.OnClickListener() { public void onClick(View v) { finance(); } }));
         bar.addView(gap()); bar.addView(Ui.button(this, "📡 RADAR", Ui.TEXT, new View.OnClickListener() { public void onClick(View v) { radar(); } }));
+        bar.addView(gap());
+        voiceBtn = Ui.button(this, "🔊 Voz", Ui.TEXT, new View.OnClickListener() { public void onClick(View v) { toggleVoice(); } });
+        bar.addView(voiceBtn);
         bar.addView(gap()); bar.addView(Ui.button(this, "⚙ Panel", Ui.TEXT, new View.OnClickListener() { public void onClick(View v) { panel(); } }));
         bar.addView(gap());
         pauseBtn = Ui.button(this, "⏸ PAUSA", Ui.BAD, new View.OnClickListener() { public void onClick(View v) { togglePause(); } });
@@ -141,13 +203,16 @@ public class MainActivity extends Activity {
     private void refresh() {
         if (brain == null) return;
         Voice v = JarvisApp.voice(this);
-        String s = "cerebro: " + (brain.apiKey.isEmpty() ? "SIN CLAVE" : brain.brainState)
+        String s = health
+                + "\ncerebro: " + (brain.apiKey.isEmpty() ? "SIN CLAVE" : brain.brainState)
                 + (brain.lastMs > 0 ? " · " + String.format(Locale.US, "%.1f s", brain.lastMs / 1000.0) : "")
-                + "\nvoz: " + (v.usesElevenLabs() ? "ElevenLabs" : "Android") + " · servicio: " + (JarvisService.running ? "activo" : "parado")
+                + " · voz: " + (!v.enabled ? "DESACTIVADA" : v.usesElevenLabs() ? "ElevenLabs" + (v.voiceName.isEmpty() ? "" : " (" + v.voiceName + ")") : "Android")
+                + " · servicio: " + (JarvisService.running ? "activo" : "parado")
                 + (brain.isPaused() ? "\nPAUSA ACTIVA" : "");
         status.setText(s);
         status.setTextColor(brain.isPaused() ? Ui.BAD : Ui.DIM);
         pauseBtn.setText(brain.isPaused() ? "▶ Quitar pausa" : "⏸ PAUSA");
+        voiceBtn.setText(v.enabled ? "🔊 Voz" : "🔇 Voz");
         reactor.state = brain.isPaused() ? "en pausa" : busy ? "pensando" : v.isSpeaking() ? "hablando" : conversation ? "escuchando" : "en espera";
     }
 
@@ -180,6 +245,14 @@ public class MainActivity extends Activity {
         if (det != null && !String.valueOf(det).isEmpty() && !"null".equals(String.valueOf(det))) say(String.valueOf(det), "jarvis").setTextSize(13);
         if (r.get("warning") != null) say(String.valueOf(r.get("warning")), "sistema");
         if (r.get("approval") != null) approvalCard(Json.obj(r.get("approval")));
+        if (r.get("task") != null) say("✓ " + r.get("task"), "sistema");
+        if (r.get("report") != null) {
+            final String path = String.valueOf(r.get("report")), report = String.valueOf(det);
+            chat.addView(Ui.button(this, "Compartir informe…", Ui.ACCENT, new View.OnClickListener() { public void onClick(View v) {
+                startActivity(Intent.createChooser(new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, report), "Compartir informe"));
+                brain.log("informe", "compartido por el usuario");
+            }}), Ui.margins(this, 0, 4, 0, 0));
+        }
         if (Boolean.TRUE.equals(r.get("paused"))) stopAll(false);
         refresh();
         Map<String, Object> dev = Json.obj(r.get("device"));
@@ -270,6 +343,7 @@ public class MainActivity extends Activity {
         if ("camera_open".equals(a)) camera();
         else if ("pick_file".equals(a)) pickFile();
         else if ("radar".equals(a)) radar();
+        else if ("finance".equals(a)) finance();
         else if ("location".equals(a)) location();
         else if ("stop_all".equals(a)) stopAll(true);
         else if ("open_app".equals(a)) confirmOpen(String.valueOf(d.get("label")), String.valueOf(d.get("url")), String.valueOf(d.get("app")));
@@ -300,6 +374,16 @@ public class MainActivity extends Activity {
     }
 
     private void radar() { startActivity(new Intent(this, RadarActivity.class)); }
+
+    private void finance() { if (brain != null) startActivity(new Intent(this, FinanceActivity.class)); }
+
+    private void toggleVoice() {
+        Voice v = JarvisApp.voice(this);
+        v.enabled = !v.enabled;
+        JarvisApp.store(this).flag("voice_off", !v.enabled);
+        if (!v.enabled) v.stopSpeaking();
+        refresh();
+    }
 
     private void location() {
         if (!Perms.granted(this, "android.permission.ACCESS_FINE_LOCATION")) {
@@ -467,6 +551,8 @@ public class MainActivity extends Activity {
                 + "\nVoz: " + (JarvisApp.voice(this).usesElevenLabs() ? "ElevenLabs" : "voz de Android") + (JarvisApp.voice(this).lastError.isEmpty() ? "" : " · " + JarvisApp.voice(this).lastError)
                 + "\nServicio en segundo plano: " + (JarvisService.running ? "ACTIVO" + (JarvisService.clapOn ? " (escucha palmadas)" : "") : "parado")
                 + "\nNotas: " + brain.vault.notes.size() + " · memoria: " + brain.memories().size() + " · borradores pendientes: " + brain.pending().size()
+                + "\nComprobación al arrancar: " + health
+                + "\nAgentes: investigador · analistas técnico/tendencias/liquidez · estratega · gestor de riesgo · ejecutor MT5 (no conectado) · auditor"
                 + "\nPAUSA: " + (brain.isPaused() ? "SÍ (" + brain.pausedBy() + ")" : "no")
                 + (brain.lastError.isEmpty() ? "" : "\nÚltimo error: " + brain.lastError), 13, Ui.TEXT));
         LinearLayout r1 = Ui.row(this);
@@ -484,6 +570,42 @@ public class MainActivity extends Activity {
         r2.addView(gap());
         r2.addView(Ui.button(this, muted ? "Activar voz" : "Silenciar voz", Ui.TEXT, new View.OnClickListener() { public void onClick(View v) { muted = !muted; dlg[0].dismiss(); } }));
         p.addView(r2);
+
+        p.addView(sectionTitle("VOZ"));
+        final Voice vo = JarvisApp.voice(this);
+        p.addView(Ui.text(this, "ElevenLabs: " + (vo.usesElevenLabs() ? "conectado · voz «" + (vo.voiceName.isEmpty() ? "se elige al hablar" : vo.voiceName) + "» · calidad "
+                + ("eleven_flash_v2_5".equals(vo.model) ? "rápida" : "natural") : "sin clave (voz de Android)")
+                + "\nInterrupción al hablar: " + (vo.bargeIn ? "activada" : "desactivada"), 13, Ui.TEXT));
+        LinearLayout rv = Ui.row(this);
+        rv.addView(Ui.button(this, "Elegir voz", Ui.ACCENT, new View.OnClickListener() { public void onClick(View v) { dlg[0].dismiss(); chooseVoice(); } }));
+        rv.addView(gap());
+        rv.addView(Ui.button(this, "eleven_flash_v2_5".equals(vo.model) ? "Calidad: natural" : "Calidad: rápida", Ui.TEXT, new View.OnClickListener() { public void onClick(View v) {
+            vo.model = "eleven_flash_v2_5".equals(vo.model) ? "eleven_multilingual_v2" : "eleven_flash_v2_5";
+            JarvisApp.store(MainActivity.this).put("voice_model", vo.model); dlg[0].dismiss();
+        }}));
+        p.addView(rv);
+        LinearLayout rv2 = Ui.row(this);
+        rv2.addView(Ui.button(this, vo.bargeIn ? "Interrupción: desactivar" : "Interrupción: activar", Ui.TEXT, new View.OnClickListener() { public void onClick(View v) {
+            vo.bargeIn = !vo.bargeIn; JarvisApp.store(MainActivity.this).flag("bargein_off", !vo.bargeIn); dlg[0].dismiss();
+        }}));
+        p.addView(rv2);
+        p.addView(Ui.text(this, "Volumen de JARVIS: " + Math.round(vo.volume * 100) + " %", 12, Ui.DIM));
+        android.widget.SeekBar vol = new android.widget.SeekBar(this);
+        vol.setMax(100);
+        vol.setProgress(Math.round(vo.volume * 100));
+        vol.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
+            public void onProgressChanged(android.widget.SeekBar sb, int v, boolean u) { if (u) { vo.volume = Math.max(0.05f, v / 100f); } }
+            public void onStartTrackingTouch(android.widget.SeekBar sb) {}
+            public void onStopTrackingTouch(android.widget.SeekBar sb) {
+                Store st = JarvisApp.store(MainActivity.this); st.num("volume", Math.round(vo.volume * 100)); st.num("volume_set", 1);
+            }
+        });
+        p.addView(vol);
+
+        p.addView(sectionTitle("TAREAS"));
+        List<Map<String, Object>> ts = brain.tasks();
+        if (ts.isEmpty()) p.addView(Ui.text(this, "Ninguna. Diga «JARVIS, agregá una tarea…».", 13, Ui.DIM));
+        for (Map<String, Object> t : ts) p.addView(Ui.text(this, ("hecha".equals(t.get("estado")) ? "✓ " : "• ") + t.get("texto"), 13, "hecha".equals(t.get("estado")) ? Ui.DIM : Ui.TEXT));
 
         p.addView(sectionTitle("PERMISOS (estado real de Android)"));
         for (int i = 0; i < Perms.ALL.length; i++) {
@@ -533,6 +655,34 @@ public class MainActivity extends Activity {
         StringBuilder b = new StringBuilder();
         for (String s : l) b.append(s).append('\n');
         return b.toString().trim();
+    }
+
+    private void chooseVoice() {
+        final Voice v = JarvisApp.voice(this);
+        if (!v.usesElevenLabs()) { Toast.makeText(this, "Sin clave de ElevenLabs.", Toast.LENGTH_LONG).show(); return; }
+        new Thread(new Runnable() { public void run() {
+            try {
+                final List<Map<String, Object>> vs = v.voices();
+                java.util.Collections.sort(vs, new java.util.Comparator<Map<String, Object>>() {
+                    public int compare(Map<String, Object> a, Map<String, Object> b) { return Voice.score(b) - Voice.score(a); }
+                });
+                final String[] names = new String[vs.size()];
+                for (int i = 0; i < vs.size(); i++) {
+                    Map<String, Object> l = Json.obj(vs.get(i).get("labels"));
+                    names[i] = vs.get(i).get("name") + (l == null ? "" : " · " + l.values());
+                }
+                JarvisApp.ui(new Runnable() { public void run() {
+                    new AlertDialog.Builder(MainActivity.this).setTitle("Voz de JARVIS (primero las más graves y masculinas)")
+                            .setItems(names, new DialogInterface.OnClickListener() { public void onClick(DialogInterface d, int w) {
+                                v.setVoice(Json.str(vs.get(w).get("voice_id")), String.valueOf(vs.get(w).get("name")));
+                                refresh();
+                                v.speak("Así sonaré a partir de ahora, señor Rafael.", null);
+                            }}).show();
+                }});
+            } catch (final Exception e) {
+                JarvisApp.ui(new Runnable() { public void run() { Toast.makeText(MainActivity.this, "No pude leer sus voces: " + e.getMessage(), Toast.LENGTH_LONG).show(); } });
+            }
+        }}).start();
     }
 
     private void chooseModel() {

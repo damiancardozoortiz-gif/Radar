@@ -21,7 +21,11 @@ class H(BaseHTTPRequestHandler):
                               "beta": self.headers.get("anthropic-beta"), "effort": body.get("output_config", {}).get("effort")}) + "\n"); LOG.flush()
         text = text.split("Mensaje:", 1)[1].split("\n", 1)[0] if "Mensaje:" in text else text  # solo la frase del usuario
         if "LENTO" in text: time.sleep(5)
+        tools = [t.get("type") for t in body.get("tools", [])]
+        LOG.write(json.dumps({"tools": tools, "msg": text[:40]}) + "\n"); LOG.flush()
         if has_image: rep = {"decir": "Veo un cuadrado rojo.", "detalle": "", "recordar": None}
+        elif "informe" in text.lower(): rep = {"decir": "Informe listo, señor Rafael.", "detalle": "# Informe\n" + "Hallazgo con fuente https://ejemplo.org. " * 10, "recordar": None}
+        elif "tarea" in text.lower(): rep = {"decir": "Tarea creada: llamar al banco.", "detalle": "", "recordar": None, "tarea": {"accion": "crear", "texto": "llamar al banco"}}
         elif "Recuerda" in text: rep = {"decir": "He guardado: la cita del dentista es el jueves.", "detalle": "", "recordar": "la cita del dentista es el jueves"}
         elif "borrador" in text: rep = {"decir": "Borrador listo.", "detalle": "**Borrador**\nHola Ricardo, ¿te va el jueves?", "recordar": None}
         else: rep = {"decir": f"Respuesta simulada número {len(body['messages'])}.", "detalle": "", "recordar": None}
