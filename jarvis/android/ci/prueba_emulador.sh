@@ -60,10 +60,11 @@ print([t for t in re.findall(r' text=\"([^\"]+)\"',x)][:25]); print('tamaño del
 }
 captura() {  # captura y la deja también en el registro (reducida) para poder verla sin descargar artefactos
   adb exec-out screencap -p > "$OUT/$1.png"
-  if command -v convert >/dev/null; then
-    convert "$OUT/$1.png" -resize 360x -quality 55 "$OUT/$1.jpg"
-    echo "=== CAPTURA $1 INICIO ==="; base64 -w 120 "$OUT/$1.jpg"; echo "=== CAPTURA $1 FIN ==="
+  adb exec-out screencap > "$OUT/$1.raw"
+  if python3 "$(dirname "$0")/reducir.py" "$OUT/$1.raw" "$OUT/$1-reducida.png" 200; then
+    echo "=== CAPTURA $1 INICIO ==="; base64 -w 150 "$OUT/$1-reducida.png"; echo "=== CAPTURA $1 FIN ==="
   fi
+  rm -f "$OUT/$1.raw"
 }
 if tap_text "Empezar" && tap_text "Guardar y seguir" && tap_text "Terminar"; then
   sleep 12
