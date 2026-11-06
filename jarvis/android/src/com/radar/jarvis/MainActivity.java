@@ -60,8 +60,8 @@ public class MainActivity extends Activity {
     private LinearLayout chat, chatWin, results, historyBox;
     private ScrollView resultsScroll, historyScroll;
     private TextView chatIcon, resultsIcon, labIcon, evoIcon, thinkingLine;
-    private LinearLayout evoBox;
-    private ScrollView evoScroll;
+    private LinearLayout evoBox, neuralBox;
+    private ScrollView evoScroll, neuralScroll;
     private boolean unseenChat, unseenResults, unseenLab;
     private LinearLayout labBox;
     private ScrollView labScroll;
@@ -94,6 +94,7 @@ public class MainActivity extends Activity {
             chat.removeAllViews();
             for (Map<String, Object> d : br.pending()) approvalCard(d);  // borradores que sobrevivieron
             refresh();
+            new Thread(new Runnable() { public void run() { JarvisApp.neural(); } }, "neural").start();  // carga o entrena la red sin bloquear
             JarvisApp.evoListener = new JarvisApp.EvoListener() { public void step(String r) { evoStep(r); } };
             if ("ACTIVA".equals(JarvisApp.evolution(MainActivity.this).missionState())) JarvisApp.ensureRunner();  // la misión sigue tras reabrir la app
             if (!JarvisApp.greeted) { JarvisApp.greeted = true; greet(); }
@@ -210,6 +211,9 @@ public class MainActivity extends Activity {
         evoScroll = new ScrollView(this);
         evoBox = Ui.col(this);
         evoScroll.addView(evoBox);
+        neuralScroll = new ScrollView(this);
+        neuralBox = Ui.col(this);
+        neuralScroll.addView(neuralBox);
 
         LinearLayout dock = Ui.row(this);
         HorizontalScrollView dockScroll = new HorizontalScrollView(this);
@@ -231,6 +235,7 @@ public class MainActivity extends Activity {
         bar.addView(icon("🕘", "Historial", new View.OnClickListener() { public void onClick(View v) { toggleWin("history"); } }));
         labIcon = icon("🧪", "Laboratorio", new View.OnClickListener() { public void onClick(View v) { toggleWin("lab"); } });
         bar.addView(labIcon);
+        bar.addView(icon("🧠", "Neural", new View.OnClickListener() { public void onClick(View v) { toggleWin("neural"); } }));
         evoIcon = icon("🔥", "Evolución", new View.OnClickListener() { public void onClick(View v) { toggleWin("evo"); } });
         bar.addView(evoIcon);
         bar.addView(icon("🎬", "Editor", new View.OnClickListener() { public void onClick(View v) { toggleWin("editor"); } }));
@@ -280,6 +285,7 @@ public class MainActivity extends Activity {
             windows.open("editor", "Editor de vídeo", e);
         }
         else if ("panel".equals(id)) panel();
+        else if ("neural".equals(id)) { fillNeural(); windows.open("neural", "Neural Core", neuralScroll); }
         else if ("evo".equals(id)) { fillEvo(); windows.open("evo", "Evolución · FÉNIX 80", evoScroll); }
         else if ("lab".equals(id)) { unseenLab = false; fillLab(); windows.open("lab", "Laboratorio", labScroll); }
         badges();
@@ -379,8 +385,9 @@ public class MainActivity extends Activity {
         chat.addView(thinkingLine);
         refresh();
         new Thread(new Runnable() { public void run() {
-            final Map<String, Object> r = brain.answer(q);
-            JarvisApp.ui(new Runnable() { public void run() { busy = false; show(r); } });
+            com.radar.jarvis.core.NeuralCore nc = JarvisApp.neural();  // pasa por los 10 nodos; el razonamiento sigue siendo Brain + Claude
+            final Map<String, Object> r = nc != null ? nc.process(q) : brain.answer(q);
+            JarvisApp.ui(new Runnable() { public void run() { busy = false; show(r); if (windows.isVisible("neural")) fillNeural(); } });
         }}).start();
     }
 
@@ -411,6 +418,53 @@ public class MainActivity extends Activity {
         Map<String, Object> dev = Json.obj(r.get("device"));
         if (dev != null) device(dev);
         speakThen(sayTxt);
+    }
+
+    // ================================================================== NEURAL CORE: estado real de los nodos y de la red
+    private void fillNeural() {
+        neuralBox.removeAllViews();
+        final com.radar.jarvis.core.NeuralCore nc = JarvisApp.neuralIfReady();
+        if (nc == null || brain == null) { neuralBox.addView(Ui.text(this, "Cargando la red neuronal…", 12, Ui.DIM)); return; }
+        nc.setConnected("razonamiento", !brain.apiKey.isEmpty(), brain.apiKey.isEmpty() ? "falta la clave de Claude" : "Claude");
+        nc.setConnected("investigacion", !brain.apiKey.isEmpty(), brain.apiKey.isEmpty() ? "falta la clave de Claude" : "búsqueda web de Claude");
+        Map<String, Object> st = nc.status();
+        neuralBox.addView(Ui.text(this, "10 nodos conectados al cerebro de JARVIS. La parte neuronal en sentido estricto es la red que decide la "
+                + "intención (entrenada en este teléfono); el razonamiento es de Claude.", 12, Ui.DIM));
+        neuralBox.addView(labTitle("NODOS (estado real)"));
+        for (Map.Entry<String, Object> e : Json.obj(st.get("nodos")).entrySet()) {
+            Map<String, Object> n = Json.obj(e.getValue());
+            String s = String.valueOf(n.get("estado"));
+            int col = "listo".equals(s) ? Ui.OK : "procesando".equals(s) ? Ui.ACCENT : "error".equals(s) || "desconectado".equals(s) ? Ui.BAD : Ui.DIM;
+            neuralBox.addView(Ui.text(this, "● " + e.getKey() + " · " + s + " · " + n.get("veces") + " veces · " + n.get("ms") + " ms"
+                    + (String.valueOf(n.get("nota")).isEmpty() ? "" : "\n   " + n.get("nota")), 12, col));
+        }
+        Map<String, Object> red = Json.obj(st.get("red"));
+        neuralBox.addView(labTitle("RED NEURONAL DE INTENCIÓN"));
+        neuralBox.addView(Ui.text(this, red.get("rasgos") + " rasgos → " + red.get("neuronas_ocultas") + " neuronas → " + red.get("intenciones") + " intenciones"
+                + "\nEntrenada con " + red.get("entrenada_con") + " ejemplos · validación interna " + (red.get("precision_validacion") == null ? "?" : red.get("precision_validacion") + " %")
+                + "\nEjemplos reales: " + red.get("ejemplos_reales") + " · correcciones suyas: " + red.get("correcciones")
+                + "\nDecisiones: reglas " + red.get("decisiones_reglas") + " · red " + red.get("decisiones_red")
+                + (red.get("acuerdo_con_reglas") != null ? " · acuerdo con las reglas " + red.get("acuerdo_con_reglas") + " %" : ""), 12, Ui.TEXT));
+        Map<String, Object> lv = com.radar.jarvis.core.NeuralMemory.levels(brain);
+        neuralBox.addView(labTitle("MEMORIA POR NIVELES"));
+        neuralBox.addView(Ui.text(this, String.valueOf(lv), 12, Ui.TEXT));
+        final Map<String, Object> last = nc.lastDecision();
+        if (last != null) {
+            Map<String, Object> d = Json.obj(last.get("decision"));
+            neuralBox.addView(labTitle("ÚLTIMA DECISIÓN"));
+            neuralBox.addView(Ui.text(this, "«" + last.get("pedido") + "» → " + d.get("ruta") + " (" + d.get("fuente") + ", " + d.get("confianza") + ")", 12, Ui.TEXT));
+            neuralBox.addView(Ui.button(this, "Corregir intención…", Ui.ACCENT, new View.OnClickListener() { public void onClick(View v) {
+                final String[] opts = com.radar.jarvis.core.NeuralCore.INTENTS;
+                new AlertDialog.Builder(MainActivity.this).setTitle("¿Qué era ese pedido?").setItems(opts, new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface di, final int w) {
+                        new Thread(new Runnable() { public void run() {
+                            try { nc.correct(String.valueOf(last.get("pedido")), opts[w]); } catch (Exception ignored) {}
+                            JarvisApp.ui(new Runnable() { public void run() { say("Aprendido: ese pedido era «" + opts[w] + "». La red se reentrenó.", "sistema"); fillNeural(); } });
+                        }}).start();
+                    }
+                }).show();
+            }}), Ui.margins(this, 0, 6, 0, 0));
+        }
     }
 
     // ================================================================== FÉNIX 80 · evolución supervisada

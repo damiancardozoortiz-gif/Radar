@@ -32,6 +32,7 @@ for f in index.html cockpit6.js manifest.webmanifest sw.js icon-192.png; do [ -f
 
 # ---- autoconocimiento: inventario de compilación, código fuente propio y pendientes conocidos
 cp pendientes.json $B/assets/pendientes.json
+cp neural-corpus.json $B/assets/neural-corpus.json
 python3 - "$B/assets" "$HERE" <<'PY'
 import json, os, re, sys, datetime
 out, here = sys.argv[1], sys.argv[2]
@@ -55,7 +56,7 @@ PY
 if [ "${1:-}" = "test" ]; then
   exec > >(tee $B/salida-pruebas.txt)  # para guardar el resumen en .pruebas.txt (lo lee el inventario de JARVIS)
   mkdir -p $B/test-obj
-  javac -nowarn -encoding UTF-8 -d $B/test-obj src/com/radar/jarvis/core/*.java src/com/radar/jarvis/core/fin/*.java test/CoreTest.java test/FinTest.java test/MetaApiTest.java test/DisciplineTest.java test/UiTest.java test/LabTest.java test/NodeSandbox.java test/EvolutionTest.java test/FenixTest.java test/VoiceTest.java
+  javac -nowarn -encoding UTF-8 -d $B/test-obj src/com/radar/jarvis/core/*.java src/com/radar/jarvis/core/fin/*.java test/CoreTest.java test/FinTest.java test/MetaApiTest.java test/DisciplineTest.java test/UiTest.java test/LabTest.java test/NodeSandbox.java test/EvolutionTest.java test/FenixTest.java test/VoiceTest.java test/NeuralTest.java
   PORT=$(python3 -c "import socket;s=socket.socket();s.bind(('127.0.0.1',0));print(s.getsockname()[1])")
   rm -f $B/mock.log; python3 test/mock_anthropic.py $PORT $B/mock.log & MOCK=$!
   sleep 0.6
@@ -86,6 +87,9 @@ if [ "${1:-}" = "test" ]; then
   echo "--- FÉNIX 80 + VULKAN (misión completa con Claude SIMULADO y aislamiento Node):"
   rm -rf $B/test-fenix; set +e; LC_ALL=C.UTF-8 java -Dsun.jnu.encoding=UTF-8 -Dfile.encoding=UTF-8 -cp $B/test-obj FenixTest $B/test-fenix $B/assets $PORT $B/mock.log; rc8=$?; set -e
   [ $rc8 -ne 0 ] && rc=$rc8
+  echo "--- Neural Core (red neuronal real entrenada aquí, nodos, plan, memoria; Claude SIMULADO):"
+  rm -rf $B/test-neural; set +e; LC_ALL=C.UTF-8 java -Dsun.jnu.encoding=UTF-8 -Dfile.encoding=UTF-8 -cp $B/test-obj NeuralTest $B/test-neural $B/assets $PORT $B/mock.log neural-corpus.json; rc10=$?; set -e
+  [ $rc10 -ne 0 ] && rc=$rc10
   echo "--- voz (detección de fin de frase con señales SINTÉTICAS y medición de tiempos):"
   PORT3=$(python3 -c "import socket;s=socket.socket();s.bind(('127.0.0.1',0));print(s.getsockname()[1])")
   python3 test/mock_tts_stream.py $PORT3 & MOCK3=$!; sleep 0.5

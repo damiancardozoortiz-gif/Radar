@@ -25,9 +25,10 @@ public final class UiCommands {
         {"panel", "(panel|panel de control|ajustes|configuracion|administracion)"},
         {"lab", "(laboratorio|lab|laboratorio de automejora)"},
         {"evo", "(evolucion|panel de evolucion|fenix|motor de evolucion)"},
+        {"neural", "(red neuronal|neural core|nucleo neuronal|cerebro neuronal)"},
     };
 
-    static final String[] NAMES = {"el chat", "los resultados", "el historial", "el editor de vídeo", "el panel", "el laboratorio", "el panel de evolución"};
+    static final String[] NAMES = {"el chat", "los resultados", "el historial", "el editor de vídeo", "el panel", "el laboratorio", "el panel de evolución", "el Neural Core"};
 
     public static Map<String, Object> parse(String text) {
         if (text == null) return null;

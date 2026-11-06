@@ -2,7 +2,7 @@
 <!-- JARVIS para Android. Cada permiso se pide en tiempo de ejecución, de uno en uno y solo desde el asistente
      o cuando una función lo necesita. INTERNET, FOREGROUND_SERVICE, WAKE_LOCK y VIBRATE los concede Android al instalar. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.radar.jarvis" android:versionCode="9" android:versionName="3.1.0-voz">
+    package="com.radar.jarvis" android:versionCode="10" android:versionName="3.2.0-neural">
 
     <uses-sdk android:minSdkVersion="23" android:targetSdkVersion="29" />
 

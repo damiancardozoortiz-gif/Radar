@@ -130,3 +130,16 @@ desinstalar la versión anterior antes de instalar la nueva.
   sonar, MP3 completo como antes; después, voz de Android. Botón en el panel para comparar con/sin streaming.
 - Reconocimiento y voz de Android en español de Argentina (es-AR; si no está, es-US/es-ES).
 - Conexiones a Claude y ElevenLabs abiertas de antemano al arrancar (sin enviar datos).
+
+## 3.2.0-neural · NEURAL CORE, etapa 2: núcleo, red neuronal y memoria
+- `core/NeuralCore`: 10 nodos (percepción, lenguaje, memoria, planificación, razonamiento, investigación, ejecución,
+  validación, aprendizaje, respuesta) conectados al Brain existente (no lo duplica). Estado real por nodo (inactivo,
+  procesando, listo, error, desconectado), veces, tiempo y nota. Ventana 🧠 «Neural Core».
+- `core/NeuralNet`: RED NEURONAL REAL pequeña (1024 rasgos → 24 neuronas ReLU → 10 intenciones, softmax), entrenada en el
+  teléfono con 110 ejemplos semilla (`neural-corpus.json`), los pedidos reales (×2) y las correcciones del usuario (×3).
+  30 frases nuevas: 28/30. Validación interna (1 de cada 5 ejemplos): 50 % (pocos datos). Por eso las reglas mandan y la
+  red solo decide cuando las reglas no reconocen el pedido (o solo suponen «buscar en notas») y está segura (≥ 80 %).
+- Planificación: pedidos compuestos («investigá X y prepará una publicación») → pasos en orden; cada paso recibe el
+  resultado del anterior. Herramienta nueva «redactar» (publicaciones, guiones, textos; nunca publica).
+- `core/NeuralMemory`: memoria en 8 niveles sobre lo que ya existe. La conversación reciente ahora persiste al cerrar.
+- Corregida una regla vieja: «redactá un mensaje…» iba a leer correo.

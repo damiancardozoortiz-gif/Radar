@@ -136,6 +136,15 @@ public class JarvisApp extends Application {
         runner.start();
     }
 
+    // ================================================================== NEURAL CORE
+    private static com.radar.jarvis.core.NeuralCore neural;
+    /** Neural Core (carga los pesos guardados o entrena la red la primera vez; llamar fuera del hilo de la pantalla). */
+    public static synchronized com.radar.jarvis.core.NeuralCore neural() {
+        if (neural == null && brain != null) neural = new com.radar.jarvis.core.NeuralCore(brain, brain.dataDir(), brain.assetText("neural-corpus.json"));
+        return neural;
+    }
+    public static com.radar.jarvis.core.NeuralCore neuralIfReady() { return neural; }
+
     private static Discipline discipline;
     /** Regla de autodisciplina financiera (estado en disco: sobrevive a reinicios). */
     public static synchronized Discipline discipline(Context c) {

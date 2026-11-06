@@ -75,9 +75,11 @@ public final class Brain {
         } catch (Exception ignored) {}
         this.today = t;
         loadPause();
+        loadHistory();
     }
 
     public String today() { return today; }
+    public File dataDir() { return dir; }
 
     // ================================================================== PAUSA
     private File f(String name) { return new File(new File(dir, "estado"), name); }
@@ -113,7 +115,10 @@ public final class Brain {
     }
 
     // ================================================================== respuesta
-    public Map<String, Object> answer(String question) {
+    public Map<String, Object> answer(String question) { return answer(question, null); }
+
+    /** forcedTool: la intención que decidió el Neural Core (null = la decide Router, como siempre). */
+    public Map<String, Object> answer(String question, String forcedTool) {
         long t0 = System.currentTimeMillis();
         if (paused) return paused(question);
         Map<String, Object> dev = Router.device(question);
@@ -138,7 +143,7 @@ public final class Brain {
             return Json.map("say", "Para aprobar el borrador, pulsa Aprobar en pantalla. Yo no envío nada.", "tool", "autorizacion",
                     "brain", "app", "approval", pend.get(pend.size() - 1), "ms", 0L);
         }
-        String tool = Router.tool(question, vault);
+        String tool = forcedTool != null ? forcedTool : Router.tool(question, vault);
         String context = context(tool, question);
         Map<String, Object> out = Json.map("tool", tool, "brain", "claude");
         try {
@@ -222,6 +227,7 @@ public final class Brain {
         if ("claude".equals(out.get("brain"))) synchronized (history) {  // el respaldo no es Claude: no va al historial
             history.add(new String[]{question, String.valueOf(out.get("say"))});
             while (history.size() > MAX_TURNS) history.removeFirst();
+            saveHistory();
         }
         return out;
     }
@@ -344,6 +350,30 @@ public final class Brain {
                     "warning", "Cerebro no disponible (" + e.getMessage() + ").", "ms", System.currentTimeMillis() - t0);
         }
     }
+
+    // ================================================================== memoria de conversación (persiste al cerrar la app)
+    private void saveHistory() {
+        List<Object> l = new ArrayList<Object>();
+        synchronized (history) { for (String[] h : history) l.add(Json.list(h[0], h[1])); }
+        try {
+            File f = new File(dir, "estado/historial.json"), tmp = new File(dir, "estado/historial.json.tmp");
+            java.io.FileOutputStream o = new java.io.FileOutputStream(tmp); o.write(Json.write(l).getBytes(UTF8)); o.close();
+            if (!tmp.renameTo(f)) { f.delete(); tmp.renameTo(f); }
+        } catch (IOException e) { error("historial: " + e.getMessage()); }
+    }
+
+    private void loadHistory() {
+        try {
+            String s = Lab.read(new File(dir, "estado/historial.json"));
+            if (s == null) return;
+            synchronized (history) {
+                for (Object o : Json.arr(Json.parse(s))) { List<Object> p = Json.arr(o); if (p != null && p.size() == 2) history.add(new String[]{String.valueOf(p.get(0)), String.valueOf(p.get(1))}); }
+                while (history.size() > MAX_TURNS) history.removeFirst();
+            }
+        } catch (Exception ignored) {}
+    }
+
+    public int historySize() { synchronized (history) { return history.size(); } }
 
     /** Aprendizaje útil de una tarea (se registra; se usa en las siguientes). */
     void saveLearning(String area, String task, String lesson) { experience.learn(area, task, lesson); }
@@ -653,6 +683,8 @@ public final class Brain {
         if ("recordar".equals(tool)) return "Te pide que recuerdes algo. Devuelve en \"recordar\" UNA cosa autocontenida y di exactamente qué guardas.";
         if ("investigar_en_la_web".equals(tool)) return RESEARCH;
         if ("aprender".equals(tool)) return LEARN;
+        if ("redactar".equals(tool)) return "Redacta el contenido pedido (publicación, posteo, guion, texto o mensaje) completo en \"detalle\", "
+                + "listo para copiar, con el tono que corresponda. No lo publiques ni lo envíes: el señor Rafael decide. En \"decir\", una frase.";
         if ("informe".equals(tool)) return "Prepara un INFORME completo en \"detalle\" (markdown): resumen ejecutivo, hallazgos, datos con su fuente (URL o archivo), "
                 + "riesgos y recomendaciones. Usa web_search si hace falta información actual. En \"decir\", una frase que resuma el informe.";
         if ("tareas".equals(tool)) {

@@ -20,6 +20,7 @@ class H(BaseHTTPRequestHandler):
         LOG.write(json.dumps({"problems": problems, "turns": len(body["messages"]), "image": has_image, "fallbacks": body.get("fallbacks"),
                               "beta": self.headers.get("anthropic-beta"), "effort": body.get("output_config", {}).get("effort")}) + "\n"); LOG.flush()
         LOG.write(json.dumps({"lessons": "aprendizajes y fallos anteriores" in text, "capabilities": "## Capacidades" in body.get("system", "")}) + "\n"); LOG.flush()
+        if "Resultado del paso anterior" in text: LOG.write(json.dumps({"paso_anterior": True, "tool_line": [l for l in text.split("\n") if l.startswith("Herramienta")][:1]}) + "\n"); LOG.flush()
         if "AGENTE: " in text:  # agentes de VULKAN: respuesta JSON propia de cada agente
             ag = text.split("AGENTE: ", 1)[1].split("\n", 1)[0].strip()
             LOG.write(json.dumps({"agente": ag}) + "\n"); LOG.flush()
