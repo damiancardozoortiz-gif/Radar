@@ -88,6 +88,7 @@ if tap_text "Empezar" && tap_text "Guardar y seguir" && tap_text "Terminar"; the
   fi
   captura principal
   if tap_text "Agentes"; then sleep 3; captura neural; echo "VENTANA NEURAL CORE: abierta" | tee -a "$OUT/resumen.txt"; fi
+  if tap_text "Creador"; then sleep 3; captura editor; echo "VENTANA EDITOR DE VÍDEO: abierta" | tee -a "$OUT/resumen.txt"; fi
   PID4=$(adb shell pidof com.radar.jarvis | tr -d '\r')
   [ -n "$PID4" ] && echo "TRAS ABRIR VENTANAS: la app sigue viva" | tee -a "$OUT/resumen.txt" || { echo "TRAS ABRIR VENTANAS: SE CERRÓ" | tee -a "$OUT/resumen.txt"; adb logcat -d | grep -A 15 "FATAL EXCEPTION" | head -40; exit 1; }
 else

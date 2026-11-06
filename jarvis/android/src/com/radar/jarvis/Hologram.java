@@ -91,8 +91,9 @@ public class Hologram extends View {
         // ---- fondo: degradado y suelo en perspectiva
         if (bg == null || bgH != (int) h) { bg = new LinearGradient(0, 0, 0, h, Color.rgb(3, 8, 14), Color.rgb(2, 14, 22), Shader.TileMode.CLAMP); bgH = (int) h; }
         fill.setShader(bg); c.drawRect(0, 0, w, h, fill); fill.setShader(null);
-        float cx = w * 0.5f, floorY = h * 0.80f, cy = h * 0.44f;
-        float R = Math.min(w * 0.42f, h * 0.27f);
+        float railW = d * 72;  // el menú lateral ocupa la izquierda: la figura se centra en el espacio libre
+        float cx = railW + (w - railW) * 0.5f, floorY = h * 0.74f, cy = h * 0.42f;
+        float R = Math.min((w - railW) * 0.36f, h * 0.24f);
         stroke.setStrokeWidth(d);
         for (int i = 0; i < 7; i++) {  // líneas del suelo
             float y = floorY + (h - floorY) * (i / 7f) * (i / 7f);
@@ -170,10 +171,12 @@ public class Hologram extends View {
         if (alert != null) {
             float a = 0.5f + 0.5f * (float) Math.sin(sec * 5);
             stroke.setColor(alpha(Ui.BAD, 0.4f + 0.5f * a)); stroke.setStrokeWidth(d * 3); c.drawCircle(cx, cy, R * 1.04f, stroke);
-            text.setColor(Ui.BAD); text.setTextSize(d * 12); c.drawText(alert, cx, floorY + R * 0.36f, text);
+            text.setColor(Ui.BAD); text.setTextSize(d * 11); c.drawText(alert, cx, floorY + R * 0.32f, text);
         }
-        text.setColor(paused ? Ui.BAD : alpha(col, 0.9f)); text.setTextSize(d * 11);
-        c.drawText(paused ? "EN PAUSA" : state.toUpperCase(), cx, floorY + R * 0.36f + (alert != null ? d * 16 : 0), text);
+        // estado: bajo el título (siempre visible, aunque se oculten los paneles)
+        text.setTextAlign(Paint.Align.LEFT);
+        text.setColor(paused ? Ui.BAD : alpha(col, 0.9f)); text.setTextSize(d * 10);
+        c.drawText("● " + (paused ? "EN PAUSA" : state.toUpperCase()), d * 76, d * 58, text);
         if (getVisibility() == VISIBLE) postInvalidateOnAnimation();
     }
 
@@ -241,7 +244,8 @@ public class Hologram extends View {
         text.setTextSize(d * 9); text.setColor(alpha(Ui.DIM, a));
         c.drawText("NEURAL CORE 1.0", left, d * 43, text);
         // estado del sistema (arriba a la derecha)
-        float pw = Math.min(w * 0.46f, d * 190), px = w - pw - pad, py = d * 18, lh = d * 13;
+        boolean narrow = w < d * 420;  // pantallas estrechas: el panel va debajo del título para no taparlo
+        float pw = Math.min(w * (narrow ? 0.62f : 0.46f), d * 210), px = w - pw - pad, py = narrow ? d * 66 : d * 18, lh = d * 13;
         panel(c, px, py, pw, d * 22 + lh * hd.status.length, d, col, a, "ESTADO DEL SISTEMA");
         for (int i = 0; i < hd.status.length; i++) {
             boolean ok = i < hd.statusOk.length && hd.statusOk[i];
@@ -249,7 +253,7 @@ public class Hologram extends View {
             text.setColor(alpha(Ui.TEXT, a)); text.setTextSize(d * 9.5f); c.drawText(fit(hd.status[i], pw - d * 22), px + d * 18, py + d * 26 + i * lh, text);
         }
         // rendimiento y próximas mejoras (abajo)
-        float bh = d * 40, by = h - bh - d * 70;
+        float bh = d * 40, by = h - bh - d * 74;
         panel(c, left, by, (w - left) * 0.5f - pad, bh, d, col, a, "RENDIMIENTO");
         text.setColor(alpha(Ui.TEXT, a)); text.setTextSize(d * 9.5f); c.drawText(fit(hd.perf, (w - left) * 0.5f - pad - d * 12), left + d * 8, by + d * 30, text);
         float nx = left + (w - left) * 0.5f;

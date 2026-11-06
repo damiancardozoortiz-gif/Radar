@@ -220,10 +220,6 @@ public class MainActivity extends Activity {
         LinearLayout dock = Ui.row(this);
         HorizontalScrollView dockScroll = new HorizontalScrollView(this);
         dockScroll.addView(dock);
-        windows = new WindowHost(this, dock);
-        windows.setListener(new WindowHost.Listener() { public void changed() { badges(); } });
-        root.addView(windows, new FrameLayout.LayoutParams(-1, -1));
-
         // menú lateral (como la referencia): Centro, VULKAN, Agentes, Memoria, Investigación, Finanzas, Creador, Lab, Config
         LinearLayout rail = Ui.col(this);
         rail.addView(railItem("🏠", "Centro", new View.OnClickListener() { public void onClick(View v) { windows.hideAll(); } }));
@@ -244,6 +240,10 @@ public class MainActivity extends Activity {
         FrameLayout.LayoutParams rp = new FrameLayout.LayoutParams(Ui.dp(this, 64), -2, Gravity.START | Gravity.CENTER_VERTICAL);
         rp.leftMargin = Ui.dp(this, 6);
         root.addView(railScroll, rp);
+        windows = new WindowHost(this, dock);
+        windows.setListener(new WindowHost.Listener() { public void changed() { badges(); } });
+        root.addView(windows, new FrameLayout.LayoutParams(-1, -1));
+
 
         // acciones frecuentes abajo
         LinearLayout bottom = Ui.col(this);
