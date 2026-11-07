@@ -1,0 +1,8 @@
+[Unit]
+Description=C.R.D.O. prueba semanal de restauración
+Requires=docker.service
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/crdo/app/crdo/infra/scripts/restore.sh test

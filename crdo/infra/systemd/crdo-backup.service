@@ -1,0 +1,10 @@
+[Unit]
+Description=C.R.D.O. respaldo diario (prod)
+Requires=docker.service
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/crdo/app/crdo/infra/scripts/backup.sh prod
+Nice=10
+IOSchedulingClass=idle

@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# C.R.D.O. — CLI de operación (BORRADOR, no ejecutado).
+#   crdo deploy <versión> [--env prod|staging]   despliega una imagen versionada, con rollback si falla /health
+#   crdo rollback [--env prod|staging]           vuelve a la versión anterior registrada
+#   crdo status                                  estado de contenedores, disco y último respaldo
+set -euo pipefail
+
+APP=/opt/crdo/app/crdo/infra
+RELEASES=/opt/crdo/releases
+CMD="${1:-status}"; shift || true
+ENV_NAME=prod
+VERSION=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --env) ENV_NAME="$2"; shift 2 ;;
+    *) VERSION="$1"; shift ;;
+  esac
+done
+[[ "$ENV_NAME" == prod || "$ENV_NAME" == staging ]] || { echo "Entorno inválido" >&2; exit 1; }
+
+SECRETS_FILE="/opt/crdo/secrets/$ENV_NAME.env"
+FILES=(-f "$APP/compose.yml")
+[[ "$ENV_NAME" == staging ]] && FILES+=(-f "$APP/compose.staging.yml")
+SERVICES=(api worker scheduler postgres)
+[[ "$ENV_NAME" == prod ]] && SERVICES+=(caddy cloudflared)
+
+compose() { CRDO_VERSION="$1" docker compose -p "crdo-$ENV_NAME" --env-file "$SECRETS_FILE" "${FILES[@]}" "${@:2}"; }
+
+healthy() {
+  for _ in $(seq 1 20); do
+    docker exec "crdo-$ENV_NAME-api-1" python -c \
+      "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health')" >/dev/null 2>&1 && return 0
+    sleep 3
+  done
+  return 1
+}
+
+current() { tail -n1 "$RELEASES/$ENV_NAME.log" 2>/dev/null | awk '{print $2}'; }
+
+deploy() {
+  local v="$1" prev; prev="$(current || true)"
+  echo "Desplegando $v en $ENV_NAME (anterior: ${prev:-ninguna})"
+  compose "$v" pull api
+  compose "$v" run --rm api python -m crdo.db.migrate   # migraciones compatibles hacia atrás
+  compose "$v" up -d "${SERVICES[@]}"
+  if healthy; then
+    echo "$(date -Is) $v ok" >>"$RELEASES/$ENV_NAME.log"
+    echo "OK: $v en $ENV_NAME"
+  else
+    echo "FALLÓ /health. Volviendo a ${prev:-(sin versión previa)}" >&2
+    [[ -n "$prev" ]] && compose "$prev" up -d "${SERVICES[@]}"
+    echo "$(date -Is) $v failed" >>"$RELEASES/$ENV_NAME.log"
+    exit 1
+  fi
+}
+
+case "$CMD" in
+  deploy)   [[ -n "$VERSION" ]] || { echo "Falta versión" >&2; exit 1; }; deploy "$VERSION" ;;
+  rollback) prev="$(grep ' ok$' "$RELEASES/$ENV_NAME.log" | tail -n2 | head -n1 | awk '{print $2}')"
+            [[ -n "$prev" ]] || { echo "No hay versión anterior" >&2; exit 1; }; deploy "$prev" ;;
+  status)   docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'
+            df -h / | tail -n1
+            free -h | sed -n 2p ;;
+  *) echo "Comando desconocido: $CMD" >&2; exit 1 ;;
+esac

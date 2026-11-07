@@ -1,0 +1,19 @@
+# C.R.D.O. — Ajustes de staging (BORRADOR). Se combina con compose.yml:
+#   docker compose -p crdo-staging --env-file /opt/crdo/secrets/staging.env \
+#     -f compose.yml -f compose.staging.yml up -d api worker scheduler postgres
+# cloudflared y caddy son compartidos: los levanta solo el proyecto de producción.
+
+name: crdo-staging
+
+services:
+  api:
+    mem_limit: 512m
+    cpus: 1.0
+  worker:
+    mem_limit: 512m
+    cpus: 1.0
+  scheduler:
+    mem_limit: 128m
+  postgres:
+    mem_limit: 768m
+    cpus: 1.0
