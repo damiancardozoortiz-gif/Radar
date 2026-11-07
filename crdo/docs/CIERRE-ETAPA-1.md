@@ -72,12 +72,12 @@ Entorno: Ubuntu 24.04 x86_64 · PostgreSQL 16.15 · pgvector 0.6.0 · restic 0.1
 | **Sin pgvector** (simulación de Termux nativo) | 211 aprobadas + 8 **omitidas de forma declarada**; nunca se cuentan como aprobadas |
 | Versión de PostgreSQL distinta de la esperada | Se detiene con explicación (código 2), no prueba en silencio |
 | **Falla inyectada** a propósito (`CRDO_INJECT_FAILURE=1`) | Detectada: código 1, "HAY PRUEBAS FALLIDAS" |
-| Repo privado exportado (contra un repo git local) | Ver §2.2 |
+| Repo privado exportado (contra un repo git local, no GitHub) | 283/283 dentro del repo exportado (58 s); ver §7 |
 | Búsqueda de secretos en el repo | 0 coincidencias |
 
 ### 2.2 Exportación al repo privado
 
-Se completa al final de este documento (§7) con el resultado de la corrida sobre la versión definitiva.
+Resultado en §7.
 
 ## 3. Pruebas pendientes (no ejecutables sin servidor o cuentas)
 
@@ -174,4 +174,15 @@ bash tools/crdo-local doctor && bash tools/crdo-local test
 
 ## 7. Resultado de la exportación al repo privado (versión definitiva)
 
-Pendiente de completar con la corrida sobre el commit final.
+`tools/export-to-private-repo.sh` contra un repositorio git **local** vacío. No se usó GitHub ni se creó ningún
+repositorio remoto. Corrida sobre el commit `f920c1f`:
+
+| Verificación | Resultado |
+|---|---|
+| Exportación | Código 0. Historial de C.R.D.O. conservado (6 commits), `crdo/` pasa a ser la raíz |
+| Archivos `.env` versionados | 0 |
+| `bash tests/run-all.sh` **dentro del repo exportado** | Código 0: 219 + 29 + 19 + 16 = **283 aprobadas, 0 fallas** (58 s) |
+| Volver a exportar sobre un repo con contenido | Rechazado: "El repo destino ya tiene ramas. Por seguridad no se sobrescribe." |
+
+Cuando crees el repo privado en GitHub, el mismo comando lo publica. Esa acción afecta una cuenta externa:
+**requiere tu autorización**.
