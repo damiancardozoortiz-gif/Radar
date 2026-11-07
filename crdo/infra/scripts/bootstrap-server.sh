@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# C.R.D.O. — Endurecimiento inicial del VPS (BORRADOR v2, no ejecutado).
+# C.R.D.O. — Endurecimiento inicial del VPS (BORRADOR v3, no ejecutado).
+# Servidor objetivo: Hetzner CX33 (4 vCPU / 8 GB), Europa (Falkenstein/Núremberg/Helsinki).
 # Ubuntu Server 24.04 LTS. Ejecutar UNA vez como root, tras crear el servidor.
 # Uso: TS_AUTHKEY=tskey-... ADMIN_PUBKEY="ssh-ed25519 AAAA..." bash bootstrap-server.sh
 set -euo pipefail
@@ -93,5 +94,6 @@ cat <<EOF
   - Publicar el panel solo en tu red Tailscale:
       tailscale serve --bg --https=443  http://127.0.0.1:8000   # producción
       tailscale serve --bg --https=8443 http://127.0.0.1:8100   # staging
-  - systemctl enable --now crdo-backup.timer crdo-restore-test.timer crdo-opsd.service
+  - systemctl enable --now crdo-backup.timer crdo-restore-test.timer crdo-budget-guard.timer crdo-opsd.service
+  - Panel por Cloudflare (opcional, requiere dominio): ver infra/cloudflared/README.md
 EOF

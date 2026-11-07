@@ -1,16 +1,17 @@
-# C.R.D.O. — Servicios del NÚCLEO (BORRADOR v2, Etapa 1). No desplegado.
+# C.R.D.O. — Servicios (BORRADOR v3, Etapa 1). No desplegado.
+# Servidor objetivo: Hetzner CX33 (4 vCPU / 8 GB), Europa. Topes pensados para que producción + staging
+# quepan juntos con margen.
 #
-# Uso previsto (lo hace scripts/crdo):
 #   docker compose -p crdo-prod    --env-file /opt/crdo/secrets/prod.env    -f compose.yml up -d
 #   docker compose -p crdo-staging --env-file /opt/crdo/secrets/staging.env -f compose.yml -f compose.staging.yml up -d
+#   + perfil "edge" (Cloudflare Tunnel) cuando exista dominio:  ... --profile edge up -d
 #
-# Cambios v2:
-#   - Sin Caddy ni Cloudflare en el núcleo: el panel se publica con `tailscale serve` (HTTPS gratis, solo para
-#     tus dispositivos). Caddy/Cloudflare quedan en optional/edge para cuando haga falta acceso público.
-#   - La API escucha SOLO en 127.0.0.1:<CRDO_API_PORT> del host. Ningún puerto queda expuesto a Internet.
-#   - Producción y staging NO comparten ninguna red: cada proyecto compose crea las suyas.
-#   - Ningún contenedor tiene el socket de Docker. Las operaciones de servidor las hace crdo-opsd (host).
-#   - Sin ffmpeg ni render: el VPS no procesa video pesado (cola 'render' = workers externos).
+# Reglas:
+#   - La API escucha SOLO en 127.0.0.1. Ningún puerto abierto a Internet (UFW deniega todo lo entrante).
+#   - Acceso al panel: Tailscale (siempre) y Cloudflare Tunnel + Access (perfil edge, cuando haya dominio).
+#     Cada entorno tiene su PROPIO túnel y token: el túnel de staging no puede llegar a producción.
+#   - Producción y staging no comparten redes, volúmenes, base ni secretos.
+#   - Ningún contenedor tiene el socket de Docker. El VPS no renderiza video.
 
 name: crdo-prod
 
@@ -19,7 +20,7 @@ x-app: &app
   restart: unless-stopped
   env_file: ${CRDO_SECRETS_FILE:?}
   environment:
-    CRDO_WORKER_LOCATION: vps          # el worker del VPS nunca pide trabajos de colas 'external'
+    CRDO_WORKER_LOCATION: vps
   read_only: true
   tmpfs: [/tmp]
   security_opt: ["no-new-privileges:true"]
@@ -36,9 +37,9 @@ services:
     <<: *app
     command: ["uvicorn", "crdo.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
     ports:
-      - "127.0.0.1:${CRDO_API_PORT:?}:8000"     # solo localhost; tailscale serve lo publica a tus dispositivos
+      - "127.0.0.1:${CRDO_API_PORT:?}:8000"
     networks: [front, data, mcp, egress]
-    mem_limit: ${CRDO_API_MEM:-768m}
+    mem_limit: ${CRDO_API_MEM:-1g}
     cpus: ${CRDO_API_CPUS:-1.5}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health')"]
@@ -50,14 +51,14 @@ services:
     <<: *app
     command: ["python", "-m", "crdo.jobs.worker"]
     networks: [data, mcp, egress]
-    mem_limit: ${CRDO_WORKER_MEM:-768m}
-    cpus: ${CRDO_WORKER_CPUS:-1.0}         # tope de CPU: aunque alguien intente procesar video, no tumba el VPS
+    mem_limit: ${CRDO_WORKER_MEM:-1g}
+    cpus: ${CRDO_WORKER_CPUS:-1.5}
 
   scheduler:
     <<: *app
-    command: ["python", "-m", "crdo.jobs.scheduler"]   # reap_expired c/1 min, expire_approvals, salud, costos
-    networks: [data]
-    mem_limit: 192m
+    command: ["python", "-m", "crdo.jobs.scheduler"]   # reap_expired, expire_approvals, salud, medidores R2
+    networks: [data, egress]
+    mem_limit: ${CRDO_SCHED_MEM:-256m}
     cpus: 0.25
 
   postgres:
@@ -71,13 +72,14 @@ services:
       CRDO_DB_READONLY_PASSWORD: ${CRDO_DB_READONLY_PASSWORD:?}
       CRDO_DB_BACKUP_PASSWORD: ${CRDO_DB_BACKUP_PASSWORD:?}
       CRDO_DB_OPS_PASSWORD: ${CRDO_DB_OPS_PASSWORD:?}
+    command: ["postgres", "-c", "shared_buffers=${CRDO_PG_SHARED_BUFFERS:-512MB}", "-c", "max_connections=60"]
     volumes:
       - ${CRDO_DATA_DIR:?}/postgres:/var/lib/postgresql/data
       - ./db/init:/docker-entrypoint-initdb.d:ro
     networks: [data]
     shm_size: 256m
-    mem_limit: ${CRDO_PG_MEM:-1536m}
-    cpus: ${CRDO_PG_CPUS:-1.5}
+    mem_limit: ${CRDO_PG_MEM:-2g}
+    cpus: ${CRDO_PG_CPUS:-2}
     security_opt: ["no-new-privileges:true"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U crdo_owner -d crdo"]
@@ -85,8 +87,24 @@ services:
       timeout: 5s
       retries: 5
 
+  # Cloudflare Tunnel (plan gratis). Solo se levanta con --profile edge, cuando exista un dominio en Cloudflare.
+  # En el panel de Cloudflare: hostname panel.<dominio> (o staging.<dominio>) -> http://api:8000,
+  # y una aplicación de Cloudflare Access con política "solo el email del dueño".
+  cloudflared:
+    profiles: ["edge"]
+    image: cloudflare/cloudflared:${CLOUDFLARED_VERSION:-cambiar}
+    command: ["tunnel", "--no-autoupdate", "run"]
+    env_file: ${CRDO_TUNNEL_ENV_FILE:-/opt/crdo/secrets/tunnel-prod.env}   # TUNNEL_TOKEN de ESTE entorno
+    restart: unless-stopped
+    networks: [front, egress]
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    mem_limit: 128m
+    cpus: 0.25
+
 networks:
-  front: {}                   # solo para publicar el puerto de la API en 127.0.0.1
+  front: {}                   # api publicada en 127.0.0.1 y alcanzable por cloudflared de ESTE entorno
   data: { internal: true }    # app <-> postgres, sin Internet
   mcp: { internal: true }     # servidores MCP futuros, sin Internet por defecto
-  egress: {}                  # salida (Claude API, R2, YouTube) solo para api/worker
+  egress: {}                  # salida (proveedores) para api/worker/scheduler/cloudflared

@@ -110,4 +110,18 @@ echo "$out" | grep -q "Cadena de auditoría rota en el evento 3" \
   && ok "un respaldo con auditoría alterada FALLA la prueba de restauración (detecta el evento 3)" \
   || { echo "$out"; fail "falló por otra razón"; }
 
+echo "== Control presupuestario (budget-guard real)"
+[[ "$(psql -X -At -c "SELECT count(*) > 0 FROM finance.meter_readings WHERE metric = 'b2_storage_gb' AND source = 'backup.sh'")" == t ]] \
+  && ok "backup.sh registró los GB de B2 en el medidor del presupuesto ($(psql -X -At -c "SELECT value FROM finance.meter_readings WHERE metric='b2_storage_gb' ORDER BY id DESC LIMIT 1") GB)"
+out="$(PSQL_CMD="psql -X -d crdo" CRDO_SECRETS_DIR="$T/secrets" bash "$ROOT/infra/scripts/budget-guard")"
+echo "$out" | grep -q 'nivel=aviso proyeccion=US\$16.61 tope_operativo=US\$17.00' \
+  && ok "guardián: peor escenario CX33 = US\$16,61, nivel aviso" || { echo "$out"; fail "salida inesperada"; }
+psql -X -q -c "UPDATE finance.cost_items SET active = true WHERE code = 'r2_objects'" \
+           -c "SELECT finance.record_meter('r2_storage_gb', 200, 'prueba')" >/dev/null
+out="$(PSQL_CMD="psql -X -d crdo" CRDO_SECRETS_DIR="$T/secrets" bash "$ROOT/infra/scripts/budget-guard")"
+echo "$out" | grep -q 'nivel=excedido' && echo "$out" | grep -q 'Escrituras en R2 pausadas' \
+  && ok "guardián: 200 GB en R2 -> excedido, escrituras en R2 pausadas" || { echo "$out"; fail "no pausó"; }
+[[ "$(psql -X -At -c "SELECT value FROM sys.settings WHERE key = 'storage_writes_enabled'")" == false ]] \
+  && ok "la pausa quedó registrada en la base (storage_writes_enabled = false)"
+
 echo "== OK: $PASS verificaciones pasaron, 0 fallaron"

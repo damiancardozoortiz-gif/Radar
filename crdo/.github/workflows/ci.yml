@@ -34,13 +34,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: shellcheck
-        run: shellcheck -S warning infra/scripts/*.sh infra/scripts/crdo infra/scripts/crdo-opsd infra/db/init/*.sh tests/*.sh
+        run: shellcheck -S warning infra/scripts/*.sh infra/scripts/crdo infra/scripts/crdo-opsd infra/scripts/budget-guard infra/db/init/*.sh tests/*.sh
       - name: Validar compose (sintaxis)
         run: |
           sed -e 's/=cambiar/=1.0.0/' -e 's/^\(POSTGRES_OWNER_PASSWORD\|CRDO_DB_[A-Z]*_PASSWORD\)=$/\1=x/' \
-              -e "s|CRDO_SECRETS_FILE=.*|CRDO_SECRETS_FILE=$PWD/ci.env|" infra/.env.example > ci.env
-          docker compose --env-file ci.env -f infra/compose.yml config -q
-          docker compose --env-file ci.env -f infra/compose.yml -f infra/compose.staging.yml config -q
+              -e "s|CRDO_SECRETS_FILE=.*|CRDO_SECRETS_FILE=$PWD/ci.env|" \
+              -e "s|CRDO_TUNNEL_ENV_FILE=.*|CRDO_TUNNEL_ENV_FILE=$PWD/ci.env|" infra/.env.example > ci.env
+          for extra in "" "-f infra/compose.staging.yml"; do
+            for prof in "" "--profile edge"; do
+              docker compose --env-file ci.env -f infra/compose.yml $extra $prof config -q
+            done
+          done
       - name: Buscar secretos accidentales
         run: |
           ! git grep -nE '(sk-ant-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|tskey-[a-z]+-[A-Za-z0-9]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)' -- . ':!*.md'

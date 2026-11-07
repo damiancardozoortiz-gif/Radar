@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# C.R.D.O. — CLI de operación (BORRADOR v2, no ejecutado en servidor). También lo invoca crdo-opsd.
+# C.R.D.O. — CLI de operación (BORRADOR v3, no ejecutado en servidor). También lo invoca crdo-opsd.
 #   crdo deploy <versión> [--env prod|staging]   despliega una imagen versionada, con rollback si falla /health
 #   crdo rollback [--env prod|staging]           vuelve a la versión anterior registrada
-#   crdo status                                  estado de contenedores, disco y último respaldo
+#   crdo status                                  estado de contenedores, disco, presupuesto
+#   --edge                                       incluye Cloudflare Tunnel (solo cuando exista dominio)
 set -euo pipefail
 
 APP=/opt/crdo/app/infra
@@ -10,9 +11,11 @@ RELEASES=/opt/crdo/releases
 CMD="${1:-status}"; shift || true
 ENV_NAME=prod
 VERSION=""
+EDGE=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --env) ENV_NAME="$2"; shift 2 ;;
+    --edge) EDGE=1; shift ;;
     *) VERSION="$1"; shift ;;
   esac
 done
@@ -22,8 +25,10 @@ SECRETS_FILE="/opt/crdo/secrets/$ENV_NAME.env"
 FILES=(-f "$APP/compose.yml")
 [[ "$ENV_NAME" == staging ]] && FILES+=(-f "$APP/compose.staging.yml")
 SERVICES=(api worker scheduler postgres)
+PROFILE=()
+if [[ $EDGE == 1 ]]; then PROFILE=(--profile edge); SERVICES+=(cloudflared); fi
 
-compose() { CRDO_VERSION="$1" docker compose -p "crdo-$ENV_NAME" --env-file "$SECRETS_FILE" "${FILES[@]}" "${@:2}"; }
+compose() { CRDO_VERSION="$1" docker compose -p "crdo-$ENV_NAME" --env-file "$SECRETS_FILE" "${FILES[@]}" "${PROFILE[@]}" "${@:2}"; }
 
 healthy() {
   for _ in $(seq 1 20); do
@@ -63,6 +68,7 @@ case "$CMD" in
             [[ -n "$prev" ]] || { echo "No hay versión anterior" >&2; exit 1; }; deploy "$prev" ;;
   status)   docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'
             tail -n3 "$RELEASES/prod.log" "$RELEASES/staging.log" 2>/dev/null || true
+            /opt/crdo/app/infra/scripts/budget-guard 2>/dev/null | head -n1 || true
             df -h / | tail -n1
             free -h | sed -n 2p ;;
   *) echo "Comando desconocido: $CMD" >&2; exit 1 ;;

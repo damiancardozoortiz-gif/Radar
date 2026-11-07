@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# C.R.D.O. — Guardián presupuestario (BORRADOR v3, no ejecutado en servidor). Corre cada hora (crdo-budget-guard.timer).
+#
+# 1. Pide a la base la proyección del mes (finance.run_budget_guard): costos fijos + variables medidos,
+#    en US$ BRUTOS (cambio conservador + IVA + percepción + IIBB + comisión).
+# 2. Si la proyección invade la reserva (> US$ 17) o supera US$ 20, la base ya pausó los opcionales
+#    (p. ej. escrituras en R2); este script aplica lo que corresponde en el host y avisa.
+# 3. Envía el estado a healthchecks.io: ok / aviso (≥75 %) / crítico. El dueño recibe email o Telegram.
+#
+# Los servicios INDISPENSABLES (servidor, IPv4, respaldos) nunca se apagan solos: se avisa al dueño.
+# El servidor NO guarda un token de escritura de Hetzner/Cloudflare: lo que exige tocar la cuenta del
+# proveedor (desactivar backups de Hetzner, no renovar un dominio) queda como acción del dueño.
+set -euo pipefail
+
+SECRETS="${CRDO_SECRETS_DIR:-/opt/crdo/secrets}"
+PSQL_CMD="${PSQL_CMD:-docker exec -i crdo-prod-postgres-1 psql -U crdo_ops -d crdo}"
+[[ -f "$SECRETS/monitor.env" ]] && { set -a; source "$SECRETS/monitor.env"; set +a; }   # HC_PING_BUDGET
+
+ping_hc() {  # $1 = "" | "/fail" ; $2 = mensaje
+  [[ -n "${HC_PING_BUDGET:-}" ]] || return 0
+  curl -fsS -m 10 --retry 3 --data-raw "$2" "$HC_PING_BUDGET$1" >/dev/null || true
+}
+
+row="$($PSQL_CMD -X -q -At -F '|' -c \
+  "SELECT level, projected_usd, operating_cap_usd, array_to_string(actions, ' ') FROM finance.run_budget_guard()")"
+IFS='|' read -r level projected cap actions <<<"$row"
+msg="C.R.D.O. presupuesto infra: nivel=$level proyeccion=US\$$projected tope_operativo=US\$$cap tope=US\$20"
+
+for a in $actions; do
+  case "$a" in
+    pause_r2_writes)               msg+=$'\n'"- Escrituras en R2 pausadas automáticamente (la app respeta storage_writes_enabled)." ;;
+    owner_disable_hetzner_backups) msg+=$'\n'"- ACCIÓN DEL DUEÑO: desactivar backups de Hetzner en la consola." ;;
+    owner_do_not_renew)            msg+=$'\n'"- ACCIÓN DEL DUEÑO: desactivar la renovación automática del dominio." ;;
+    *)                             msg+=$'\n'"- Acción desconocida '$a': revisar." ;;
+  esac
+done
+
+echo "$msg"
+case "$level" in
+  ok|atencion)        ping_hc ""      "$msg" ;;
+  aviso)              ping_hc "/fail" "$msg (≥75 % del tope)" ;;
+  critico|excedido)   ping_hc "/fail" "$msg (RESERVA INVADIDA: opcionales pausados)" ;;
+  *)                  ping_hc "/fail" "Estado desconocido: $row"; exit 1 ;;
+esac

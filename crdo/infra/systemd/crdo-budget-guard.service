@@ -1,0 +1,9 @@
+[Unit]
+Description=C.R.D.O. guardián presupuestario (tope US$ 20/mes)
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/crdo/app/infra/scripts/budget-guard
+NoNewPrivileges=true

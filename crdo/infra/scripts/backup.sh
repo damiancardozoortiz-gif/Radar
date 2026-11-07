@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# C.R.D.O. — Respaldo (BORRADOR v2, no ejecutado en un servidor real).
+# C.R.D.O. — Respaldo (BORRADOR v3, no ejecutado en un servidor real).
 # 1. pg_dump (formato custom) + manifiesto (conteos y último hash de auditoría)
 # 2. Verifica que el volcado sea legible (pg_restore --list)
 # 3. Sube a restic: cifrado AES-256 + autenticado del lado del cliente, ANTES de salir del VPS
@@ -58,6 +58,12 @@ restic backup --quiet --tag "$ENV_NAME" --tag db --host crdo "$DIR"
 if [[ -d "$CONFIG_DIR" ]]; then
   restic backup --quiet --tag "$ENV_NAME" --tag config --host crdo --exclude '*.env' "$CONFIG_DIR"
 fi
+# Medidor para el control presupuestario: GB almacenados en B2 (10 GB gratis). Si falla, no aborta el respaldo.
+gb="$(restic stats --mode raw-data --json 2>/dev/null | python3 -c 'import json,sys;print(round(json.load(sys.stdin)["total_size"]/1e9,3))' || true)"
+if [[ -n "$gb" ]]; then
+  echo "SELECT finance.record_meter('b2_storage_gb', $gb, 'backup.sh');" | $PSQL_CMD -q >/dev/null 2>&1 || true
+fi
+
 # Limpieza (forget/prune) NO se hace desde el VPS: su llave de B2 no puede borrar. Ver runbook mensual.
 
 rm -rf "$DIR"
