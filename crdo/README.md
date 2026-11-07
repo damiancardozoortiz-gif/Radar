@@ -2,9 +2,23 @@
 
 Empresa virtual de producción de contenido para YouTube, operada desde la nube.
 
-**Estado: Etapa 1 en diseño, pendiente de aprobación. Nada está instalado.**
+**Estado: Etapa 1, diseño v2. Arquitectura aprobada; instalación y gastos NO autorizados. Nada está instalado.**
 
-- Diseño completo: [`docs/ETAPA-1-DISENO.md`](docs/ETAPA-1-DISENO.md)
-- Configuración inicial (borradores): [`infra/`](infra/)
+- Diseño: [`docs/ETAPA-1-DISENO.md`](docs/ETAPA-1-DISENO.md)
+- Cambios de la revisión técnica: [`docs/CAMBIOS-v2.md`](docs/CAMBIOS-v2.md)
+- Configuración (borradores): [`infra/`](infra/)
 
-Los directorios `backend/`, `panel/`, `mcp/` y `agents/` se crearán al implementar, tras la aprobación.
+## Pruebas
+
+Requieren PostgreSQL 16 + pgvector y restic (Ubuntu 24.04: `postgresql-16 postgresql-16-pgvector restic`).
+Crean todo en directorios temporales y no tocan ningún servidor.
+
+```bash
+sudo bash tests/run-db-tests.sh       # esquema, seguridad, aprobaciones, cola, pgvector, concurrencia
+sudo bash tests/run-backup-tests.sh   # cifrado, respaldo y restauración con los scripts reales
+```
+
+## Repositorio propio
+
+Esta carpeta está pensada para convertirse en el repositorio privado `crdo`:
+`bash crdo/tools/export-to-private-repo.sh <url-del-repo-vacío>` (desde la raíz de `Radar`).
