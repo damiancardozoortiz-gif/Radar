@@ -1,19 +1,26 @@
-# C.R.D.O. — Ajustes de staging (BORRADOR). Se combina con compose.yml:
-#   docker compose -p crdo-staging --env-file /opt/crdo/secrets/staging.env \
-#     -f compose.yml -f compose.staging.yml up -d api worker scheduler postgres
-# cloudflared y caddy son compartidos: los levanta solo el proyecto de producción.
+# C.R.D.O. — Staging (BORRADOR v2). Se combina con compose.yml y usa /opt/crdo/secrets/staging.env:
+#   - proyecto compose distinto (crdo-staging) => contenedores, redes y volúmenes propios;
+#   - ninguna red compartida con producción (en la v1 compartían "crdo_app": corregido);
+#   - base de datos, contraseñas, buckets y llaves de API distintos; NUNCA credenciales del canal real;
+#   - topes de CPU/RAM bajos para no afectar a producción;
+#   - presupuesto de IA ínfimo y agentes apagados por defecto.
+# Valores esperados en staging.env: CRDO_ENV=staging, CRDO_API_PORT=8100, CRDO_DATA_DIR=/opt/crdo/data/staging,
+#   S3_BUCKET=crdo-staging-objects, CRDO_LLM_MONTHLY_LIMIT_USD=2
 
 name: crdo-staging
 
 services:
   api:
-    mem_limit: 512m
-    cpus: 1.0
+    mem_limit: 384m
+    cpus: 0.5
+    environment:
+      CRDO_FORBID_PROD_CONNECTIONS: "1"     # la app se niega a arrancar si detecta credenciales marcadas como prod
   worker:
-    mem_limit: 512m
-    cpus: 1.0
+    mem_limit: 384m
+    cpus: 0.5
   scheduler:
     mem_limit: 128m
+    cpus: 0.1
   postgres:
-    mem_limit: 768m
-    cpus: 1.0
+    mem_limit: 512m
+    cpus: 0.5

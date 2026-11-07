@@ -5,6 +5,6 @@ After=docker.service network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/opt/crdo/app/crdo/infra/scripts/backup.sh prod
+ExecStart=/opt/crdo/app/infra/scripts/backup.sh prod
 Nice=10
 IOSchedulingClass=idle

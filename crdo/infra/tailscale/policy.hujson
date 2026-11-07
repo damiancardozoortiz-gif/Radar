@@ -1,0 +1,25 @@
+// C.R.D.O. — Política de acceso de Tailscale (BORRADOR v2).
+// Se pega en la consola de Tailscale (Access controls), también usable desde el navegador del teléfono.
+// Reemplazar dueno@ejemplo.com por el correo de la cuenta de Tailscale de C.R.D.O.
+{
+  "tagOwners": {
+    "tag:crdo-server":  ["dueno@ejemplo.com"],
+    "tag:crdo-worker":  ["dueno@ejemplo.com"]   // futuros workers externos de render (Etapa 3+)
+  },
+
+  "grants": [
+    // Tus dispositivos (teléfono, PC) -> servidor: panel (443 prod, 8443 staging) y SSH
+    { "src": ["dueno@ejemplo.com"], "dst": ["tag:crdo-server"], "ip": ["tcp:443", "tcp:8443", "tcp:22"] },
+
+    // Workers externos de render -> servidor: solo la API (para tomar trabajos de la cola 'render')
+    { "src": ["tag:crdo-worker"], "dst": ["tag:crdo-server"], "ip": ["tcp:443"] }
+
+    // Nada más: el servidor no puede iniciar conexiones hacia tus dispositivos,
+    // y ningún otro usuario de la red tiene acceso.
+  ],
+
+  "tests": [
+    { "src": "dueno@ejemplo.com", "accept": ["tag:crdo-server:443", "tag:crdo-server:22"] },
+    { "src": "tag:crdo-worker",   "accept": ["tag:crdo-server:443"], "deny": ["tag:crdo-server:22"] }
+  ]
+}

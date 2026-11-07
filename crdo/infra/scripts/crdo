@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# C.R.D.O. — CLI de operación (BORRADOR, no ejecutado).
+# C.R.D.O. — CLI de operación (BORRADOR v2, no ejecutado en servidor). También lo invoca crdo-opsd.
 #   crdo deploy <versión> [--env prod|staging]   despliega una imagen versionada, con rollback si falla /health
 #   crdo rollback [--env prod|staging]           vuelve a la versión anterior registrada
 #   crdo status                                  estado de contenedores, disco y último respaldo
 set -euo pipefail
 
-APP=/opt/crdo/app/crdo/infra
+APP=/opt/crdo/app/infra
 RELEASES=/opt/crdo/releases
 CMD="${1:-status}"; shift || true
 ENV_NAME=prod
@@ -22,7 +22,6 @@ SECRETS_FILE="/opt/crdo/secrets/$ENV_NAME.env"
 FILES=(-f "$APP/compose.yml")
 [[ "$ENV_NAME" == staging ]] && FILES+=(-f "$APP/compose.staging.yml")
 SERVICES=(api worker scheduler postgres)
-[[ "$ENV_NAME" == prod ]] && SERVICES+=(caddy cloudflared)
 
 compose() { CRDO_VERSION="$1" docker compose -p "crdo-$ENV_NAME" --env-file "$SECRETS_FILE" "${FILES[@]}" "${@:2}"; }
 
@@ -35,11 +34,15 @@ healthy() {
   return 1
 }
 
-current() { tail -n1 "$RELEASES/$ENV_NAME.log" 2>/dev/null | awk '{print $2}'; }
+current() { grep ' ok$' "$RELEASES/$ENV_NAME.log" 2>/dev/null | tail -n1 | awk '{print $2}'; }  # última versión SANA
 
 deploy() {
   local v="$1" prev; prev="$(current || true)"
   echo "Desplegando $v en $ENV_NAME (anterior: ${prev:-ninguna})"
+  # En producción, siempre un respaldo justo antes de desplegar (si ya existe la base)
+  if [[ "$ENV_NAME" == prod ]] && docker exec "crdo-prod-postgres-1" true 2>/dev/null; then
+    systemctl start --wait crdo-backup.service || { echo "Respaldo previo falló: despliegue cancelado" >&2; exit 1; }
+  fi
   compose "$v" pull api
   compose "$v" run --rm api python -m crdo.db.migrate   # migraciones compatibles hacia atrás
   compose "$v" up -d "${SERVICES[@]}"
@@ -59,6 +62,7 @@ case "$CMD" in
   rollback) prev="$(grep ' ok$' "$RELEASES/$ENV_NAME.log" | tail -n2 | head -n1 | awk '{print $2}')"
             [[ -n "$prev" ]] || { echo "No hay versión anterior" >&2; exit 1; }; deploy "$prev" ;;
   status)   docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'
+            tail -n3 "$RELEASES/prod.log" "$RELEASES/staging.log" 2>/dev/null || true
             df -h / | tail -n1
             free -h | sed -n 2p ;;
   *) echo "Comando desconocido: $CMD" >&2; exit 1 ;;

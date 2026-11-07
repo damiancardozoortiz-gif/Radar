@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# C.R.D.O. — crdo-opsd (BORRADOR v2, no ejecutado en servidor).
+# Servicio del HOST que ejecuta los comandos administrativos pedidos desde el panel (Android).
+#
+# Por qué existe: el panel corre en un contenedor sin acceso a Docker ni al sistema. Para desplegar,
+# reiniciar o respaldar desde el teléfono, el panel solo puede ENCOLAR un comando en ops.admin_commands,
+# y eso exige el código TOTP del dueño (lo verifica la base de datos). Este servicio:
+#   - toma comandos con el rol crdo_ops (que no ve usuarios, secretos ni negocio),
+#   - acepta SOLO una lista cerrada de comandos y valida sus argumentos,
+#   - guarda el resultado para que el panel lo muestre.
+set -euo pipefail
+
+ENV_PG="${CRDO_OPSD_PG:-crdo-prod-postgres-1}"
+CRDO=/opt/crdo/app/infra/scripts/crdo
+POLL="${CRDO_OPSD_POLL:-10}"
+
+q() { docker exec -i "$ENV_PG" psql -U crdo_ops -d crdo -X -q -At -F $'\t' "$@"; }
+
+finish() {  # $1 id, $2 status, $3 output
+  printf "UPDATE ops.admin_commands SET status = :'st', finished_at = now(), output = :'out' WHERE id = :id;\n" |
+    q -v id="$1" -v st="$2" -v out="$(printf '%s' "$3" | tail -c 10000)"
+}
+
+run() {  # $1 command, $2 env, $3 args(json)
+  local cmd="$1" env="$2" args="$3" v svc
+  [[ "$env" == prod || "$env" == staging ]] || { echo "entorno inválido"; return 1; }
+  case "$cmd" in
+    deploy)
+      v="$(jq -r '.version // empty' <<<"$args")"
+      [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "versión inválida: '$v'"; return 1; }
+      "$CRDO" deploy "$v" --env "$env" ;;
+    rollback)      "$CRDO" rollback --env "$env" ;;
+    backup_now)    systemctl start --wait crdo-backup.service && echo "respaldo ejecutado" ;;
+    restore_test)  systemctl start --wait crdo-restore-test.service && echo "prueba de restauración ejecutada" ;;
+    restart_service)
+      svc="$(jq -r '.service // empty' <<<"$args")"
+      [[ "$svc" =~ ^(api|worker|scheduler)$ ]] || { echo "servicio no permitido: '$svc'"; return 1; }
+      docker restart "crdo-$env-$svc-1" ;;
+    agents_stop)   docker stop "crdo-$env-worker-1" && echo "worker detenido (parada dura)" ;;
+    status_report) "$CRDO" status ;;
+    *) echo "comando no permitido: $cmd"; return 1 ;;
+  esac
+}
+
+echo "crdo-opsd: esperando comandos (cada ${POLL}s)"
+while true; do
+  line="$(q -c 'SELECT id, command, environment, args FROM ops.claim_admin_command()' 2>/dev/null || true)"
+  if [[ -n "$line" ]]; then
+    IFS=$'\t' read -r id cmd env args <<<"$line"
+    echo "comando #$id: $cmd ($env)"
+    if out="$(run "$cmd" "$env" "$args" 2>&1)"; then finish "$id" succeeded "$out"; else finish "$id" failed "$out"; fi
+    continue
+  fi
+  sleep "$POLL"
+done

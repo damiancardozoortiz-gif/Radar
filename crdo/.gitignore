@@ -1,0 +1,18 @@
+# Secretos: nunca al repositorio
+*.env
+!.env.example
+secrets/
+*.pem
+*.key
+restic-password*
+
+# Datos y respaldos locales
+data/
+backups/
+*.dump
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/

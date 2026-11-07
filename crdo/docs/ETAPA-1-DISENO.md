@@ -1,12 +1,16 @@
 # C.R.D.O. — Etapa 1: Infraestructura central en la nube
 
-> **Estado: DISEÑO PROPUESTO, PENDIENTE DE APROBACIÓN.**
-> Nada de lo descrito aquí está instalado, contratado ni probado. No se creó ninguna cuenta,
-> no se conectó ninguna cuenta personal y no se generó ningún gasto.
-> Los archivos de `crdo/infra/` son **borradores de configuración**; solo se validó su sintaxis
-> donde se indica explícitamente (ver §F.0).
+> **Versión 2 — revisión técnica posterior a la aprobación de la arquitectura general.**
 >
-> Fecha del diseño: 7 de noviembre de 2026.
+> **Estado: DISEÑO. No hay nada instalado, contratado ni conectado.** La aprobación de la arquitectura
+> **no** autoriza gastos ni el inicio de la instalación (instrucción del dueño, 7 nov 2026).
+>
+> - Los archivos de `infra/` son configuración en borrador.
+> - Lo que se ejecutó, se ejecutó en un contenedor temporal de diseño (Ubuntu 24.04), no en un servidor de
+>   C.R.D.O. y sin tocar ninguna cuenta. El detalle de qué se probó y qué no está en §F.0.
+> - Los cambios respecto de la v1 están en [`CAMBIOS-v2.md`](CAMBIOS-v2.md).
+>
+> Fecha: 7 de noviembre de 2026.
 
 ---
 
@@ -14,194 +18,138 @@
 
 - [Resumen ejecutivo](#resumen-ejecutivo)
 - [FASE A — Requisitos y limitaciones](#fase-a--análisis-de-requisitos-y-limitaciones)
-- [FASE B — Comparación de proveedores y tecnologías](#fase-b--comparación-de-proveedores-y-tecnologías)
-- [FASE C — Arquitectura completa](#fase-c--diseño-de-arquitectura-completa)
+- [FASE B — Proveedores, tecnologías y costos](#fase-b--comparación-de-proveedores-y-tecnologías)
+- [FASE C — Arquitectura](#fase-c--diseño-de-arquitectura-completa)
 - [FASE D — Carpetas, servicios y base de datos](#fase-d--estructura-de-carpetas-servicios-y-base-de-datos)
-- [FASE E — Plan de instalación](#fase-e--plan-de-instalación-y-configuración)
+- [FASE E — Instalación](#fase-e--plan-de-instalación-y-configuración)
 - [FASE F — Pruebas y criterios de aceptación](#fase-f--plan-de-pruebas-y-criterios-de-aceptación)
 - [FASE G — Informe técnico final](#fase-g--informe-técnico-final)
-- [Preguntas que necesito que respondas](#preguntas-que-necesito-que-respondas-antes-de-implementar)
+- [Preguntas abiertas](#preguntas-abiertas)
 
 ---
 
 ## Resumen ejecutivo
 
-| Decisión | Recomendación |
+| Decisión | v2 |
 |---|---|
-| Servidor | **1 VPS en Hetzner Cloud** (x86, 4 vCPU / 8 GB, plan tipo CX33), redimensionable |
-| Sistema operativo | **Ubuntu Server 24.04 LTS** |
-| Orquestación | **Docker + Docker Compose** (nada de Kubernetes en esta etapa) |
-| Backend central | **Python 3.12 + FastAPI** (mismo lenguaje que JARVIS) |
-| Base de datos | **PostgreSQL 16 + pgvector** (datos, cola de trabajos, memoria vectorial y auditoría en un solo motor) |
-| Archivos pesados | **Almacenamiento S3-compatible** (Cloudflare R2) detrás de una capa de abstracción |
-| Acceso desde Android | **Panel PWA** servido por el backend, publicado con **Cloudflare Tunnel + Cloudflare Access** (sin puertos abiertos) |
-| Administración del servidor | **Tailscale** (SSH solo por red privada; la app de Android sirve de consola de emergencia) |
-| Copias de seguridad | **restic** cifrado → Backblaze B2 (otro proveedor) + snapshots de Hetzner |
-| Monitoreo | Tabla de salud propia + **healthchecks.io** (aviso si un respaldo o el servidor deja de reportar) |
-| Costo fijo estimado | **≈ US$ 9–14 / mes** (a verificar, ver §B.4) + consumo variable de Claude API con tope duro |
-
-Principio rector: **C.R.D.O. es dueña de todo** (servidor, base de datos, código en su repo, copias en su
-cuenta de almacenamiento). Claude es un **proveedor contratado** al que el backend llama a través de una
-puerta controlada (`llm_gateway`) que registra, limita y puede cortar el acceso. Ningún proveedor tiene
-llaves de administración de la empresa.
+| Servidor | **1 VPS Hetzner CX23** (2 vCPU / 4 GB), Ubuntu 24.04 LTS, Docker Compose. Se pasa a CX33 cuando haga falta, en minutos y sin reinstalar |
+| Video pesado | **El VPS no renderiza.** Solo organiza el trabajo. El render va a workers externos por horas (Etapa 3+), forzado por la base de datos y por topes de CPU |
+| Acceso desde Android | **Tailscale** (app oficial) + panel PWA publicado con `tailscale serve` (HTTPS, solo tus dispositivos). **Sin dominio ni Cloudflare en el núcleo** |
+| Base de datos | **PostgreSQL 16 + pgvector**. pgvector quedó probado (§F.0) |
+| Tareas | Cola en Postgres con **leases, token de exclusión, idempotencia y recolector**. Las acciones irreversibles nunca se repiten solas |
+| Aprobaciones | Ligadas al **hash exacto** del contenido, con **vencimiento** (24 h, máximo 72 h), **TOTP de un solo uso verificado dentro de la base** y **consumo único** |
+| Respaldos | restic (cifrado del lado del cliente) → Backblaze B2 + manifiesto + prueba de restauración semanal. **Verificados con los scripts reales** (§F.0) |
+| Entornos | CI efímero (GitHub Actions) + staging aislado en el mismo VPS (proyecto, redes, base y secretos propios) + staging por horas opcional |
+| Repositorio | **`crdo` privado e independiente**, con el historial exportado desde `Radar`. Script listo; el repositorio lo creás vos |
+| IA | `llm_gateway` con **rutas de modelo** y proveedores intercambiables. Herramientas por MCP. Memoria e historial propios |
+| **Costo fijo mínimo** | **≈ US$ 5–6/mes + impuestos** (antes: US$ 9–14). Todo lo demás se suma cuando haga falta (§B.4) |
 
 ---
 
 ## FASE A — Análisis de requisitos y limitaciones
 
-### A.1 Requisitos funcionales (Etapa 1)
+### A.1 Requisitos funcionales
 
-| # | Requisito | Cómo se cumple |
+| # | Requisito | Cómo se cumple (v2) |
 |---|---|---|
-| RF1 | Funcionar 24/7 sin el teléfono encendido | VPS en la nube; el teléfono solo es un cliente del panel |
-| RF2 | Administrable desde Android | Panel PWA instalable + Tailscale + consola web del proveedor |
-| RF3 | Preparado para Claude API | Módulo `llm_gateway` con presupuesto, registro de uso y llave fuera del código |
-| RF4 | Preparado para MCP | Registro de servidores MCP, red interna aislada, permisos por agente y por herramienta |
-| RF5 | Preparado para 11 departamentos + dirección | Tablas `org.departments`, `org.agents`, permisos y cola de tareas listas, sin agentes construidos |
-| RF6 | Memoria empresarial | PostgreSQL (hechos y decisiones) + pgvector (búsqueda semántica) + almacenamiento de objetos |
-| RF7 | Integraciones futuras (YouTube, Analytics, Drive) | Tabla de integraciones y credenciales por referencia; **no se conecta nada en Etapa 1** |
-| RF8 | Autorización humana para operaciones sensibles | Tabla `ops.approvals` + niveles de riesgo + confirmación con segundo factor |
-| RF9 | Registro de actividades y errores | Auditoría append-only en BD + logs JSON con rotación |
-| RF10 | Copias y recuperación | Respaldo diario cifrado fuera del proveedor + prueba de restauración documentada |
-| RF11 | Actualizaciones controladas | Imágenes versionadas, despliegue con un comando y vuelta atrás |
-| RF12 | Control de costos | Presupuestos por proveedor/departamento, alertas y corte automático |
+| RF1 | 24/7 sin el teléfono | VPS en la nube; el teléfono es solo cliente |
+| RF2 | Toda la administración desde Android | Matriz completa en §C.8: panel + TOTP + Tailscale + apps web de los proveedores |
+| RF3 | Preparado para Claude API, sin depender de Claude | `llm_gateway` con rutas y proveedores intercambiables (§C.9) |
+| RF4 | Preparado para MCP | Servidor MCP propio + `mcp_gateway`, red interna, permisos por herramienta (`mcp/README.md`) |
+| RF5 | Organización de 11 departamentos + Dirección | Tablas listas; contrato de agentes en `agents/README.md`; ningún agente construido |
+| RF6 | Memoria empresarial | Postgres + pgvector (probado) + búsqueda de texto completo en español |
+| RF7 | Integraciones futuras | Tablas de conexiones por referencia a secreto; **nada conectado** |
+| RF8 | Autorización humana ligada al contenido | Hash + vencimiento + TOTP de un solo uso + consumo único (§C.4) |
+| RF9 | Recuperación de tareas sin duplicados | Leases, token de exclusión, idempotencia, recolector, `needs_review` (§C.7) |
+| RF10 | Respaldo cifrado y restauración verificada | restic + manifiesto + prueba semanal (§C.10) |
+| RF11 | Pruebas aisladas de producción | Tres niveles de entorno (§C.5) |
+| RF12 | Control de costos | Núcleo mínimo, servicios diferidos con disparador explícito (§B.4), presupuestos en la base |
+| RF13 | Sin render en el VPS | Cola `render` marcada `external`; el worker del VPS no puede tomarla (§C.6) |
 
-### A.2 Requisitos no funcionales
-
-- **Costo:** fijo bajo y predecible; lo variable (IA, almacenamiento) con tope.
-- **Portabilidad:** todo en contenedores + S3 estándar + Postgres estándar → migrar de proveedor es
-  “crear VPS nuevo, restaurar respaldo, cambiar DNS”. Objetivo: migración en < 2 horas.
-- **Simplicidad:** un solo servidor, un solo motor de BD, sin Redis ni colas externas en esta etapa
-  (la cola usa `SELECT … FOR UPDATE SKIP LOCKED` en Postgres).
-- **Seguridad por defecto:** cero puertos públicos excepto los que el túnel necesita (ninguno de entrada).
-
-### A.3 Limitaciones y supuestos
+### A.2 Limitaciones y supuestos
 
 | Limitación / supuesto | Consecuencia |
 |---|---|
-| Administrás principalmente desde Android | Todo debe operarse por navegador o apps móviles; la terminal es opcional (Termux/JuiceSSH vía Tailscale) |
-| Presupuesto bajo y sin ingresos aún | Un solo VPS; staging y producción comparten máquina pero no datos ni secretos (ver riesgo R4) |
-| La suscripción de Claude (Pro/Max) **no** incluye la API | La Claude API se factura aparte por tokens en console.anthropic.com. Hay que crear una cuenta de organización con límite de gasto (Etapa 2) |
-| La API de YouTube Data tiene cuota diaria (no cobro) | El diseño registra el consumo de cuota además del dinero |
-| Producción de video (render) consume mucha CPU | **No** se dimensiona para render en Etapa 1. Se prevé un “worker” separado y temporal (VPS por horas o GPU alquilada) en etapas siguientes |
-| Precios del cloud cambiaron varias veces en 2026 | Todo precio está marcado “verificar” y se confirma en la consola antes de contratar |
-
-### A.4 Riesgos principales (detalle en §G.4)
-
-1. Dependencia de un único VPS (punto único de falla) → mitigado con respaldos fuera del proveedor y procedimiento de reconstrucción automatizado.
-2. Llaves de API filtradas → secretos fuera del repo, permisos 600, rotación, límites de gasto en cada proveedor.
-3. Un agente que actúe fuera de lo autorizado → el backend es el único que tiene credenciales; los agentes solo piden acciones y las sensibles quedan en cola de aprobación.
-4. Pérdida de acceso desde el teléfono (robo/pérdida) → 2FA con respaldo, códigos de recuperación guardados fuera del teléfono, sesiones revocables.
+| Administración principalmente desde Android | Todo debe poder hacerse en el panel o en una app/web móvil. SSH solo para emergencias (Termux/Termius por Tailscale) |
+| Android permite **una VPN a la vez** | Si usás otra VPN en el teléfono, hay que apagarla para entrar al panel. Se evalúa Cloudflare Access como alternativa (diferido) |
+| Presupuesto bajo, sin ingresos | Un solo VPS chico. Staging comparte máquina, pero no comparte red, datos ni secretos |
+| La suscripción de Claude no incluye la API | La API se paga aparte, por uso, desde Etapa 2, con tope duro en la consola de Anthropic |
+| Precios del cloud cambiaron en 2026 | Todo precio está marcado "verificar" |
+| Render de video necesita CPU/GPU fuerte | Fuera del VPS por diseño (§C.6) |
 
 ---
 
 ## FASE B — Comparación de proveedores y tecnologías
 
-### B.1 Proveedores cloud comparados
+### B.1 Proveedores cloud
 
-Precios obtenidos de fuentes secundarias en noviembre de 2026; **hubo cambios de precio en abril y junio
-de 2026 en Hetzner y Oracle, así que todos deben verificarse en la página oficial antes de contratar.**
+Sin cambios de fondo respecto de la v1. Precios de fuentes secundarias de noviembre 2026; **todos a verificar**
+en la página oficial (Hetzner y Oracle cambiaron condiciones en abril y junio de 2026).
 
-| Criterio | **Hetzner Cloud** (recomendado) | DigitalOcean | Oracle Cloud *Always Free* | Google Cloud (Compute Engine) |
+| Criterio | **Hetzner Cloud** (recomendado) | DigitalOcean | Oracle *Always Free* | Google Cloud |
 |---|---|---|---|---|
-| Máquina de referencia | CX33: 4 vCPU / 8 GB / 80 GB SSD | Droplet 2 vCPU / 4 GB | Ampere A1 ARM (gratis) | e2-medium 2 vCPU / 4 GB |
-| Precio mensual aprox. | **≈ €6,50** (CX23 2 vCPU/4 GB ≈ €4) — *verificar* | **≈ US$ 24** — *verificar* | **US$ 0** dentro del cupo — *verificar cupo* | ≈ US$ 25–35 según región — *verificar* |
-| Transferencia incluida | 20 TB en UE (menos en EE. UU.) — *verificar* | 4 TB | 10 TB | Se cobra por GB de salida |
-| Respaldos del proveedor | +20 % del precio del servidor | +20 % semanal / +30 % diario | Volúmenes y backups con cupo gratis | Snapshots por GB |
-| Facilidad desde Android | Consola web usable en móvil; app no oficial | Consola web buena | Consola pesada, difícil en móvil | Consola pesada; app Cloud Console existe |
-| Riesgo principal | Sin tope duro de gasto (pero precio fijo); centros de datos de menor costo en UE | Caro para lo que da | Cupo recortado en 2026 (reportan 2 OCPU/12 GB); falta de capacidad en algunas regiones; **riesgo de que borren instancias** si la cuenta cambia de estado | Facturación compleja, fácil generar gastos inesperados |
-| Portabilidad | Alta (VPS + Docker) | Alta | Media (ARM: algunas imágenes no existen) | Alta si se usa solo VM |
-| Veredicto | **Mejor relación precio/recursos y precio fijo predecible** | Alternativa sólida si Hetzner no acepta la cuenta | Bueno para un **entorno de pruebas gratis**, no para producción | Útil más adelante por cercanía a YouTube/Drive, no como base |
+| Referencia | CX23: 2 vCPU / 4 GB / 40 GB (≈ €4) · CX33: 4 vCPU / 8 GB (≈ €6,50) | 2 vCPU / 4 GB ≈ US$ 24 | ARM gratis (cupo reportado: 2 OCPU / 12 GB) | e2-medium ≈ US$ 25–35 |
+| Precio fijo predecible | Sí | Sí | Gratis, pero con riesgo de recorte o borrado | No (por uso) |
+| Cambio de tamaño | Minutos, sin reinstalar | Minutos | Limitado por capacidad | Minutos |
+| Facturación por hora (útil para staging/render temporal) | Sí | Sí | — | Sí |
+| Veredicto | **Núcleo** | Plan B | Solo pruebas | Más adelante, por cercanía a YouTube/Drive |
 
-**También evaluado y descartado como base:** plataformas *serverless* (Cloud Run + Supabase, Fly.io,
-Railway). Son cómodas, pero reparten los datos entre varios proveedores, cobran por uso con menos
-previsibilidad y complican la regla “C.R.D.O. es dueña de su infraestructura”. Siguen siendo válidas para
-piezas puntuales en el futuro (por ejemplo, un worker de render por horas).
+### B.2 Tecnologías (cambios v2 marcados ★)
 
-**Recomendación:** Hetzner Cloud, plan CX33 (o CX23 si querés minimizar costo y aceptar subir de plan
-más adelante; el cambio de tamaño es de minutos y sin reinstalar). Como **plan B** sin gasto: Oracle
-Always Free para staging, si conseguís capacidad en tu región.
+| Pieza | Elegido | Motivo |
+|---|---|---|
+| SO | Ubuntu 24.04 LTS | LTS hasta 2029. Es el mismo sistema que el entorno donde se corrieron las pruebas |
+| Contenedores | Docker + Compose v2 | Portable, suficiente para 1 servidor |
+| ★ Publicación del panel | `tailscale serve` | HTTPS gratis en `*.ts.net`, sin dominio, sin puertos abiertos, solo tus dispositivos |
+| ★ Proxy / borde público | Caddy + Cloudflare Tunnel/Access → **diferido** (`infra/optional/edge`) | Solo hace falta si se necesita acceso sin Tailscale o webhooks públicos |
+| Backend | Python 3.12 + FastAPI | Coherente con JARVIS; SDKs oficiales de Anthropic, MCP y Google |
+| Base de datos | PostgreSQL 16 + pgvector | Un motor para datos, cola, memoria y auditoría |
+| ★ Lógica crítica | Funciones SQL `SECURITY DEFINER` | Aprobaciones, cola y permisos no dependen de que la app sea correcta: la base lo impone |
+| Objetos | S3-compatible (R2) → **diferido** hasta que haya archivos | Sin uso real en Etapa 1 |
+| Respaldos | restic → Backblaze B2 | Cifrado del lado del cliente, deduplicado, verificable |
+| ★ CI / entorno efímero | GitHub Actions | Gratis en repos privados dentro del cupo (*verificar minutos*); máquina nueva en cada ejecución |
+| Panel | PWA en HTML + JS sin framework | Liviana en Android, instalable |
 
-> Ubicación: Hetzner ofrece UE (Alemania/Finlandia), EE. UU. (Ashburn/Hillsboro) y Singapur. Desde
-> Argentina, Ashburn tiene menor latencia, pero en EE. UU. el precio y la transferencia incluida son
-> distintos. Para un panel de administración la latencia de UE (~250 ms) es aceptable. **Pregunta Q2.**
+### B.3 Claude, MCP e independencia de proveedor
 
-### B.2 Tecnologías seleccionadas y justificación
+Detalle en §C.9. En resumen: Claude es **un proveedor detrás de una puerta**, no una pieza de la arquitectura.
 
-| Pieza | Elegido | Alternativas consideradas | Por qué |
+### B.4 Costos: indispensable vs. diferido
+
+Importes estimados, **a verificar**. No incluyen impuestos argentinos a servicios digitales del exterior (*verificar con tu banco*).
+
+**Nivel 0 — Indispensable para cerrar la Etapa 1**
+
+| Servicio | Tipo | Estimado/mes | Por qué es indispensable |
 |---|---|---|---|
-| SO | Ubuntu 24.04 LTS | Debian 12, Rocky | Soporte hasta 2029 (2034 con Pro gratis personal), documentación abundante, `unattended-upgrades` |
-| Contenedores | Docker Engine + Compose v2 | Podman, k3s | Estándar, portable, suficiente para 1 servidor |
-| Proxy / TLS | Caddy 2 | Nginx, Traefik | Configuración mínima, HTTPS automático, cabeceras de seguridad fáciles |
-| Exposición del panel | Cloudflare Tunnel + Access | Puerto 443 abierto, VPN obligatoria | Ningún puerto entrante; login con Google/email OTP antes de llegar al servidor; gratis hasta 50 usuarios (*verificar*) |
-| Acceso administrativo | Tailscale | WireGuard manual, SSH público | App Android oficial, gratis en plan personal, SSH sin exponer el puerto 22 |
-| Backend | FastAPI (Python 3.12) | Node/NestJS, Go | Coherente con JARVIS; SDKs oficiales de Anthropic, MCP y Google en Python; tipado con Pydantic |
-| Base de datos | PostgreSQL 16 + pgvector | SQLite, MySQL, Supabase | Un solo motor para relacional, JSON, cola, vectores y auditoría; respaldo trivial |
-| Cola de trabajos | Tabla `ops.jobs` en Postgres | Redis + Celery, RabbitMQ | Menos piezas; volumen de Etapa 1–3 es bajo |
-| Objetos (videos, imágenes) | Cloudflare R2 (S3) | Backblaze B2, MinIO local | Sin costo de salida; 10 GB gratis (*verificar*); API S3 estándar → portable |
-| Respaldos | restic → Backblaze B2 | Borg, rclone | Cifrado, deduplicado, verificable; B2 es otro proveedor (regla 3-2-1) |
-| Monitoreo | `/health` + tabla `sys.health_checks` + healthchecks.io | Prometheus+Grafana, Uptime Kuma | Prometheus es excesivo para 1 VPS; healthchecks avisa por email/Telegram si algo deja de “latir” |
-| Panel | PWA en HTML + JS sin framework (como Radar y JARVIS) | React, Next.js | Sin compilación, liviano en Android, instalable en pantalla de inicio |
-| Secretos | Archivos `.env` root-only fuera del repo; opcional `sops + age` para versionarlos cifrados | Vault, Doppler | Vault es excesivo; sops permite reconstruir desde el repo sin exponer secretos |
-| CI/CD | GitHub Actions → imagen en GHCR → `crdo deploy <versión>` manual | Watchtower, despliegue automático | Ningún cambio llega a producción sin acción humana |
+| Hetzner CX23 | Fijo | ≈ €4 | El servidor 24/7 |
+| IPv4 pública Hetzner | Fijo | ≈ €0,50–0,60 | Descargar imágenes de GHCR/GitHub, que no tienen IPv6 (*verificar*) |
+| Tailscale Personal | Gratis | 0 | Acceso privado desde Android y publicación del panel |
+| Backblaze B2 | Gratis hasta 10 GB | 0 | Respaldo fuera del proveedor. Sin esto la Etapa 1 no cumple "respaldada" |
+| GitHub (repo privado, Actions, GHCR) | Gratis dentro del cupo | 0 | Código, CI e imágenes |
+| healthchecks.io Hobby | Gratis | 0 | Aviso si falla un respaldo o se cae el servidor |
+| **Total Nivel 0** | | **≈ €4,50–4,60 ≈ US$ 5–6** | |
 
-### B.3 Preparación para Claude y MCP (sin conectar nada)
+**Nivel 1 — Recomendado pero diferible** (se activa cuando se cumple el disparador)
 
-- **Claude API:** el backend tendrá un único punto de salida, `llm_gateway`, que:
-  1. lee la llave desde el entorno (`ANTHROPIC_API_KEY`, ausente en Etapa 1);
-  2. verifica el presupuesto restante del departamento y global antes de cada llamada;
-  3. registra modelo, tokens de entrada/salida, costo estimado y tarea en `finance.usage_events`;
-  4. corta las llamadas si se supera el tope (además del tope duro configurado en la consola de Anthropic).
-- **MCP:** C.R.D.O. actuará en dos roles:
-  - **Cliente MCP** (los futuros agentes usan herramientas expuestas por servidores MCP: Drive, YouTube, BD interna).
-  - **Servidor MCP propio** (`crdo-mcp`) que expone *solo* operaciones del backend con permisos —
-    nunca acceso directo a la BD ni a credenciales—. Así Claude (o cualquier otro modelo) se conecta a
-    C.R.D.O. con transporte *Streamable HTTP* + OAuth y solo ve lo que su rol permite.
-  - Los servidores MCP corren como contenedores en una red Docker interna (`crdo_mcp`), sin salida a
-    Internet salvo los dominios que necesiten.
-  - Tabla `integrations.mcp_servers` + `integrations.mcp_tool_grants` definen qué agente puede usar qué
-    herramienta y con qué nivel de riesgo.
-
-### B.4 Presupuesto mensual estimado
-
-Todos los importes son **estimaciones a verificar** en la página oficial antes de contratar. Tipo de
-cambio de referencia: 1 € ≈ 1,08–1,15 US$ (*verificar*). No incluye impuestos argentinos sobre servicios
-digitales del exterior, que pueden sumar un porcentaje importante al pagar con tarjeta (*verificar con tu
-banco*).
-
-**Costos fijos**
-
-| Concepto | Estimado / mes | Nota |
+| Servicio | Estimado/mes | Disparador para activarlo |
 |---|---|---|
-| VPS Hetzner CX33 (o CX23) | €6,50 (≈ €4) | *Verificar*: cambios de precio en abril y junio 2026 |
-| IPv4 pública Hetzner | ≈ €0,50–0,60 | Se cobra aparte en Hetzner (*verificar*). Con Cloudflare Tunnel se podría usar solo IPv6, pero se recomienda IPv4 para simplicidad |
-| Backups automáticos de Hetzner (+20 %) | ≈ €1,30 | Opcional; complementa restic, no lo reemplaza |
-| Dominio propio (ej. `crdo.xyz`/`.com`) | ≈ US$ 1 (US$ 10–15/año) | Necesario para Cloudflare Tunnel con nombre propio. *Pregunta Q1* |
-| **Subtotal fijo** | **≈ US$ 9–11** | |
+| Backups automáticos de Hetzner (+20 %) | ≈ €0,80 | Cuando haya datos de negocio reales, como segunda capa además de restic |
+| Subir a CX33 | +≈ €2,50 | RAM > 75 % sostenida o staging permanente |
+| Dominio propio + Cloudflare (Tunnel/Access) | ≈ US$ 1 | Acceso sin Tailscale, webhooks públicos o redirección OAuth que Google no acepte en `ts.net` (*verificar en Etapa 2*) |
+| Cloudflare R2 | 0 hasta 10 GB, luego por GB | Primer archivo de producción (guiones, miniaturas, audio) |
+| Staging por horas (otro VPS) | Céntimos por sesión | Antes de cambios riesgosos (migraciones grandes, actualización de Postgres) |
 
-**Servicios gratuitos usados (dentro de sus límites, a verificar)**
+**Nivel 2 — Variable, Etapa 2 en adelante**: Claude API u otro proveedor (por tokens, con tope), workers de
+render por horas, Google One si se usa Drive. Todo con presupuesto en `finance.budgets` y corte automático.
 
-| Servicio | Plan gratuito | Uso |
-|---|---|---|
-| Cloudflare | DNS, Tunnel, Access (≤ 50 usuarios), R2 10 GB | Exposición segura del panel, almacenamiento de objetos |
-| Backblaze B2 | 10 GB | Respaldos cifrados fuera de Hetzner |
-| Tailscale | Plan Personal | Acceso administrativo |
-| GitHub | Repos privados, Actions con minutos gratis, GHCR | Código, CI, imágenes |
-| healthchecks.io | Plan Hobby (≈ 20 chequeos) | Alertas de respaldos y servidor caído |
-| Let's Encrypt / Cloudflare TLS | Gratis | Certificados |
+> **Ahorro frente a la v1:** de ≈ US$ 9–14 a ≈ US$ 5–6 de costo fijo mínimo. Se difieren el dominio, Cloudflare,
+> el CX33 y los backups de Hetzner, sin perder seguridad en el núcleo: Tailscale reemplaza a Cloudflare Access
+> para un único usuario.
 
-**Consumo variable (aparece desde Etapa 2)**
-
-| Concepto | Cómo se cobra | Control |
-|---|---|---|
-| Claude API | Por millón de tokens, distinto por modelo (*verificar en anthropic.com/pricing*) | Tope mensual en la consola de Anthropic + tope interno por departamento |
-| R2 / B2 por encima del gratis | Por GB-mes almacenado (y operaciones) | Alertas en 80 % del cupo gratis; política de ciclo de vida para borrar intermedios |
-| Google Drive (si se usa) | 15 GB gratis; luego plan Google One | Preferir R2 para archivos de trabajo; Drive solo para entregables |
-| YouTube Data / Analytics API | Gratis con cuota diaria (unidades) | `finance.usage_events` registra unidades consumidas |
-| Worker de render (futuro) | Por hora | Fuera de Etapa 1 |
-
-**Escenarios Etapa 1:** mínimo ≈ US$ 6–7 (CX23, sin backups Hetzner, sin dominio, usando Tailscale para
-todo); recomendado ≈ US$ 9–14; con staging separado en otro VPS ≈ US$ 14–20.
+**Memoria en el CX23 (4 GB + 2 GB de swap):** los topes de producción suman ≈ 3,2 GB, pero son máximos, no
+reservas. **Staging se levanta solo cuando se prueba** (`crdo deploy --env staging`) y se apaga después. Con un
+CX33, staging puede quedar encendido.
 
 ---
 
@@ -211,453 +159,499 @@ todo); recomendado ≈ US$ 9–14; con staging separado en otro VPS ≈ US$ 14�
 
 ```mermaid
 flowchart TB
-  subgraph Humano["Dueño (Android)"]
-    PWA["Panel C.R.D.O.<br/>PWA en el navegador"]
-    TS_APP["App Tailscale<br/>(admin / emergencia)"]
+  subgraph PHONE["Dueño — Android"]
+    PWA["Panel C.R.D.O. (PWA)"]
+    AEGIS["App TOTP<br/>(códigos de un solo uso)"]
+    TSAPP["Tailscale"]
+    GHAPP["GitHub (app/web)"]
   end
 
-  subgraph CF["Cloudflare (gratis)"]
-    ACCESS["Access<br/>login + 2FA"]
-    TUNNEL["Tunnel<br/>sin puertos abiertos"]
-    R2[("R2<br/>videos, imágenes,<br/>artefactos")]
+  subgraph TAILNET["Red privada Tailscale"]
+    SERVE["tailscale serve<br/>https://crdo-prod.…ts.net (443 prod / 8443 staging)"]
   end
 
-  subgraph VPS["VPS Hetzner — Ubuntu 24.04 — Docker"]
+  subgraph VPS["VPS Hetzner CX23 — Ubuntu 24.04 — UFW: nada entrante"]
     direction TB
-    CLOUDFLARED["cloudflared"]
-    CADDY["Caddy<br/>proxy + cabeceras"]
-    subgraph PROD["Proyecto compose: crdo-prod"]
-      API["crdo-api<br/>FastAPI<br/>auth · permisos · aprobaciones<br/>llm_gateway · mcp_gateway"]
-      WORKER["crdo-worker<br/>cola de trabajos<br/>(vacío en Etapa 1)"]
-      SCHED["crdo-scheduler<br/>tareas periódicas"]
-      PG[("PostgreSQL 16<br/>+ pgvector")]
-      MCPNET["Red interna MCP<br/>(servidores MCP futuros)"]
+    subgraph PROD["crdo-prod (redes propias)"]
+      API["api — FastAPI<br/>127.0.0.1:8000"]
+      WORKER["worker (location=vps)<br/>NO toma 'render'"]
+      SCHED["scheduler<br/>reap_expired · expire_approvals"]
+      PG[("PostgreSQL 16 + pgvector<br/>funciones de control + TOTP")]
     end
-    subgraph STG["Proyecto compose: crdo-staging"]
-      API_S["crdo-api (staging)"]
-      PG_S[("Postgres staging")]
+    subgraph STG["crdo-staging (redes propias, a pedido)"]
+      API_S["api 127.0.0.1:8100"] --> PG_S[("Postgres staging")]
     end
-    BACKUP["restic + pg_dump<br/>(systemd timer)"]
+    OPSD["crdo-opsd (host)<br/>lista cerrada de comandos"]
+    BK["backup.sh / restore.sh<br/>(timers systemd)"]
   end
 
-  subgraph EXT["Proveedores contratados (Etapa 2+)"]
-    CLAUDE["Claude API"]
-    YT["YouTube Data /<br/>Analytics API"]
-    GDRIVE["Google Drive"]
+  subgraph EXT["Fuera del VPS"]
+    B2[("Backblaze B2<br/>restic cifrado")]
+    HC["healthchecks.io"]
+    GH["GitHub: repo privado crdo<br/>CI efímero + GHCR"]
+    RENDER["Workers de render externos<br/>(Etapa 3+, por horas)"]
+    LLM["Proveedores de IA<br/>Claude / alternativo / propio"]
   end
 
-  B2[("Backblaze B2<br/>respaldos cifrados")]
-  HC["healthchecks.io<br/>alertas"]
-  GH["GitHub<br/>código + CI + imágenes"]
-
-  PWA --> ACCESS --> TUNNEL --> CLOUDFLARED --> CADDY
-  CADDY --> API
-  CADDY --> API_S
-  TS_APP -. SSH privado .-> VPS
+  PWA --> TSAPP --> SERVE --> API
+  SERVE --> API_S
+  AEGIS -. "código" .-> PWA
   API --> PG
   WORKER --> PG
   SCHED --> PG
-  API_S --> PG_S
-  API --> R2
-  API -. "solo vía llm_gateway<br/>con presupuesto" .-> CLAUDE
-  MCPNET -. "Etapa 2+" .-> YT
-  MCPNET -. "Etapa 2+" .-> GDRIVE
-  API --- MCPNET
-  BACKUP --> B2
-  BACKUP --> HC
-  GH -->|"imagen versionada<br/>despliegue manual"| VPS
+  API -- "encola comando (TOTP)" --> PG
+  OPSD -- "toma comando (rol crdo_ops)" --> PG
+  OPSD -- "deploy / rollback / backup" --> PROD
+  BK --> B2
+  BK --> HC
+  GHAPP --> GH -- "imagen versionada" --> OPSD
+  RENDER -. "Tailscale: solo API, cola 'render'" .-> API
+  WORKER -. "llm_gateway (Etapa 2)" .-> LLM
 ```
 
-### C.2 Capas y responsabilidades
+### C.2 Capas
 
-| Capa | Componente | Responsabilidad | Quién puede tocarla |
-|---|---|---|---|
-| Borde | Cloudflare Access + Tunnel | Autenticar antes de llegar al servidor; ocultar la IP | Dueño |
-| Entrada | Caddy | Enrutar `panel.` / `staging.`, cabeceras de seguridad, límite de tamaño | Dueño (config en repo) |
-| Núcleo | `crdo-api` | Única autoridad: usuarios, agentes, permisos, aprobaciones, auditoría, presupuestos, puertas a IA y MCP | Código revisado en GitHub |
-| Ejecución | `crdo-worker` | Ejecuta trabajos de la cola con la identidad del agente que los pidió | Solo a través de la cola |
-| Tiempo | `crdo-scheduler` | Respaldos lógicos, chequeos de salud, cierre diario de costos | Configuración |
-| Datos | PostgreSQL | Fuente de verdad. Ningún agente se conecta directo | Solo `crdo-api`/`worker` con usuarios de BD de permisos mínimos |
-| Objetos | R2 | Archivos grandes, referenciados por `storage.objects` | Solo backend con llave de alcance limitado a un bucket |
-| Resguardo | restic → B2 | Copias cifradas fuera del proveedor | Llave solo de escritura (*append-only*) desde el VPS |
+| Capa | Componente | Quién la toca |
+|---|---|---|
+| Acceso | Tailscale (política en `infra/tailscale/policy.hujson`) | Dueño |
+| Núcleo | `api`, `worker`, `scheduler` | Código revisado en el repo privado |
+| Autoridad | Funciones SQL de `03-ops-functions.sql` | Solo por migración revisada |
+| Datos | PostgreSQL | La app con `crdo_app` (permisos mínimos); nadie directo |
+| Operación del host | `crdo-opsd` + `crdo` | Solo comandos de la lista, pedidos con TOTP |
+| Resguardo | restic → B2 | Llave sin permiso de borrado desde el VPS |
 
-### C.3 Modelo organizacional preparado (sin agentes)
+### C.3 Organización preparada
+
+Sin cambios: Dirección (rol, hoy Claude y luego un director propio) + 10 departamentos bajo Dirección.
+**Auditoría reporta al dueño**, no a Dirección.
+
+### C.4 Aprobaciones humanas ligadas al contenido exacto ★
 
 ```mermaid
-flowchart LR
-  OWNER["Dueño (humano)<br/>autoridad final"] --> DIR["Dirección<br/>Claude → luego director propio"]
-  DIR --> INV[Investigación]
-  DIR --> EST[Estrategia]
-  DIR --> GUI[Guiones]
-  DIR --> DIS[Diseño]
-  DIR --> PRO[Producción audiovisual]
-  DIR --> EDI[Edición]
-  DIR --> PUB[Publicación]
-  DIR --> MKT[Marketing]
-  DIR --> ANA[Analítica]
-  DIR --> FIN[Finanzas]
-  AUD["Auditoría y control de calidad<br/>(reporta al dueño, no a Dirección)"]
-  OWNER --> AUD
-  AUD -. revisa .-> DIR
+sequenceDiagram
+  autonumber
+  participant AG as Agente
+  participant API as Backend
+  participant DB as PostgreSQL (funciones)
+  participant H as Dueño (Android)
+  participant W as Worker
+  AG->>API: Pide "publicar video X" (R3)
+  API->>DB: INSERT tarea → trigger calcula sha256(payload canónico)
+  API->>DB: ops.request_approval(tarea) → vence en 24 h (máx. 72)
+  H->>API: Abre el panel: ve el contenido completo + huella del hash
+  H->>API: Aprueba con código TOTP de la app
+  API->>DB: ops.approve(id, usuario, código, hash_que_se_mostró)
+  DB->>DB: ¿hash mostrado = hash guardado = hash actual? ¿vigente? ¿TOTP válido y no usado?
+  DB-->>API: approved (o hash_mismatch / expired / invalid_code)
+  API->>DB: ops.enqueue_job(…, clave_idempotencia, efecto_externo)
+  W->>DB: ops.claim_job → lease + token
+  W->>DB: ops.begin_external_effect(job, token)
+  DB->>DB: Revalida hash y vigencia → aprobación CONSUMIDA (un solo uso)
+  W->>W: Ejecuta la acción externa
+  W->>DB: ops.complete_job(job, token)
 ```
 
-Auditoría reporta directamente al dueño para que la Dirección (incluido Claude) no pueda silenciarla.
-
-### C.4 Niveles de riesgo y autorización
-
-| Nivel | Ejemplos | Regla |
+| Garantía | Mecanismo | Probado (§F.0) |
 |---|---|---|
-| **R0 — Lectura** | Leer métricas, buscar en memoria | Automático si el agente tiene el permiso |
-| **R1 — Interno reversible** | Crear borrador de guion, guardar nota, encolar tarea | Automático + auditado |
-| **R2 — Gasto menor dentro de presupuesto** | Llamar a Claude API, generar una imagen | Automático mientras quede presupuesto; corte al superar tope |
-| **R3 — Sensible / externo** | Publicar o programar un video, cambiar título público, responder comentarios, gasto fuera de presupuesto, conectar una cuenta | **Requiere aprobación humana** en el panel, con segundo factor, con vencimiento |
-| **R4 — Prohibido a agentes** | Borrar canal/videos, cambiar contraseñas o métodos de pago, modificar permisos, borrar respaldos, desactivar auditoría | Solo el dueño, manualmente, fuera del sistema de agentes |
+| Se aprueba exactamente lo que se vio | El panel envía el hash que mostró; la base lo compara con el guardado y con el actual | ✅ |
+| El contenido no cambia después | Columna `payload` sin permiso de UPDATE para la app + trigger que lo impide + nueva verificación del hash al ejecutar | ✅ (incluye alteración forzada por superusuario) |
+| Vencimiento | 24 h por defecto, máximo 72 h (CHECK). Vencida = no se puede aprobar ni ejecutar | ✅ |
+| Código de un solo uso | TOTP RFC 6238 verificado **dentro de PostgreSQL**. Cada código sirve una vez por usuario (`totp_last_step`). 5 fallos bloquean 15 min | ✅ (4 vectores oficiales del RFC) |
+| La app no puede fabricar códigos | El secreto TOTP está en `auth.totp_secrets`, sin permiso de lectura para la app | ✅ |
+| La app no puede autoaprobarse | Sin INSERT/UPDATE sobre `ops.approvals`; solo funciones | ✅ (en la v1 sí podía: corregido) |
+| Una aprobación = una ejecución | Estado `consumed` al iniciar el efecto | ✅ |
+| Rechazar o apagar agentes es fácil | Rechazar y apagar agentes no exigen código (es la dirección segura); aprobar y encender sí | ✅ |
 
-Las acciones R3 se guardan en `ops.approvals` con el **contenido exacto** a ejecutar (hash incluido): si
-el agente cambia algo después de la aprobación, el hash no coincide y la acción se rechaza.
+**Limitación conocida:** si un atacante tiene a la vez tu teléfono desbloqueado (app TOTP) y acceso al panel, puede
+aprobar. Mitigación: bloqueo de pantalla, app TOTP con PIN o biometría, y revocación del dispositivo en Tailscale.
 
-### C.5 Entornos
+### C.5 Entornos de prueba aislados ★
 
-| | Producción | Staging (pruebas) |
+| Nivel | Dónde | Aislamiento | Costo | Uso |
+|---|---|---|---|---|
+| **1. CI efímero** | GitHub Actions (`.github/workflows/ci.yml`) | Máquina nueva por ejecución, **sin secretos**, se destruye | 0 (cupo, *verificar*) | Cada cambio: esquema, seguridad, cola, pgvector, respaldo/restauración, shellcheck, búsqueda de secretos |
+| **2. Staging** | Mismo VPS, proyecto `crdo-staging` | Contenedores, **redes**, volumen, base, contraseñas, bucket y llaves propios; topes de CPU/RAM; agentes apagados; presupuesto de IA ínfimo; `CRDO_FORBID_PROD_CONNECTIONS=1` | 0 | Probar una versión antes de producción |
+| **3. Staging por horas** (opcional) | VPS temporal en Hetzner | Máquina distinta | Céntimos por sesión | Cambios riesgosos: actualizar Postgres, migraciones grandes, ensayo de desastre (T13) |
+
+Corrección v2: en la v1, prod y staging compartían la red `crdo_app` a través de Caddy. Ahora no comparten ninguna:
+la configuración resuelta muestra solo redes `crdo-staging_*` (§F.0).
+
+**Reglas que no se negocian:** staging nunca tiene credenciales del canal real ni de pagos, y nunca se restaura
+producción en staging sin anonimizar.
+
+### C.6 El VPS no renderiza video ★
+
+| Capa | Mecanismo |
+|---|---|
+| Base de datos | `ops.queues`: `render` y `ai_media` tienen `runs_on = 'external'`. `ops.claim_job(…, 'vps')` **no los devuelve, ni pidiéndolos explícitamente** (probado) |
+| Contenedor | Worker con `CRDO_WORKER_LOCATION=vps`, tope de 1 CPU y 768 MB; la imagen no incluye ffmpeg |
+| Red | Los workers externos entran por Tailscale (`tag:crdo-worker`) y solo llegan a la API |
+| Qué SÍ hace el VPS | Orquestar, guardar metadatos, llamar APIs, procesar texto, miniaturas livianas |
+| Dónde irá el render (Etapa 3+, a decidir) | VPS de CPU dedicada por horas (crear → renderizar → destruir), GPU alquilada para IA generativa, o APIs de generación de video. Todos toman de la cola `render` y suben el resultado al almacenamiento de objetos |
+
+### C.7 Recuperación de tareas interrumpidas y no duplicación ★
+
+| Problema | Solución | Probado |
 |---|---|---|
-| Compose project | `crdo-prod` | `crdo-staging` |
-| Base de datos | contenedor y volumen propios | contenedor y volumen propios |
-| Secretos | `/opt/crdo/secrets/prod.env` | `/opt/crdo/secrets/staging.env` (llaves distintas, presupuestos ínfimos) |
-| URL | `panel.<dominio>` | `staging.<dominio>` |
-| Integraciones externas | Reales (desde Etapa 2, tras aprobación) | Cuentas de prueba o simuladas; **nunca** el canal real |
-| Recursos | prioridad | límites de CPU/RAM más bajos |
+| Dos workers toman el mismo trabajo | `SELECT … FOR UPDATE SKIP LOCKED` | ✅ 6 workers, 300 trabajos: 300 tomas únicas, `attempts = 1` en todos |
+| Se pide dos veces lo mismo | `idempotency_key` UNIQUE en tareas y trabajos | ✅ |
+| El worker se cae a mitad de camino | **Lease** con vencimiento (5 min por defecto) + `heartbeat`; el `scheduler` ejecuta `ops.reap_expired()` cada minuto y reencola | ✅ |
+| Un worker "zombi" vuelve y pisa al nuevo | **Token de exclusión** nuevo en cada toma; completar o fallar con un token viejo no tiene efecto | ✅ |
+| Falla temporal | Reintento con espera exponencial (30 s, 60 s, 120 s… máx. 1 h) hasta `max_attempts`, luego `dead` | ✅ |
+| **Caída después de iniciar una acción irreversible** (¿se publicó o no?) | `begin_external_effect` marca `effect_started_at` **antes** de actuar. Si el lease vence después, el trabajo queda en **`needs_review`** y **no se reintenta solo**: lo decide un humano. Las colas de efecto externo tienen 1 intento | ✅ |
+| Detectar si la acción externa ya ocurrió | Etapa 2: cada integración guarda el id externo (p. ej. id de YouTube) y consulta antes de repetir | Diseño |
 
-Mientras ambos compartan VPS, staging tiene límites de memoria para no afectar producción. Si el
-presupuesto lo permite, staging pasa a otro VPS (o a Oracle Always Free) sin cambios de código.
+Regla: **las tareas internas son "al menos una vez" con idempotencia; las acciones externas irreversibles son "como
+máximo una vez", con revisión humana ante la duda.**
+
+### C.8 Administración completa desde Android ★
+
+Requisitos en el teléfono: Tailscale, una app TOTP con respaldo cifrado (p. ej. Aegis), un gestor de contraseñas
+(p. ej. Bitwarden), la app de GitHub y, para emergencias, Termux o Termius.
+
+| Tarea | Cómo, desde Android | ¿Necesita PC? |
+|---|---|---|
+| Ver estado, salud, costos, cola, auditoría | Panel PWA (con Tailscale activo) | No |
+| Aprobar o rechazar publicaciones y gastos | Panel + código TOTP | No |
+| Apagar todos los agentes | Botón del panel (sin código) | No |
+| Encender agentes / otorgar permisos | Panel + TOTP | No |
+| Respaldo inmediato / prueba de restauración | Panel → comando admin con TOTP → `crdo-opsd` | No |
+| Desplegar versión / rollback / reiniciar servicio | Panel → comando admin con TOTP → `crdo-opsd` (con respaldo automático previo) | No |
+| Revisar y aprobar cambios de código | App de GitHub: PR + CI verde → merge | No |
+| Publicar una versión | GitHub web: *Releases → New release* (tag `x.y.z`) → Actions construye la imagen | No |
+| Política de acceso Tailscale / revocar un dispositivo | Consola web de Tailscale | No |
+| Cambiar o rotar un secreto | SSH por Tailscale (Termux/Termius) + `nano /opt/crdo/secrets/prod.env` + reinicio | No (incómodo) |
+| Servidor sin respuesta | Consola web de Hetzner: reiniciar, consola de emergencia, modo rescate (*verificar usabilidad en móvil*) | No |
+| Reconstruir desde cero (desastre) | Runbook por SSH desde Termux: crear VPS → `bootstrap-server.sh` → restaurar | No, pero en PC es más cómodo. Se ensayará (T13) |
+| Alertas | healthchecks.io → email o Telegram | No |
+| **Teléfono perdido** | Códigos de recuperación en papel → otro dispositivo → revocar el teléfono en Tailscale → cerrar sesiones del panel → re-enrolar TOTP | Otro dispositivo cualquiera |
+
+**Por qué no hay socket de Docker en los contenedores:** si el panel pudiera ejecutar Docker, quien comprometiera el
+panel controlaría el servidor. En su lugar, el panel **encola** un comando (exige TOTP, lo verifica la base) y
+`crdo-opsd`, en el host, ejecuta solo comandos de una lista cerrada con argumentos validados.
+
+### C.9 Claude API, MCP y agentes sin depender de Claude ★
+
+| Riesgo de dependencia | Diseño |
+|---|---|
+| Código atado a la API de un proveedor | `llm_gateway` con adaptadores (`anthropic_messages`, `openai_chat`). Agentes y backend llaman a **rutas** (`razonamiento`, `redaccion`, `clasificacion`, `embeddings`) definidas en `integrations.model_routes`, con proveedor principal y alternativas |
+| Instrucciones escritas para un modelo | Instrucciones de agentes versionadas en el repo propio (`agents/`), neutrales, con evaluaciones para comparar proveedores |
+| Herramientas propietarias | Herramientas expuestas por **MCP** (estándar abierto) desde un servidor propio (`crdo-mcp`) |
+| Memoria dentro del proveedor | Memoria en Postgres propio. Cada embedding registra su modelo (`embed_model`) y puede recalcularse con otro |
+| Historial perdido | Toda llamada guarda entrada, salida, costo y tarea. Sirve para auditar, migrar o entrenar un modelo propio |
+| Claude como administrador | Claude ocupa el **rol** Dirección, sin credenciales, sin R4, con R3 sujeto a aprobación; Auditoría no le reporta |
+| Caída o cambio de condiciones del proveedor | Ruta con alternativa; kill switch; presupuesto con corte automático |
+
+En la Etapa 1, los gateways quedan **apagados** (`llm_gateway_enabled = false`, llaves vacías) y no se conecta ningún proveedor.
+
+### C.10 Cifrado, respaldo y restauración ★
+
+| Aspecto | Diseño | Verificado (§F.0) |
+|---|---|---|
+| Cifrado en tránsito | Tailscale (WireGuard) para administración; HTTPS de `tailscale serve`; TLS hacia B2 | Diseño |
+| Cifrado del respaldo | restic: AES-256 + autenticación, **antes** de salir del VPS. B2 nunca ve datos en claro | ✅ marcador confidencial y SQL ausentes del repositorio; contraseña incorrecta no abre |
+| Integridad | `restic check --read-data` | ✅ detecta una corrupción de 4 bytes |
+| Volcado verificado antes de subir | `pg_restore --list` + manifiesto (conteos + último hash de auditoría) | ✅ |
+| Sin restos en claro | El volcado temporal se borra al subir | ✅ |
+| Secretos fuera de los respaldos de configuración | `--exclude '*.env'` | ✅ |
+| Fallo visible | Fallo de `pg_dump` → error + `healthchecks /fail`, sin snapshot incompleto | ✅ |
+| Restauración probada | `restore.sh test`: restaura en una base temporal, compara con el manifiesto y verifica la cadena de auditoría | ✅ (2 s con datos pequeños) |
+| Detecta manipulación | Un evento de auditoría alterado antes del respaldo hace **fallar** la prueba de restauración | ✅ |
+| No se puede borrar desde el VPS | Llave de B2 sin `deleteFiles`; limpieza mensual con otra llave que solo tiene el dueño | Pendiente: requiere cuenta B2 (T14) |
+| Contraseña de restic | En el gestor de contraseñas **y** en papel. Sin ella los respaldos son irrecuperables | Procedimiento |
+| Cifrado en reposo del disco del VPS | No se agrega cifrado de disco: protege poco en un VPS con arranque desatendido. Los secretos están en archivos 600 y los respaldos van cifrados | Decisión documentada |
 
 ---
 
 ## FASE D — Estructura de carpetas, servicios y base de datos
 
-### D.1 Repositorio (código, en GitHub)
+### D.1 Repositorio privado `crdo` ★
+
+Hoy vive en `Radar/crdo/`. `tools/export-to-private-repo.sh` lo exporta con su historial a un repositorio privado
+vacío que creás vos (§E.1). Tras la exportación, esta carpeta es la raíz:
 
 ```
 crdo/
+├── README.md
+├── .gitignore                    ← bloquea *.env, secretos, volcados
+├── .github/workflows/ci.yml      ← CI efímero (se activa en el repo propio)
 ├── docs/
-│   ├── ETAPA-1-DISENO.md        ← este documento
-│   └── runbooks/                ← procedimientos (restaurar, rotar llaves, migrar) [Etapa 1, implementación]
+│   ├── ETAPA-1-DISENO.md         ← este documento
+│   ├── CAMBIOS-v2.md             ← informe de cambios v1 → v2
+│   └── runbooks/                 ← [implementación] restaurar, rotar llaves, desastre, teléfono perdido
 ├── infra/
-│   ├── compose.yml              ← servicios base (borrador incluido)
-│   ├── compose.staging.yml      ← diferencias de staging (borrador incluido)
-│   ├── .env.example             ← variables sin valores reales (borrador incluido)
-│   ├── caddy/Caddyfile          ← proxy (borrador incluido)
-│   ├── cloudflared/config.yml   ← túnel (borrador incluido)
-│   ├── db/init/                 ← esquema inicial SQL (borrador incluido)
+│   ├── compose.yml               ← núcleo (api, worker, scheduler, postgres)
+│   ├── compose.staging.yml       ← staging aislado
+│   ├── .env.example
+│   ├── db/init/
+│   │   ├── 00-roles.sh           ← roles con login (contraseñas por entorno)
+│   │   ├── 01-core.sql           ← esquema + permisos mínimos
+│   │   ├── 02-memory-vector.sql  ← pgvector (HNSW + texto completo)
+│   │   └── 03-ops-functions.sql  ← TOTP, aprobaciones, cola, comandos admin, auditoría
 │   ├── scripts/
-│   │   ├── bootstrap-server.sh  ← endurecimiento del VPS (borrador incluido)
-│   │   ├── backup.sh            ← pg_dump + restic (borrador incluido)
-│   │   ├── restore.sh           ← restauración (borrador incluido)
-│   │   └── crdo                 ← CLI: deploy / rollback / status (borrador incluido)
-│   └── systemd/                 ← timers de respaldo (borrador incluido)
-├── backend/                     ← [implementación tras aprobación]
-│   ├── pyproject.toml
-│   ├── Dockerfile
-│   ├── crdo/
-│   │   ├── main.py              ← FastAPI
-│   │   ├── config.py            ← lectura de entorno, sin secretos en código
-│   │   ├── db/                  ← conexión, migraciones (Alembic)
-│   │   ├── auth/                ← usuarios humanos, sesiones, TOTP, tokens de agentes
-│   │   ├── policy/              ← permisos, niveles de riesgo, aprobaciones
-│   │   ├── audit/               ← registro append-only
-│   │   ├── jobs/                ← cola y worker
-│   │   ├── memory/              ← memoria empresarial y búsqueda vectorial
-│   │   ├── storage/             ← abstracción S3 (R2 hoy, otro mañana)
-│   │   ├── finance/             ← presupuestos y consumo
-│   │   ├── gateways/
-│   │   │   ├── llm_gateway.py   ← única salida hacia Claude (desactivado en Etapa 1)
-│   │   │   └── mcp_gateway.py   ← registro y control de servidores MCP (desactivado)
-│   │   ├── health/              ← /health, métricas del sistema
-│   │   └── api/                 ← rutas REST del panel
-│   └── tests/
-├── panel/                       ← PWA (HTML + JS sin framework)
-│   ├── index.html, app.js, styles.css, sw.js, manifest.webmanifest
-├── mcp/                         ← servidores MCP propios y configuración de los de terceros (Etapa 2+)
-│   └── README.md
-└── agents/                      ← definiciones de agentes por departamento (vacío hasta Etapa 2)
-    └── README.md
+│   │   ├── bootstrap-server.sh   ← endurecimiento del VPS
+│   │   ├── backup.sh / restore.sh
+│   │   ├── crdo                  ← deploy / rollback / status
+│   │   └── crdo-opsd             ← ejecutor de comandos del panel (host)
+│   ├── systemd/                  ← timers de respaldo y prueba, servicio crdo-opsd
+│   ├── tailscale/policy.hujson   ← quién llega a qué
+│   └── optional/edge/            ← Caddy + Cloudflare (diferido)
+├── tests/
+│   ├── run-db-tests.sh           ← 83 verificaciones
+│   ├── run-backup-tests.sh       ← 18 verificaciones
+│   └── db/*.sql
+├── tools/export-to-private-repo.sh
+├── agents/README.md              ← contrato de agentes (ninguno construido)
+├── mcp/README.md                 ← reglas MCP (nada conectado)
+├── backend/                      ← [implementación] FastAPI
+└── panel/                        ← [implementación] PWA
 ```
 
-### D.2 Servidor (datos, en el VPS)
+### D.2 Servidor
 
 ```
 /opt/crdo/
-├── app/                 ← clon del repo (solo lectura para los contenedores)
-├── secrets/             ← root:root 700; prod.env, staging.env, restic.env (600)
-├── data/
-│   ├── prod/postgres/   ← volumen de Postgres producción
-│   └── staging/postgres/
-├── backups/             ← volcados locales temporales (se suben y se rotan)
-├── logs/                ← logs JSON rotados por logrotate (14 días local)
-└── releases/            ← registro de versiones desplegadas (para rollback)
+├── app/          ← clon del repo privado (llave de despliegue de solo lectura)
+├── secrets/      ← root 700: prod.env, staging.env, restic.env (600)
+├── data/{prod,staging}/postgres/
+├── backups/      ← temporales; se borran al subir
+├── releases/     ← historial de versiones (para rollback)
+└── logs/
 ```
 
-### D.3 Servicios (contenedores)
+### D.3 Servicios
 
-| Servicio | Imagen | Red | Puertos al host | Memoria máx. (prod) |
-|---|---|---|---|---|
-| `cloudflared` | `cloudflare/cloudflared` (versión fija) | `edge` | ninguno | 128 MB |
-| `caddy` | `caddy:2` (versión fija) | `edge`, `app` | ninguno (solo 127.0.0.1 opcional) | 128 MB |
-| `api` | `ghcr.io/<org>/crdo-api:<versión>` | `app`, `data`, `mcp` | ninguno | 1 GB |
-| `worker` | misma imagen, comando distinto | `data`, `mcp` | ninguno | 1 GB |
-| `scheduler` | misma imagen, comando distinto | `data` | ninguno | 256 MB |
-| `postgres` | `pgvector/pgvector:pg16` (versión fija) | `data` (interna) | ninguno | 2 GB |
+| Servicio | Dónde | Expuesto | Tope (prod) |
+|---|---|---|---|
+| `api` | Contenedor | 127.0.0.1:8000 (staging 8100) → `tailscale serve` | 768 MB / 1,5 CPU |
+| `worker` | Contenedor | — | 768 MB / 1 CPU |
+| `scheduler` | Contenedor | — | 192 MB / 0,25 CPU |
+| `postgres` | Contenedor, red interna | — | 1,5 GB / 1,5 CPU |
+| `crdo-opsd` | Host (systemd) | — | — |
+| Timers de respaldo y prueba | Host (systemd) | — | — |
 
-Redes: `data` y `mcp` se crean como `internal: true` (sin salida a Internet). Solo `api`/`worker` tienen
-salida, y en Etapa 2 se puede restringir por dominio con un proxy de salida.
-
-### D.4 Base de datos
-
-Se organiza en **esquemas** por responsabilidad. El borrador ejecutable está en
-`infra/db/init/01-core.sql` y `02-memory-vector.sql`.
+### D.4 Base de datos (cambios v2)
 
 ```mermaid
 erDiagram
-  org_departments ||--o{ org_agents : tiene
-  org_agents ||--o{ org_agent_permissions : recibe
-  org_permissions ||--o{ org_agent_permissions : define
-  auth_users ||--o{ auth_sessions : abre
+  auth_users ||--|| auth_totp_secrets : "secreto (app sin acceso)"
   auth_users ||--o{ ops_approvals : decide
-  org_agents ||--o{ ops_tasks : solicita
+  ops_tasks ||--o| ops_approvals : "R3: hash + vencimiento"
   ops_tasks ||--o{ ops_jobs : genera
-  ops_tasks ||--o| ops_approvals : "requiere (R3)"
-  org_departments ||--o{ finance_budgets : limita
-  finance_budgets ||--o{ finance_usage_events : consume
-  finance_providers ||--o{ finance_usage_events : factura
-  memory_documents ||--o{ memory_chunks : divide
-  storage_objects }o--|| content_projects : pertenece
-  content_projects ||--o{ content_videos : produce
-  integrations_mcp_servers ||--o{ integrations_mcp_tool_grants : expone
-  org_agents ||--o{ integrations_mcp_tool_grants : usa
-  audit_events }o--|| org_agents : "actor (agente)"
-  audit_events }o--|| auth_users : "actor (humano)"
+  ops_queues ||--o{ ops_jobs : "vps | external"
+  auth_users ||--o{ ops_admin_commands : "pide (TOTP)"
+  org_agents ||--o{ org_agent_permissions : "solo vía función + TOTP"
+  integrations_llm_providers ||--o{ integrations_model_routes : sirve
+  org_agents }o--|| integrations_model_routes : "usa ruta"
+  memory_documents ||--o{ memory_chunks : "vector(1024)"
 ```
 
-| Esquema | Tablas | Propósito |
-|---|---|---|
-| `auth` | `users`, `sessions`, `api_tokens` | Humanos (dueño, futuros colaboradores) y tokens de agentes (solo hash) |
-| `org` | `departments`, `agents`, `permissions`, `agent_permissions` | Organigrama y permisos mínimos por agente |
-| `ops` | `tasks`, `jobs`, `approvals` | Trabajo solicitado, ejecución en cola, autorizaciones humanas |
-| `memory` | `documents`, `chunks` (vector), `facts`, `decisions` | Memoria empresarial: qué sabemos, qué decidimos y por qué |
-| `content` | `channels`, `projects`, `videos` | Preparado para producción (vacío en Etapa 1) |
-| `storage` | `objects` | Índice de archivos en R2 (clave, hash, tamaño, dueño, retención) |
-| `analytics` | `video_metrics_daily` | Preparado para YouTube Analytics |
-| `finance` | `providers`, `budgets`, `usage_events` | Costos fijos y variables, cuotas y topes |
-| `integrations` | `connections`, `mcp_servers`, `mcp_tool_grants` | Cuentas conectadas (por **referencia** a secreto, nunca el secreto) y MCP |
-| `audit` | `events` | Registro append-only; el usuario de la app no puede `UPDATE`/`DELETE` |
-| `sys` | `settings`, `deployments`, `backup_runs`, `health_checks` | Operación de la plataforma |
-
-Usuarios de base de datos (permisos mínimos):
-
-| Rol | Puede |
+| Tabla nueva o cambiada | Propósito |
 |---|---|
-| `crdo_owner` | Dueño del esquema; solo migraciones. No lo usa la app |
-| `crdo_app` | CRUD en tablas de negocio; **solo INSERT/SELECT** en `audit.events` |
-| `crdo_readonly` | SELECT (para reportes y para un futuro MCP de solo lectura) |
-| `crdo_backup` | Lectura para `pg_dump` |
+| `auth.totp_secrets` ★ | Secreto TOTP; la app no puede leerlo |
+| `auth.users` (cambiada) | `totp_last_step` (antirrepetición), contador de fallos, bloqueo |
+| `ops.tasks` (cambiada) | `payload_hash` (por trigger), `idempotency_key`, contenido inmutable |
+| `ops.approvals` (rehecha) | Hash, vencimiento (máx. 72 h), paso TOTP usado, estado `consumed` |
+| `ops.queues` ★ | Dónde corre cada cola (`vps` / `external`), lease e intentos |
+| `ops.jobs` (rehecha) | Lease, token de exclusión, heartbeat, `effect_started_at`, `needs_review` |
+| `ops.admin_commands` ★ | Comandos del panel para `crdo-opsd` |
+| `integrations.llm_providers`, `model_routes` ★ | Independencia de proveedor de IA |
+| `org.agents` (cambiada) | `default_route` en lugar de proveedor/modelo fijo |
+
+Roles: `crdo_owner` (solo migraciones), `crdo_app`, `crdo_readonly`, `crdo_backup` y `crdo_ops` ★ (solo comandos admin).
 
 ---
 
 ## FASE E — Plan de instalación y configuración
 
-**Nada de esto se ejecuta hasta tu aprobación.** Cada paso marca qué requiere tu intervención (🔑)
-porque implica crear una cuenta, pagar o autorizar algo.
+**Nada de esto se ejecuta sin una autorización explícita de gasto e instalación.** 🔑 = lo hacés vos.
 
-### E.0 Prerrequisitos (tu parte)
+### E.0 Preparación (sin gasto)
+1. 🔑 Correo exclusivo de C.R.D.O.; 2FA con app TOTP en correo, GitHub, Hetzner, Backblaze y Tailscale; códigos de
+   recuperación **en papel**.
+2. 🔑 En Android: Tailscale, Aegis (u otra app TOTP con respaldo cifrado), Bitwarden, GitHub, Termux o Termius.
 
-1. 🔑 Responder las preguntas de la sección final.
-2. 🔑 Crear (o confirmar) un correo exclusivo de la empresa, p. ej. `crdo.ops@…` — recomendado para no
-   mezclar con cuentas personales.
-3. 🔑 Activar 2FA (app de autenticación, no SMS) en: correo de la empresa, GitHub, Hetzner, Cloudflare,
-   Backblaze, Tailscale. Guardar los códigos de recuperación **fuera del teléfono** (papel o gestor de
-   contraseñas con respaldo).
-4. 🔑 Instalar en Android: gestor de contraseñas (Bitwarden, gratis), app de 2FA (Aegis o similar),
-   Tailscale, y opcionalmente Termux o JuiceSSH.
+### E.1 Repositorio privado (sin gasto)
+3. 🔑 Crear en GitHub el repo **privado y vacío** `crdo`.
+4. Exportar: `bash crdo/tools/export-to-private-repo.sh <url>` (lo puedo hacer yo con tu autorización; no crea
+   nada en GitHub).
+5. 🔑 Proteger `main`, activar *secret scanning* y Dependabot. Verificar que el CI pase en GitHub.
 
-### E.1 Cuentas y recursos (≈ 45 min, desde el teléfono)
+### E.2 Cuentas gratuitas
+6. 🔑 Tailscale: cuenta, teléfono unido, pegar `infra/tailscale/policy.hujson`, *auth key* de un solo uso etiquetada `tag:crdo-server`.
+7. 🔑 Backblaze B2: bucket privado `crdo-backups` (*Object Lock* si está disponible) + llave **sin permiso de borrado**.
+8. 🔑 healthchecks.io: chequeos `backup-prod`, `restore-test`, `heartbeat`.
 
-| Paso | Acción | Quién |
-|---|---|---|
-| 1 | Crear cuenta Hetzner Cloud, proyecto `crdo`, cargar tu llave SSH pública | 🔑 Vos (implica gasto) |
-| 2 | Crear servidor: Ubuntu 24.04, CX33 (o CX23), ubicación elegida, IPv4+IPv6, backups activados, firewall de Hetzner **sin reglas de entrada** salvo SSH temporal | 🔑 Vos, guiado |
-| 3 | Comprar dominio y delegarlo a Cloudflare (o usar uno existente) | 🔑 Vos (gasto) |
-| 4 | Cloudflare: crear Tunnel `crdo`, Access application para `panel.` y `staging.` con política “solo mi email” | 🔑 Vos, guiado |
-| 5 | Cloudflare R2: bucket `crdo-prod-objects` y `crdo-staging-objects`, llaves de API con alcance a cada bucket | 🔑 Vos |
-| 6 | Backblaze B2: bucket `crdo-backups` (privado, con *Object Lock* si está disponible), llave **sin permiso de borrado** | 🔑 Vos |
-| 7 | Tailscale: cuenta, instalar en Android, generar *auth key* de un solo uso | 🔑 Vos |
-| 8 | healthchecks.io: 3 chequeos (`backup-prod`, `server-heartbeat`, `restore-test`) | 🔑 Vos |
+### E.3 Servidor (primer gasto, requiere autorización)
+9. 🔑 Hetzner: proyecto `crdo`, CX23 Ubuntu 24.04, IPv4, firewall de Hetzner con SSH temporal solo desde tu IP.
+10. `bootstrap-server.sh`: actualizaciones automáticas, usuario sin root, SSH solo por Tailscale, UFW, Docker, restic, estructura.
+11. 🔑 Quitar la regla SSH temporal del firewall de Hetzner.
 
-### E.2 Endurecimiento del servidor (`infra/scripts/bootstrap-server.sh`)
-
-1. Actualizar el sistema y activar `unattended-upgrades` (solo parches de seguridad, reinicio a las 04:00 si hace falta).
-2. Crear usuario `crdo` con sudo; deshabilitar login de root y por contraseña en SSH.
-3. Instalar Tailscale, unirse a la red, y **cerrar el SSH público** (UFW: denegar todo entrante; SSH solo por `tailscale0`).
-4. Instalar Docker Engine + Compose desde el repositorio oficial.
-5. Crear `/opt/crdo/{app,secrets,data,backups,logs,releases}` con permisos.
-6. Instalar `restic`, `fail2ban` (defensa extra), `logrotate`, configurar swap de 2 GB y zona horaria `America/Argentina/Buenos_Aires`.
-7. Quitar la regla SSH temporal del firewall de Hetzner.
-
-### E.3 Despliegue de la plataforma
-
-1. Clonar el repo en `/opt/crdo/app` (llave de despliegue de solo lectura).
-2. Copiar `infra/.env.example` → `/opt/crdo/secrets/prod.env` y completar valores (contraseñas generadas con `openssl rand`).
-3. Copiar el token del túnel a `/opt/crdo/secrets/cloudflared.env`.
-4. `crdo deploy <versión>` → descarga imagen, aplica migraciones, levanta servicios, verifica `/health`; si falla, vuelve a la versión anterior.
-5. Crear usuario dueño: `crdo admin create-owner` (pide email, contraseña y enrola TOTP mostrando QR en la terminal o un código para la app).
-6. Desde Android: abrir `https://panel.<dominio>` → login Cloudflare Access → login C.R.D.O. + TOTP → “Agregar a pantalla de inicio”.
-7. Repetir para staging con `crdo deploy --env staging`.
-
-### E.4 Respaldos
-
-1. Inicializar repositorio restic en B2 con contraseña guardada en el gestor de contraseñas **y** en `/opt/crdo/secrets/restic.env`.
-2. Activar `crdo-backup.timer` (diario 03:30): `pg_dump` en formato custom → restic → ping a healthchecks.
-3. Retención: 7 diarios, 4 semanales, 6 mensuales.
-4. Activar `crdo-restore-test.timer` (semanal): restaura el último respaldo en un Postgres temporal y verifica conteos.
-
-### E.5 Actualizaciones
-
-| Qué | Cómo | Frecuencia |
-|---|---|---|
-| Parches de seguridad del SO | `unattended-upgrades` | Automático diario |
-| Versión de Ubuntu | Manual, planificada | Cada 2 años |
-| Imágenes base (Postgres, Caddy, cloudflared) | Dependabot abre PR → CI prueba → despliegue manual en staging → producción | Mensual |
-| Backend/panel | PR → CI (tests) → tag `vX.Y.Z` → imagen en GHCR → `crdo deploy` | Cuando haya cambios |
-| Rollback | `crdo rollback` vuelve a la imagen anterior (las migraciones deben ser compatibles hacia atrás) | Ante fallo |
+### E.4 Plataforma
+12. Clonar el repo privado en `/opt/crdo/app` y crear `prod.env` y `staging.env` con contraseñas distintas.
+13. `crdo deploy x.y.z` (prod), `tailscale serve` (443 → 8000, 8443 → 8100).
+14. Crear usuario dueño y enrolar TOTP (CLI por SSH; muestra el QR una sola vez).
+15. Activar `crdo-backup.timer`, `crdo-restore-test.timer` y `crdo-opsd.service`.
+16. Desde Android: abrir el panel, instalarlo como app y ejecutar las pruebas de §F.1.
 
 ---
 
 ## FASE F — Plan de pruebas y criterios de aceptación
 
-### F.0 Qué se verificó en este diseño (honestidad)
+### F.0 Qué se verificó en esta revisión (honestidad)
 
-| Elemento | Verificación hecha ahora | Resultado |
+Entorno: contenedor temporal de diseño con **Ubuntu 24.04**. Paquetes instalados solo ahí: `postgresql-16-pgvector
+0.6.0` y `restic 0.16.4`. No es un servidor de C.R.D.O. y se destruye al terminar la sesión.
+
+| Prueba | Resultado |
+|---|---|
+| `tests/run-db-tests.sh`: esquema completo (00–03) en PostgreSQL 16 | ✅ carga sin errores |
+| Seguridad: permisos mínimos, auditoría append-only, R4, TOTP con 4 vectores oficiales RFC 6238, cadena de auditoría independiente de la zona horaria, bloqueo por fuerza bruta | ✅ 24/24 |
+| Aprobaciones: hash, vencimiento, TOTP de un solo uso, consumo único, alteración forzada detectada | ✅ 23/23 |
+| Cola: render solo externo, kill switch, lease vencido → reencolado, token viejo rechazado, `needs_review`, reintentos, comandos admin | ✅ 25/25 |
+| **pgvector en PostgreSQL 16**: 2.000 vectores de 1024 dimensiones, dimensión incorrecta rechazada, índice HNSW usado por el planificador, recall@10 = **1,000** frente a búsqueda exacta (20 consultas), texto completo en español | ✅ 8/8 |
+| Concurrencia: 6 workers simultáneos, 300 trabajos | ✅ cada trabajo tomado una sola vez; reparto 48/48/47/47/55/55 |
+| **Total base de datos** | ✅ **83 verificaciones, 0 fallas** |
+| `tests/run-backup-tests.sh` con `backup.sh` y `restore.sh` reales y restic real (repositorio local en lugar de B2) | ✅ **18 verificaciones, 0 fallas** |
+| `docker compose config` prod y staging | ✅ válido; staging solo con redes `crdo-staging_*` |
+| `bash -n` en todos los scripts | ✅ sintaxis válida (shellcheck no estaba disponible: lo corre el CI) |
+| Búsqueda de secretos en el repo | ✅ ninguno |
+| Exportación al repo privado (`export-to-private-repo.sh`) contra un repositorio local de prueba | ✅ ver `CAMBIOS-v2.md` |
+
+**Errores reales que encontraron estas pruebas y la revisión** (corregidos; detalle en `CAMBIOS-v2.md`):
+- La v1 dejaba a la app sin acceso a pgvector.
+- La app podía autoaprobarse.
+- Staging compartía una red con producción.
+- El hash de auditoría dependía de la zona horaria.
+- Un `REVOKE` de columnas no tenía efecto.
+
+**Límites de lo probado:**
+- El recall de 1,000 es con 2.000 vectores aleatorios; con millones de vectores reales hay que volver a medirlo.
+- La versión de pgvector del VPS será la de la imagen Docker fijada, distinta de la 0.6.0 usada acá.
+- Los 2 s de restauración son con una base mínima.
+
+**No verificado (no hay servidor ni Docker en ejecución):**
+- Contenedores corriendo y `00-roles.sh` dentro del *entrypoint* de la imagen.
+- `tailscale serve` y la política de Tailscale.
+- `crdo deploy` y `crdo rollback`, `crdo-opsd`, `bootstrap-server.sh`, los timers de systemd y la rama Docker de `restore.sh`.
+- La llave de B2 sin borrado, los avisos a healthchecks y el CI corriendo en GitHub.
+- Que la conexión local por socket de la imagen de Postgres use `trust`, que es lo que `crdo-opsd` supone.
+
+### F.1 Pruebas de aceptación tras instalar (sin cambios de fondo, ampliadas)
+
+| ID | Prueba | Criterio |
 |---|---|---|
-| `infra/db/init/01-core.sql` | Ejecutado contra un PostgreSQL 16 local temporal (luego borrado) | **Carga sin errores** |
-| Reglas de seguridad del esquema | Probadas como rol `crdo_app` en ese clúster temporal | **Funcionan**: `UPDATE`/`DELETE` en `audit.events` denegados; hash encadenado se genera; permiso R4 no otorgable a agente; agente no puede crear tarea R4; aprobación sin TOTP rechazada; video publicado sin aprobación rechazado; la app no puede modificar el catálogo de permisos |
-| `infra/db/init/02-memory-vector.sql` | **No ejecutado**: pgvector no está instalado en el entorno de diseño | Se probará en el VPS |
-| `infra/compose.yml` + `compose.staging.yml` | `docker compose config` con variables ficticias (solo sintaxis, sin levantar contenedores) | **Sintaxis válida** |
-| Scripts bash | `bash -n` (solo sintaxis; shellcheck no disponible) | **Sintaxis válida**. Lógica no ejecutada |
-| Todo lo demás | **No probado.** No existe servidor | — |
+| T01 | Teléfono apagado 24 h | Heartbeat sin cortes |
+| T02 | Panel desde Android con datos móviles + Tailscale | Carga < 3 s; estado, recursos, último respaldo |
+| T03 | `nmap` a la IP pública | **0 puertos abiertos** |
+| T04 | Panel desde un dispositivo fuera de la red Tailscale | Inaccesible |
+| T05 | Login: sin TOTP, TOTP repetido, 5 fallos | Rechazos + bloqueo + auditoría |
+| T06 | SSH por IP pública / Tailscale con llave / con contraseña | No / sí / no |
+| T07 | Secretos en el repo y permisos de `/opt/crdo/secrets` | 0 secretos; 600 root |
+| T08 | Las 83 pruebas de base de datos **contra el Postgres del VPS** (en una base de prueba) | 0 fallas |
+| T09 | Aprobación R3 de punta a punta desde el teléfono | Hash visible; TOTP; consumo único |
+| T10 | Solicitud R4 de un agente | Rechazo inmediato |
+| T11 | Presupuesto de prueba superado | Corte + alerta |
+| T12 | Respaldo manual desde el panel (comando admin) | Snapshot en B2 + manifiesto + healthchecks |
+| T13 | **Desastre**: VPS nuevo desde cero + restauración, desde el teléfono | RTO < 2 h, RPO ≤ 24 h |
+| T14 | Borrar snapshots de B2 desde el VPS | Rechazado |
+| T15 | Desde staging, alcanzar la base de producción | Imposible |
+| T16 | Deploy en staging y prod desde el panel; forzar fallo de `/health` | Respaldo previo + rollback automático |
+| T17 | Error 500 provocado | Visible en el panel con id de correlación |
+| T18 | Carga leve + alertas de disco | Sin errores; alertas funcionan |
+| T19 | (Opcional) restaurar en otro proveedor | Funciona sin cambios de código |
+| T20 | Gateways con llaves vacías | Responden "deshabilitado" |
+| T21 ★ | Matar el worker en medio de un trabajo | Lo retoma otro tras vencer el lease; sin duplicado |
+| T22 ★ | Encolar un trabajo `render` en el VPS | El worker del VPS no lo toma |
+| T23 ★ | Cada fila de la matriz Android (§C.8) | Realizable sin PC |
+| T24 ★ | CI en el repo privado | Verde en GitHub |
 
-### F.1 Pruebas de aceptación de la Etapa 1 (se ejecutarán tras instalar)
-
-Cada prueba debe registrar fecha, ejecutor, evidencia (captura o salida) y resultado en
-`docs/runbooks/acta-pruebas-etapa1.md`.
-
-| ID | Área | Prueba | Criterio de aceptación |
-|---|---|---|---|
-| T01 | Disponibilidad | Apagar el teléfono 24 h; verificar heartbeat en healthchecks.io | 0 alertas de caída; `sys.health_checks` con registros cada 5 min |
-| T02 | Acceso Android | Abrir panel desde Android con datos móviles, instalar PWA | Carga < 3 s; muestra estado de servicios, CPU, RAM, disco, último respaldo |
-| T03 | Superficie expuesta | `nmap` a la IP pública desde fuera | Ningún puerto abierto (o solo los explícitamente aceptados) |
-| T04 | Borde | Acceder a `panel.` sin pasar por Cloudflare Access / con otro email | Bloqueado antes de llegar al servidor |
-| T05 | Autenticación | Login sin TOTP, TOTP inválido, 10 intentos fallidos | Rechazado; bloqueo temporal; evento en `audit.events` |
-| T06 | SSH | SSH por IP pública | Rechazado. Por Tailscale con llave: aceptado. Con contraseña: rechazado |
-| T07 | Secretos | `git grep` de patrones de llaves en el repo; `ls -l /opt/crdo/secrets` | 0 secretos en el repo; archivos 600 root |
-| T08 | Permisos de BD | Como `crdo_app`: `UPDATE`/`DELETE` en `audit.events` | Error de permisos |
-| T09 | Aprobaciones | Crear tarea R3 simulada; intentar ejecutarla sin aprobar; aprobar; modificar payload tras aprobar | Sin aprobación: bloqueada. Aprobada: ejecuta. Payload alterado: rechazada por hash |
-| T10 | Nivel R4 | Agente de prueba solicita acción R4 | Rechazo inmediato, sin crear aprobación, evento de auditoría con severidad alta |
-| T11 | Presupuesto | Presupuesto de prueba de US$ 0,01 con proveedor simulado; superar el tope | Llamadas cortadas; alerta en panel |
-| T12 | Respaldo | Ejecutar respaldo manual | Snapshot en B2, ping a healthchecks, fila en `sys.backup_runs` |
-| T13 | Recuperación total | Crear VPS nuevo desde cero y restaurar con el runbook | Servicio funcionando con datos del último respaldo en < 2 h (RTO); pérdida ≤ 24 h (RPO) |
-| T14 | Borrado accidental | Desde el VPS, intentar borrar snapshots en B2 | Rechazado (llave sin permiso de borrado) |
-| T15 | Separación de entornos | Desde staging, intentar conectar a la BD de prod | Imposible (redes y credenciales distintas) |
-| T16 | Actualización | Desplegar versión nueva en staging, luego prod; forzar fallo de health | Rollback automático a la versión anterior |
-| T17 | Logs | Provocar un error 500 controlado | Aparece en panel con id de correlación; log JSON en disco; rotación configurada |
-| T18 | Recursos | Prueba de carga leve (50 req/s, 2 min) | Sin errores; RAM < 75 %; alertas de disco > 80 % funcionan |
-| T19 | Portabilidad (opcional) | Restaurar en otro proveedor (ej. Oracle Free o DigitalOcean de prueba) | Mismo procedimiento funciona sin cambios de código |
-| T20 | Preparación Claude/MCP | `llm_gateway` y `mcp_gateway` con llave ausente | Responden “deshabilitado” sin error; registro de servidor MCP de prueba en staging con permisos aplicados |
-
-**Criterio de finalización de la Etapa 1:** T01–T18 y T20 aprobadas con evidencia; T19 opcional.
-Hasta entonces la Etapa 1 se considera **no terminada**.
+**Criterio de finalización:** T01–T18 y T20–T24 aprobadas con evidencia en `docs/runbooks/acta-pruebas-etapa1.md`.
 
 ---
 
 ## FASE G — Informe técnico final
 
-### G.1 Entregables de este documento
+### G.1 Entregables
 
-| # | Entregable pedido | Dónde |
+| # | Entregable | Dónde |
 |---|---|---|
-| 1 | Diagrama de arquitectura | §C.1, §C.3, §D.4 |
-| 2 | Tecnologías y justificación | §B.2 |
-| 3 | Comparación de proveedores | §B.1 |
-| 4 | Presupuesto mensual | §B.4 |
-| 5 | Estructura de carpetas | §D.1, §D.2 |
-| 6 | Diseño de base de datos | §D.4 + `infra/db/init/*.sql` |
-| 7 | Diseño de seguridad | §C.4, §C.5, §G.2 |
-| 8 | Plan de instalación | §E |
-| 9 | Código de configuración inicial | `crdo/infra/` (borradores) |
-| 10 | Pruebas | §F |
-| 11 | Requisitos para Etapa 2 | §G.5 |
+| 1 | Diagramas | §C.1, §C.4, §D.4 |
+| 2 | Tecnologías | §B.2 |
+| 3 | Proveedores | §B.1 |
+| 4 | Presupuesto por niveles | §B.4 |
+| 5 | Carpetas | §D.1, §D.2 |
+| 6 | Base de datos | §D.4 + `infra/db/init/` |
+| 7 | Seguridad | §C.4, §C.5, §C.8, §C.10, §G.2 |
+| 8 | Instalación | §E |
+| 9 | Configuración inicial | `infra/`, `.github/`, `tools/` |
+| 10 | Pruebas | §F + `tests/` (ejecutables) |
+| 11 | Requisitos Etapa 2 | §G.5 |
 
-### G.2 Diseño de seguridad (resumen)
+### G.2 Seguridad (resumen)
 
 | Control | Implementación |
 |---|---|
-| Accesos protegidos | Cloudflare Access (capa 1) + login propio con contraseña Argon2id + TOTP (capa 2); SSH solo por Tailscale con llave |
-| Secretos fuera del código | `.env` en `/opt/crdo/secrets` (root, 600), montados solo en el contenedor que los necesita; `.env.example` sin valores en el repo; escaneo de secretos de GitHub activado |
-| Permisos mínimos | Usuarios de BD separados; llaves R2 por bucket; llave B2 sin borrado; tokens de agentes con alcances; redes Docker internas |
-| Registro de operaciones | `audit.events` append-only con actor, acción, recurso, resultado, IP, id de correlación y hash encadenado (detecta manipulación) |
-| Copias de seguridad | restic diario cifrado en otro proveedor + snapshots Hetzner + prueba de restauración semanal |
-| Recuperación ante fallos | Runbook de reconstrucción; objetivo RTO 2 h / RPO 24 h |
-| Separación pruebas/producción | Proyectos compose, BD, redes, secretos y dominios distintos |
-| Autorización humana | Niveles R0–R4; R3 con aprobación + TOTP + hash del payload + vencimiento; R4 imposible para agentes |
-| Credenciales de terceros | Nunca las ven los agentes. El backend las usa en su nombre. Las cuentas de YouTube/Google se conectarán con OAuth y alcances mínimos (Etapa 2, con tu autorización) |
-| Kill switch | `sys.settings.agents_enabled = false` desde el panel detiene todo el worker y el `llm_gateway` en segundos |
+| Acceso | Tailscale (solo tus dispositivos) + login + TOTP. SSH solo por Tailscale con llave |
+| Secretos | `/opt/crdo/secrets` (600), `.gitignore`, escaneo en CI, excluidos de los respaldos de configuración |
+| Permisos mínimos | 5 roles de base. La app no puede tocar aprobaciones, permisos, trabajos, secretos TOTP ni el kill switch salvo por funciones |
+| Autorización humana | R3: hash + vencimiento + TOTP de un solo uso + consumo único. R4: imposible para agentes |
+| Registro | Auditoría append-only con cadena de hash verificable, también al restaurar |
+| Respaldos | Cifrados, verificados, prueba de restauración semanal, llave sin borrado |
+| Entornos | CI efímero, staging aislado, staging por horas opcional |
+| Operaciones del servidor | Sin socket de Docker en contenedores; `crdo-opsd` con lista cerrada |
 
 ### G.3 Dependencias
 
-- Cuentas: Hetzner, Cloudflare (+ dominio), Backblaze, Tailscale, GitHub, healthchecks.io.
-- Medio de pago internacional para Hetzner, dominio y (Etapa 2) Anthropic.
-- Imágenes Docker públicas: `pgvector/pgvector`, `caddy`, `cloudflare/cloudflared`, `python`.
+Tailscale, Backblaze, GitHub y healthchecks (gratis); Hetzner (pago); imágenes `pgvector/pgvector` y `python` con versión fija.
 
-### G.4 Registro de riesgos
+### G.4 Riesgos (actualizados)
 
-| ID | Riesgo | Prob. | Impacto | Mitigación |
-|---|---|---|---|---|
-| R1 | Falla o pérdida del VPS | Baja | Alto | Respaldos fuera de Hetzner, runbook probado (T13) |
-| R2 | Cambio de precios del proveedor | Media (ocurrió en 2026) | Medio | Portabilidad total; revisión de costos mensual en el panel |
-| R3 | Filtración de llaves | Media | Alto | Secretos fuera del repo, alcances mínimos, topes de gasto en cada proveedor, rotación |
-| R4 | Staging afecta a producción (mismo VPS) | Media | Medio | Límites de recursos; mover staging a otro host cuando haya presupuesto |
-| R5 | Pérdida del teléfono | Media | Alto | 2FA con respaldo, códigos fuera del teléfono, revocar sesiones desde otro dispositivo |
-| R6 | Cuenta de Oracle Free cerrada/recortada (si se usa) | Media | Bajo (solo staging) | No usarla para producción |
-| R7 | Bloqueo de cuenta en un proveedor (verificación de identidad, pagos desde Argentina) | Media | Medio | Tener DigitalOcean como alternativa; datos portables |
-| R8 | Un agente futuro excede permisos | Media | Alto | Backend como única autoridad, niveles de riesgo, auditoría independiente, kill switch |
-| R9 | Costos de IA descontrolados | Media | Alto | Tope en consola Anthropic + tope interno + alertas al 50/80/100 % |
-| R10 | Términos de servicio de YouTube sobre automatización | Media | Alto | Publicación siempre con aprobación humana; revisar políticas antes de Etapa 2 |
+| ID | Riesgo | Mitigación |
+|---|---|---|
+| R1 | Falla del VPS | Respaldos fuera del proveedor + T13 ensayado |
+| R2 | Cambios de precio | Portabilidad; núcleo mínimo |
+| R3 | Filtración de llaves | Secretos fuera del repo, escaneo, topes por proveedor |
+| R4 | Staging afecta a prod (misma máquina) | Topes de CPU/RAM; staging a pedido; staging por horas para lo riesgoso |
+| R5 | Pérdida del teléfono | Códigos en papel, revocación en Tailscale, re-enrolamiento |
+| R6 ★ | Dependencia de Tailscale para entrar | Alternativas: consola de Hetzner (emergencia) y borde Cloudflare (diferido, listo en `optional/edge`) |
+| R7 ★ | Android, una VPN a la vez | Documentado; Cloudflare Access como alternativa futura |
+| R8 | Agente fuera de permisos | Autoridad en la base, no en la app; kill switch |
+| R9 | Costos de IA | Tope en consola + presupuestos internos con corte |
+| R10 | Términos de servicio de YouTube | Publicación siempre con aprobación humana |
+| R11 ★ | OAuth de Google y dominio `ts.net` | Verificar en Etapa 2; si no se acepta, activar dominio (Nivel 1) |
+| R12 ★ | Tokens OAuth de apps no verificadas que vencen (modo prueba de Google) | Verificar la política vigente en Etapa 2 |
+| R13 ★ | El secreto TOTP viaja en los respaldos (cifrados) | Quien tenga la contraseña de restic tiene también los secretos TOTP: guardarla con el mismo cuidado |
 
 ### G.5 Requisitos para comenzar la Etapa 2
 
-1. Todas las pruebas obligatorias de §F.1 aprobadas y documentadas.
-2. Cuenta de organización en Anthropic Console con **límite de gasto mensual** definido por vos y llave
-   de API creada solo para producción (y otra para staging).
-3. Proyecto de Google Cloud de la empresa con YouTube Data API v3 y YouTube Analytics API habilitadas,
-   pantalla de consentimiento OAuth y decisión sobre qué canal conectar (con tu autorización explícita).
-4. Decisión sobre Google Drive: carpeta compartida de la empresa o solo R2.
-5. Definición del primer departamento a construir (sugerido: Investigación + Analítica, que son solo lectura).
+1. Etapa 1 cerrada según §F.1.
+2. Cuenta de organización en Anthropic con **tope de gasto** y llaves separadas para prod y staging. Opcional: un
+   proveedor alternativo configurado para la ruta de respaldo.
+3. Proyecto de Google Cloud de la empresa (YouTube Data y Analytics API, pantalla de consentimiento OAuth) y
+   decisión sobre qué canal conectar, con tu autorización explícita.
+4. Decisión sobre el dominio (R11) y sobre R2 vs. Drive.
+5. Primer departamento, sugerido de solo lectura: Investigación + Analítica.
 6. Presupuesto mensual por departamento.
-7. Política editorial y de marca (nicho, tono, qué temas están prohibidos).
-8. Revisión de los términos de servicio de YouTube y de la política de uso de Anthropic para el caso de uso.
+7. Política editorial y de marca.
+8. Revisión de los términos de servicio de YouTube y de la política de uso de Anthropic.
 
 ---
 
-## Preguntas que necesito que respondas antes de implementar
+## Preguntas abiertas
 
-| # | Pregunta | Por qué importa | Si no respondés, propongo |
-|---|---|---|---|
-| Q1 | ¿Tenés un dominio propio o querés comprar uno? (¿nombre preferido?) | Cloudflare Tunnel + Access necesita un dominio en Cloudflare | Comprar uno barato; alternativa sin dominio: solo Tailscale (menos cómodo desde Android) |
-| Q2 | ¿Ubicación del servidor: Europa (más barato) o EE. UU. Este (menos latencia desde Argentina)? | Precio y latencia | Europa (Falkenstein/Nuremberg) |
-| Q3 | ¿Presupuesto mensual máximo para la Etapa 1 y para IA en Etapa 2? | Dimensionar VPS y topes | US$ 15/mes infraestructura; IA a definir |
-| Q4 | ¿Hetzner como proveedor está bien, o preferís otro por medio de pago o confianza? | Algunos proveedores piden verificación de identidad | Hetzner; DigitalOcean como plan B |
-| Q5 | ¿Staging en el mismo VPS (más barato) o separado? | Riesgo R4 | Mismo VPS con límites |
-| Q6 | ¿Creamos un correo/cuenta Google exclusivo de C.R.D.O.? | Separar empresa de cuentas personales | Sí, recomendado |
-| Q7 | ¿El repositorio de C.R.D.O. vive dentro de `Radar` (como ahora) o en un repo propio y privado? | Propiedad y permisos; `Radar` es la app de tendencias | Repo propio privado `crdo` |
-| Q8 | ¿Vas a poder ejecutar los pasos con 🔑 vos mismo desde el teléfono, o tenés acceso a una PC? | Algunos pasos son más fáciles en PC | Guía paso a paso pensada para Android |
+Siguen pendientes de la v1, con la recomendación actual:
 
----
+| # | Pregunta | Recomendación v2 |
+|---|---|---|
+| Q1 | ¿Dominio propio? | **Ya no hace falta en Etapa 1** (Tailscale). Decidir en Etapa 2 |
+| Q2 | ¿Europa o EE. UU.? | Europa (más barato); la latencia del panel es aceptable |
+| Q3 | ¿Presupuesto máximo mensual? | Núcleo ≈ US$ 5–6; definir tope para IA antes de Etapa 2 |
+| Q4 | ¿Hetzner? | Sí; DigitalOcean como plan B |
+| Q5 | ¿Staging separado? | Mismo VPS, a pedido; staging por horas para lo riesgoso |
+| Q6 | ¿Cuenta de Google exclusiva? | Sí |
+| Q7 | ¿Repo propio? | **Sí — preparado** (§E.1). Necesito que crees el repositorio privado vacío y me autorices a exportar |
+| Q8 | ¿Tenés PC? | Ya no es requisito (§C.8); facilita solo el ensayo de desastre |
+| Q9 ★ | ¿Usás otra VPN en el teléfono? | Si es así, conviene adelantar el borde Cloudflare (R7) |
 
-*Fin del diseño de la Etapa 1. Esperando aprobación para pasar a implementación.*
+*Fin del diseño v2. La arquitectura está aprobada; la instalación y los gastos siguen sin autorizar.*

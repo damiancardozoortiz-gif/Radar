@@ -1,0 +1,46 @@
+# C.R.D.O. — Integración continua (BORRADOR v2). Entorno de pruebas EFÍMERO y aislado:
+# cada ejecución arranca una máquina nueva de GitHub, sin secretos de producción, y la destruye al terminar.
+# Este archivo solo se activa cuando C.R.D.O. viva en su propio repositorio (en `Radar` está en una subcarpeta
+# y GitHub lo ignora). No ejecutado todavía.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  db-y-respaldos:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Instalar PostgreSQL 16, pgvector y restic (mismos paquetes que el VPS)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q postgresql-16 postgresql-16-pgvector restic
+          sudo systemctl stop postgresql || true
+      - name: Pruebas de base de datos (seguridad, aprobaciones, cola, pgvector, concurrencia)
+        run: sudo bash tests/run-db-tests.sh
+      - name: Pruebas de cifrado, respaldo y restauración
+        run: sudo bash tests/run-backup-tests.sh
+
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: shellcheck -S warning infra/scripts/*.sh infra/scripts/crdo infra/scripts/crdo-opsd infra/db/init/*.sh tests/*.sh
+      - name: Validar compose (sintaxis)
+        run: |
+          sed -e 's/=cambiar/=1.0.0/' -e 's/^\(POSTGRES_OWNER_PASSWORD\|CRDO_DB_[A-Z]*_PASSWORD\)=$/\1=x/' \
+              -e "s|CRDO_SECRETS_FILE=.*|CRDO_SECRETS_FILE=$PWD/ci.env|" infra/.env.example > ci.env
+          docker compose --env-file ci.env -f infra/compose.yml config -q
+          docker compose --env-file ci.env -f infra/compose.yml -f infra/compose.staging.yml config -q
+      - name: Buscar secretos accidentales
+        run: |
+          ! git grep -nE '(sk-ant-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|tskey-[a-z]+-[A-Za-z0-9]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)' -- . ':!*.md'

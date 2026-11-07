@@ -5,4 +5,4 @@ After=docker.service network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/opt/crdo/app/crdo/infra/scripts/restore.sh test
+ExecStart=/opt/crdo/app/infra/scripts/restore.sh test

@@ -1,0 +1,16 @@
+[Unit]
+Description=C.R.D.O. ejecutor de comandos administrativos pedidos desde el panel
+Requires=docker.service
+After=docker.service
+
+[Service]
+ExecStart=/opt/crdo/app/infra/scripts/crdo-opsd
+Restart=always
+RestartSec=10
+# Endurecimiento: necesita docker y systemctl, nada más
+NoNewPrivileges=true
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

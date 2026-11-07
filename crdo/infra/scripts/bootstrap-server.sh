@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# C.R.D.O. — Endurecimiento inicial del VPS (BORRADOR, no ejecutado).
+# C.R.D.O. — Endurecimiento inicial del VPS (BORRADOR v2, no ejecutado).
 # Ubuntu Server 24.04 LTS. Ejecutar UNA vez como root, tras crear el servidor.
 # Uso: TS_AUTHKEY=tskey-... ADMIN_PUBKEY="ssh-ed25519 AAAA..." bash bootstrap-server.sh
 set -euo pipefail
@@ -50,7 +50,7 @@ sshd -t && systemctl reload ssh
 
 log "4. Tailscale (acceso administrativo privado)"
 curl -fsSL https://tailscale.com/install.sh | sh
-tailscale up --authkey="$TS_AUTHKEY" --hostname=crdo-prod --ssh=false
+tailscale up --authkey="$TS_AUTHKEY" --hostname=crdo-prod --advertise-tags=tag:crdo-server --ssh=false
 
 log "5. Firewall: nada entrante salvo SSH por Tailscale"
 ufw default deny incoming
@@ -75,16 +75,23 @@ cat >/etc/docker/daemon.json <<'EOF'
 }
 EOF
 systemctl restart docker
-docker network inspect crdo_app &>/dev/null || docker network create --internal crdo_app
 
 log "7. Estructura /opt/crdo"
 install -d -m 755 /opt/crdo /opt/crdo/app /opt/crdo/releases /opt/crdo/logs
 install -d -m 700 /opt/crdo/secrets /opt/crdo/backups
 install -d -m 700 /opt/crdo/data /opt/crdo/data/prod /opt/crdo/data/staging
 
+log "8. Herramientas de operación (crdo, crdo-opsd)"
+apt-get install -y postgresql-client-16 || apt-get install -y postgresql-client  # pg_restore --list en backup.sh
+ln -sf /opt/crdo/app/infra/scripts/crdo /usr/local/bin/crdo
+
 log "Listo. Pasos manuales pendientes:"
 cat <<EOF
   - Verificar acceso: ssh $ADMIN_USER@crdo-prod (por Tailscale) ANTES de cerrar esta sesión.
   - Quitar la regla SSH temporal del firewall de Hetzner.
-  - Continuar con §E.3 del diseño (despliegue).
+  - Clonar el repo privado en /opt/crdo/app y seguir §E.3 del diseño (despliegue).
+  - Publicar el panel solo en tu red Tailscale:
+      tailscale serve --bg --https=443  http://127.0.0.1:8000   # producción
+      tailscale serve --bg --https=8443 http://127.0.0.1:8100   # staging
+  - systemctl enable --now crdo-backup.timer crdo-restore-test.timer crdo-opsd.service
 EOF

@@ -15,6 +15,7 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'crdo_app')      THEN CREATE ROLE crdo_app;      END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'crdo_readonly') THEN CREATE ROLE crdo_readonly; END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'crdo_backup')   THEN CREATE ROLE crdo_backup;   END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'crdo_ops')      THEN CREATE ROLE crdo_ops;      END IF;
 END $$;
 
 CREATE SCHEMA IF NOT EXISTS auth;
@@ -41,12 +42,22 @@ CREATE TABLE auth.users (
   display_name    text NOT NULL,
   role            text NOT NULL CHECK (role IN ('owner', 'admin', 'viewer')),
   password_hash   text NOT NULL,              -- Argon2id
-  totp_secret_enc bytea,                      -- cifrado con llave de la app
+  totp_last_step  bigint NOT NULL DEFAULT 0,  -- último paso TOTP usado: impide reutilizar un código
+  totp_failures   int NOT NULL DEFAULT 0,
+  totp_locked_until timestamptz,
   is_active       boolean NOT NULL DEFAULT true,
   failed_logins   int NOT NULL DEFAULT 0,
   locked_until    timestamptz,
   created_at      timestamptz NOT NULL DEFAULT now(),
   updated_at      timestamptz NOT NULL DEFAULT now()
+);
+
+-- Secreto TOTP: la app NO puede leerlo. Solo lo usan funciones SECURITY DEFINER (03-ops-functions.sql).
+-- Así, aunque la app o un agente fueran comprometidos, no pueden fabricar un código válido.
+CREATE TABLE auth.totp_secrets (
+  user_id     uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  secret      bytea NOT NULL,                 -- 20 bytes aleatorios (RFC 6238, HMAC-SHA1)
+  enrolled_at timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE TABLE auth.sessions (
@@ -78,8 +89,8 @@ CREATE TABLE org.agents (
   department_id  smallint NOT NULL REFERENCES org.departments(id),
   code           text NOT NULL UNIQUE,
   name           text NOT NULL,
-  provider       text NOT NULL DEFAULT 'none',  -- 'anthropic', 'local', ...
-  model          text,
+  default_route  text NOT NULL DEFAULT 'none',  -- ruta de modelo (integrations.model_routes); nunca un proveedor fijo
+  instructions_ref text,                       -- ruta en el repo (agents/<depto>/<agente>.md), versionada
   is_enabled     boolean NOT NULL DEFAULT false,
   created_at     timestamptz NOT NULL DEFAULT now()
 );
@@ -122,6 +133,8 @@ CREATE TABLE ops.tasks (
   kind           text NOT NULL,
   title          text NOT NULL,
   payload        jsonb NOT NULL DEFAULT '{}',
+  payload_hash   bytea NOT NULL,                -- sha256 del payload canónico (lo calcula un trigger)
+  idempotency_key text UNIQUE,                  -- la misma solicitud repetida no crea otra tarea
   risk           ops.risk_level NOT NULL,
   status         text NOT NULL DEFAULT 'pending'
                  CHECK (status IN ('pending','awaiting_approval','approved','rejected',
@@ -133,39 +146,81 @@ CREATE TABLE ops.tasks (
 );
 CREATE INDEX ON ops.tasks (status, created_at);
 
+-- Aprobación humana ligada al contenido EXACTO (hash), con vencimiento, TOTP de un solo uso
+-- y consumo único. Solo se modifica a través de funciones (03-ops-functions.sql).
 CREATE TABLE ops.approvals (
   id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   task_id       uuid NOT NULL UNIQUE REFERENCES ops.tasks(id) ON DELETE CASCADE,
-  payload_hash  bytea NOT NULL,     -- sha256 del payload exacto que se aprueba
+  payload_hash  bytea NOT NULL,     -- copia del hash de la tarea al momento de pedir aprobación
   summary       text NOT NULL,      -- explicación legible para el humano
   status        text NOT NULL DEFAULT 'pending'
-                CHECK (status IN ('pending','approved','rejected','expired')),
+                CHECK (status IN ('pending','approved','rejected','expired','consumed')),
+  requested_at  timestamptz NOT NULL DEFAULT now(),
+  expires_at    timestamptz NOT NULL,
   decided_by    uuid REFERENCES auth.users(id),
   decided_at    timestamptz,
   decision_note text,
-  mfa_verified  boolean NOT NULL DEFAULT false,
-  expires_at    timestamptz NOT NULL DEFAULT now() + interval '48 hours',
-  created_at    timestamptz NOT NULL DEFAULT now(),
-  CHECK (status <> 'approved' OR (decided_by IS NOT NULL AND mfa_verified))
+  totp_step     bigint,             -- paso TOTP usado para aprobar (no reutilizable)
+  consumed_at   timestamptz,
+  consumed_by_job bigint,
+  CHECK (expires_at > requested_at AND expires_at <= requested_at + interval '72 hours'),
+  CHECK (status NOT IN ('approved','consumed') OR (decided_by IS NOT NULL AND totp_step IS NOT NULL)),
+  CHECK (status <> 'consumed' OR consumed_at IS NOT NULL)
+);
+
+-- Colas: dónde puede ejecutarse cada tipo de trabajo.
+-- 'render' corre SOLO en workers externos: el VPS nunca renderiza video pesado.
+CREATE TABLE ops.queues (
+  name            text PRIMARY KEY,
+  runs_on         text NOT NULL CHECK (runs_on IN ('vps','external')),
+  lease_seconds   int NOT NULL DEFAULT 300 CHECK (lease_seconds BETWEEN 30 AND 21600),
+  max_attempts    int NOT NULL DEFAULT 3,
+  description     text NOT NULL
 );
 
 CREATE TABLE ops.jobs (
-  id           bigserial PRIMARY KEY,
-  task_id      uuid REFERENCES ops.tasks(id) ON DELETE CASCADE,
-  queue        text NOT NULL DEFAULT 'default',
-  status       text NOT NULL DEFAULT 'queued'
-               CHECK (status IN ('queued','running','done','failed','dead')),
-  attempts     int NOT NULL DEFAULT 0,
-  max_attempts int NOT NULL DEFAULT 3,
-  run_after    timestamptz NOT NULL DEFAULT now(),
-  locked_by    text,
-  locked_at    timestamptz,
-  last_error   text,
-  created_at   timestamptz NOT NULL DEFAULT now(),
-  finished_at  timestamptz
+  id               bigserial PRIMARY KEY,
+  task_id          uuid REFERENCES ops.tasks(id) ON DELETE CASCADE,
+  queue            text NOT NULL REFERENCES ops.queues(name),
+  kind             text NOT NULL,
+  idempotency_key  text NOT NULL UNIQUE,     -- encolar dos veces lo mismo = un solo trabajo
+  external_effect  boolean NOT NULL DEFAULT false,  -- true si toca el mundo exterior (publicar, pagar)
+  status           text NOT NULL DEFAULT 'queued'
+                   CHECK (status IN ('queued','running','succeeded','failed','dead','needs_review','cancelled')),
+  attempts         int NOT NULL DEFAULT 0,
+  max_attempts     int NOT NULL DEFAULT 3,
+  run_after        timestamptz NOT NULL DEFAULT now(),
+  lease_owner      text,
+  lease_token      uuid,                     -- "fencing token": cambia en cada toma; un worker viejo no puede cerrar el trabajo
+  lease_expires_at timestamptz,
+  heartbeat_at     timestamptz,
+  effect_started_at timestamptz,             -- marcado justo antes de un efecto externo
+  last_error       text,
+  result           jsonb,
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  finished_at      timestamptz,
+  CHECK (status <> 'running' OR (lease_token IS NOT NULL AND lease_expires_at IS NOT NULL))
 );
 -- La cola se consume con SELECT ... FOR UPDATE SKIP LOCKED sobre este índice
 CREATE INDEX jobs_ready_idx ON ops.jobs (queue, run_after) WHERE status = 'queued';
+CREATE INDEX jobs_lease_idx ON ops.jobs (lease_expires_at) WHERE status = 'running';
+
+-- Comandos administrativos pedidos desde el panel (Android) y ejecutados por un servicio del host.
+-- Los contenedores NUNCA tienen acceso al socket de Docker.
+CREATE TABLE ops.admin_commands (
+  id           bigserial PRIMARY KEY,
+  command      text NOT NULL CHECK (command IN ('deploy','rollback','backup_now','restore_test',
+                                                'restart_service','agents_stop','status_report')),
+  environment  text NOT NULL CHECK (environment IN ('prod','staging')),
+  args         jsonb NOT NULL DEFAULT '{}',
+  requested_by uuid NOT NULL REFERENCES auth.users(id),
+  totp_step    bigint NOT NULL,
+  status       text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','running','succeeded','failed')),
+  requested_at timestamptz NOT NULL DEFAULT now(),
+  started_at   timestamptz,
+  finished_at  timestamptz,
+  output       text
+);
 
 -- ------------------------------------------------------------------
 -- memory: memoria empresarial (la parte vectorial va en 02-memory-vector.sql)
@@ -345,6 +400,26 @@ ALTER TABLE content.channels
   ADD CONSTRAINT channels_connection_fk FOREIGN KEY (connection_id)
   REFERENCES integrations.connections(id);
 
+-- Independencia de proveedor de IA: los agentes piden una RUTA ('razonamiento', 'redaccion', ...),
+-- no un modelo. Cada ruta tiene un proveedor principal y alternativas. Cambiar de proveedor = editar filas.
+CREATE TABLE integrations.llm_providers (
+  code         text PRIMARY KEY,               -- 'anthropic', 'openai_compatible', 'local'
+  api_style    text NOT NULL CHECK (api_style IN ('anthropic_messages','openai_chat','none')),
+  base_url     text,
+  secret_ref   text,                           -- nombre de la variable de entorno, nunca la llave
+  is_enabled   boolean NOT NULL DEFAULT false
+);
+
+CREATE TABLE integrations.model_routes (
+  route        text NOT NULL,                  -- 'razonamiento', 'redaccion', 'clasificacion', 'embeddings'
+  priority     smallint NOT NULL,              -- 1 = principal, 2+ = alternativas
+  provider     text NOT NULL REFERENCES integrations.llm_providers(code),
+  model        text NOT NULL,
+  max_output_tokens int,
+  is_enabled   boolean NOT NULL DEFAULT true,
+  PRIMARY KEY (route, priority)
+);
+
 CREATE TABLE integrations.mcp_servers (
   id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   code          text NOT NULL UNIQUE,
@@ -399,7 +474,8 @@ BEGIN
   SELECT hash INTO last FROM audit.events ORDER BY id DESC LIMIT 1;
   NEW.prev_hash := last;
   NEW.hash := digest(
-    coalesce(encode(last, 'hex'), '') || '|' || NEW.occurred_at::text || '|' ||
+    coalesce(encode(last, 'hex'), '') || '|' ||
+    to_char(NEW.occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') || '|' ||
     NEW.actor_type || '|' || coalesce(NEW.actor_user::text, '') || '|' ||
     coalesce(NEW.actor_agent::text, '') || '|' || NEW.action || '|' ||
     coalesce(NEW.resource, '') || '|' || NEW.outcome || '|' || NEW.detail::text,
@@ -514,24 +590,62 @@ INSERT INTO sys.settings (key, value) VALUES
   ('agents_enabled',     'false'),     -- kill switch global
   ('llm_gateway_enabled','false'),
   ('mcp_gateway_enabled','false'),
-  ('approval_ttl_hours', '48');
+  ('approval_ttl_hours', '24');
+
+INSERT INTO ops.queues (name, runs_on, lease_seconds, max_attempts, description) VALUES
+  ('default',  'vps',      300,   3, 'Tareas internas livianas'),
+  ('io',       'vps',      600,   5, 'Llamadas a APIs externas (IA, YouTube) y transferencias'),
+  ('publish',  'vps',      900,   1, 'Efectos externos irreversibles: 1 intento, nunca reintento automático'),
+  ('render',   'external', 7200,  2, 'Render/edición pesada: SOLO workers externos; el VPS no la toma'),
+  ('ai_media', 'external', 3600,  2, 'Generación de imagen/voz/video en proveedores externos o GPU alquilada');
+
+INSERT INTO integrations.llm_providers (code, api_style, secret_ref) VALUES
+  ('anthropic',         'anthropic_messages', 'ANTHROPIC_API_KEY'),
+  ('openai_compatible', 'openai_chat',        'OPENAI_COMPAT_API_KEY'),  -- cualquier proveedor/servidor con API estilo OpenAI
+  ('local',             'openai_chat',        NULL);                     -- modelo propio futuro (p. ej. en GPU alquilada)
 
 -- ------------------------------------------------------------------
 -- Permisos mínimos por rol
 -- ------------------------------------------------------------------
-REVOKE ALL ON SCHEMA public FROM PUBLIC;
+-- Nadie crea objetos en public, pero los roles sí pueden USAR las extensiones que viven ahí
+-- (vector, citext, pgcrypto). La v1 hacía REVOKE ALL y la app no podía usar pgvector: lo detectó la prueba 40.
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+GRANT USAGE ON SCHEMA public TO crdo_app, crdo_readonly, crdo_backup, crdo_ops;
 
 GRANT USAGE ON SCHEMA auth, org, ops, memory, content, storage, analytics, finance, integrations, audit, sys
   TO crdo_app, crdo_readonly, crdo_backup;
+GRANT USAGE ON SCHEMA ops, sys TO crdo_ops;
 
+-- Base: la app lee y escribe tablas de negocio...
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA
   auth, org, ops, memory, content, storage, analytics, finance, integrations, sys TO crdo_app;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA
   auth, org, ops, memory, content, storage, analytics, finance, integrations, audit, sys TO crdo_app;
 
--- La app no puede modificar permisos ni borrar auditoría
+-- ...salvo lo crítico, que solo cambia a través de funciones con TOTP (03-ops-functions.sql):
+REVOKE ALL ON auth.totp_secrets FROM crdo_app;                                   -- ni siquiera lectura
+-- (un REVOKE de columnas no alcanza si hay permiso sobre la tabla: se quita el de tabla y se dan columnas)
+REVOKE UPDATE ON auth.users FROM crdo_app;
+GRANT UPDATE (display_name, password_hash, is_active, failed_logins, locked_until, updated_at)
+  ON auth.users TO crdo_app;                                                    -- no rol, no TOTP
 REVOKE INSERT, UPDATE, DELETE ON org.permissions FROM crdo_app;
+REVOKE INSERT, UPDATE, DELETE ON org.agent_permissions FROM crdo_app;           -- otorgar permisos = R4
+REVOKE INSERT, UPDATE, DELETE ON integrations.mcp_tool_grants FROM crdo_app;
+REVOKE INSERT, UPDATE, DELETE ON integrations.llm_providers, integrations.model_routes FROM crdo_app;
+REVOKE INSERT, UPDATE, DELETE ON ops.approvals FROM crdo_app;                    -- solo funciones
+REVOKE INSERT, UPDATE, DELETE ON ops.jobs FROM crdo_app;                         -- solo funciones (leases)
+REVOKE INSERT, UPDATE, DELETE ON ops.admin_commands FROM crdo_app;               -- solo funciones
+REVOKE INSERT, UPDATE, DELETE ON ops.queues FROM crdo_app;
+REVOKE UPDATE, DELETE ON ops.tasks FROM crdo_app;
+GRANT UPDATE (status, updated_at) ON ops.tasks TO crdo_app;                     -- contenido inmutable
+REVOKE UPDATE, DELETE ON sys.settings FROM crdo_app;                             -- kill switch: función con TOTP
+REVOKE UPDATE, DELETE ON sys.backup_runs, sys.deployments FROM crdo_app;
 GRANT SELECT, INSERT ON audit.events TO crdo_app;
+
+-- Servicio del host (crdo-opsd): solo toma y cierra comandos administrativos
+GRANT SELECT, UPDATE (status, started_at, finished_at, output) ON ops.admin_commands TO crdo_ops;
+GRANT INSERT ON sys.deployments, sys.backup_runs TO crdo_ops;
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA sys TO crdo_ops;
 
 GRANT SELECT ON ALL TABLES IN SCHEMA
   auth, org, ops, memory, content, storage, analytics, finance, integrations, audit, sys TO crdo_backup;
