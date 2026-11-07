@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# C.R.D.O. — CLI de operación (BORRADOR v3, no ejecutado en servidor). También lo invoca crdo-opsd.
+# C.R.D.O. — CLI de operación (Etapa 1, v3.1; no ejecutado en servidor). También lo invoca crdo-opsd.
 #   crdo deploy <versión> [--env prod|staging]   despliega una imagen versionada, con rollback si falla /health
 #   crdo rollback [--env prod|staging]           vuelve a la versión anterior registrada
 #   crdo status                                  estado de contenedores, disco, presupuesto
@@ -64,11 +64,16 @@ deploy() {
 
 case "$CMD" in
   deploy)   [[ -n "$VERSION" ]] || { echo "Falta versión" >&2; exit 1; }; deploy "$VERSION" ;;
-  rollback) prev="$(grep ' ok$' "$RELEASES/$ENV_NAME.log" | tail -n2 | head -n1 | awk '{print $2}')"
-            [[ -n "$prev" ]] || { echo "No hay versión anterior" >&2; exit 1; }; deploy "$prev" ;;
+  rollback) mapfile -t oks < <(grep ' ok$' "$RELEASES/$ENV_NAME.log" 2>/dev/null | awk '{print $2}')
+            # Volver a la penúltima versión sana. Con una sola versión sana no hay a dónde volver.
+            (( ${#oks[@]} >= 2 )) || { echo "No hay una versión sana anterior a la actual" >&2; exit 1; }
+            deploy "${oks[-2]}" ;;
   status)   docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'
             tail -n3 "$RELEASES/prod.log" "$RELEASES/staging.log" 2>/dev/null || true
-            /opt/crdo/app/infra/scripts/budget-guard 2>/dev/null | head -n1 || true
+            # Solo lectura: consulta el estado SIN ejecutar el guardián (que pausa servicios y envía alertas)
+            docker exec -i crdo-prod-postgres-1 psql -U crdo_ops -d crdo -X -At -F ' ' -c \
+              "SELECT 'presupuesto:', level, 'US\$' || projected_usd, '/ operativo US\$' || operating_cap_usd FROM finance.budget_status('infra')" \
+              2>/dev/null || echo "presupuesto: (base no disponible)" 
             df -h / | tail -n1
             free -h | sed -n 2p ;;
   *) echo "Comando desconocido: $CMD" >&2; exit 1 ;;

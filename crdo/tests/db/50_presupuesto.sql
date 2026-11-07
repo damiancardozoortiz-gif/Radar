@@ -8,22 +8,52 @@ INSERT INTO auth.users (id, email, display_name, role, password_hash) VALUES
   ('00000000-0000-0000-0000-0000000000b1', 'fin1@crdo.test', 'Fin 1', 'owner', 'x'),
   ('00000000-0000-0000-0000-0000000000b2', 'fin2@crdo.test', 'Fin 2', 'owner', 'x'),
   ('00000000-0000-0000-0000-0000000000b3', 'fin3@crdo.test', 'Fin 3', 'owner', 'x'),
-  ('00000000-0000-0000-0000-0000000000b4', 'fin4@crdo.test', 'Fin 4', 'owner', 'x');
+  ('00000000-0000-0000-0000-0000000000b4', 'fin4@crdo.test', 'Fin 4', 'owner', 'x'),
+  ('00000000-0000-0000-0000-0000000000b5', 'fin5@crdo.test', 'Fin 5', 'owner', 'x');
 INSERT INTO auth.totp_secrets (user_id, secret)
   SELECT id, gen_random_bytes(20) FROM auth.users WHERE email LIKE 'fin%';
 \set b1 '''00000000-0000-0000-0000-0000000000b1'''
 \set b2 '''00000000-0000-0000-0000-0000000000b2'''
 \set b3 '''00000000-0000-0000-0000-0000000000b3'''
 \set b4 '''00000000-0000-0000-0000-0000000000b4'''
+\set b5 '''00000000-0000-0000-0000-0000000000b5'''
 SELECT t.code(:b1) AS b1a, t.code(:b1, 1) AS b1b, t.code(:b2) AS b2a, t.code(:b2, 1) AS b2b,
-       t.code(:b3) AS b3a, t.code(:b3, 1) AS b3b, t.code(:b4) AS b4a \gset
+       t.code(:b3) AS b3a, t.code(:b3, 1) AS b3b, t.code(:b4) AS b4a,
+       t.code(:b5) AS b5a, t.code(:b5, 1) AS b5b \gset
 
--- Tope oficial inviolable
+-- Límites: solo por procedimiento autenticado y auditado (v3.1)
+SELECT t.ok((SELECT hard_cap_usd = 20 AND reserve_pct = 15 FROM finance.budget_policy WHERE category = 'infra'),
+            'valor oficial cargado: US$ 20 con reserva 15 %');
+SELECT t.ok((SELECT count(*) = 2 AND bool_and(reason LIKE 'Carga inicial%') FROM finance.budget_policy_history),
+            'la carga inicial quedó en el historial');
 SELECT t.must_fail($$UPDATE finance.budget_policy SET hard_cap_usd = 25 WHERE category = 'infra'$$,
-                   'tope de infraestructura > US$ 20 imposible (ni superusuario)');
+                   'cambio directo de límites por SQL rechazado (ni superusuario)');
+SELECT t.must_fail($$DELETE FROM finance.budget_policy WHERE category = 'ai'$$, 'los límites no se borran');
 SET ROLE crdo_app;
-SELECT t.ok(finance.set_budget_policy(:b4, '000000', 'infra', 25, 15) = 'above_official_cap',
-            'ni el dueño puede subir el tope por encima de US$ 20');
+SELECT t.must_fail($$UPDATE finance.budget_policy SET hard_cap_usd = 25$$, 'app no puede cambiar límites por SQL');
+SELECT t.ok(finance.set_budget_policy(:b5, :'b5a', 'infra', 25, 15, 'corto') = 'reason_required',
+            'sin justificación suficiente: rechazado');
+SET crdo.actor = 'agent';
+SELECT t.ok(finance.set_budget_policy(:b5, :'b5a', 'infra', 25, 15, 'Justificación de prueba larga') = 'agents_forbidden',
+            'en contexto de agente: rechazado aunque tenga un código válido');
+RESET crdo.actor;
+SELECT t.ok(finance.set_budget_policy('00000000-0000-0000-0000-000000000005', '000000', 'infra', 25, 15, 'Justificación de prueba larga') = 'forbidden',
+            'un usuario que no es dueño no puede cambiar límites');
+SELECT t.ok(finance.set_budget_policy(:b5, '000000', 'infra', 25, 15, 'Justificación de prueba larga') = 'invalid_code',
+            'código TOTP inválido: rechazado');
+SELECT t.ok(finance.set_budget_policy(:b5, :'b5a', 'infra', 25, 15, 'Prueba: ampliación temporal autorizada') = 'updated',
+            'dueño humano + TOTP + justificación: el límite SÍ se puede cambiar');
+SELECT t.ok((SELECT old_hard_cap_usd = 20 AND new_hard_cap_usd = 25 AND reason = 'Prueba: ampliación temporal autorizada'
+               AND changed_by = :b5 FROM finance.budget_policy_history ORDER BY id DESC LIMIT 1),
+            'el cambio quedó en el historial con valor anterior, nuevo, autor y motivo');
+SELECT t.ok((SELECT severity = 'high' FROM audit.events WHERE action = 'budget.policy_changed' ORDER BY id DESC LIMIT 1),
+            'subir un límite se audita con severidad alta');
+SELECT t.ok(finance.set_budget_policy(:b5, :'b5b', 'infra', 20, 15, 'Prueba: restablecer el valor oficial') = 'updated',
+            'restablecido a US$ 20');
+RESET ROLE;
+SELECT t.must_fail($$UPDATE finance.budget_policy_history SET reason = 'x'$$, 'el historial de límites es inmutable');
+SELECT t.must_fail($$DELETE FROM finance.budget_policy_history$$, 'el historial de límites no se borra');
+SET ROLE crdo_app;
 SELECT t.must_fail($$UPDATE finance.budget_policy SET reserve_pct = 10$$, 'app no puede tocar la política');
 SELECT t.must_fail($$UPDATE finance.tax_profile SET ar_perception_pct = 0$$, 'app no puede tocar impuestos');
 SELECT t.must_fail($$UPDATE finance.cost_items SET active = true WHERE code = 'domain'$$, 'app no puede activar partidas');
@@ -75,7 +105,7 @@ UPDATE finance.cost_items SET net_amount = 8.49 WHERE code = 'hetzner_cx33';
 SET ROLE crdo_app;
 SELECT t.ok(NOT finance.ai_authorize(0.01), 'IA sin presupuesto asignado: bloqueada');
 SELECT infra_before.projected_usd AS ib FROM finance.budget_status('infra') infra_before \gset
-SELECT t.ok(finance.set_budget_policy(:b4, :'b4a', 'ai', 10, 15) = 'updated', 'dueño fija US$ 10 para IA (operativo 8,50)');
+SELECT t.ok(finance.set_budget_policy(:b4, :'b4a', 'ai', 10, 15, 'Prueba: presupuesto de IA') = 'updated', 'dueño fija US$ 10 para IA (operativo 8,50)');
 INSERT INTO finance.usage_events (provider_code, category, metric, quantity, cost_usd_est)
   VALUES ('anthropic', 'ai', 'output_tokens', 100000, 8.00);
 SELECT t.ok(finance.ai_authorize(0.40), 'IA: 8,00 + 0,40 <= 8,50 autorizado');

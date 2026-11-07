@@ -1,6 +1,6 @@
 -- Utilidades de prueba (solo en bases de prueba; nunca en producción)
 CREATE SCHEMA IF NOT EXISTS t;
-GRANT USAGE ON SCHEMA t TO crdo_app, crdo_ops;
+GRANT USAGE ON SCHEMA t TO crdo_app, crdo_ops, crdo_readonly, crdo_backup;
 
 CREATE OR REPLACE FUNCTION t.ok(cond boolean, name text) RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
@@ -27,7 +27,7 @@ BEGIN
   RETURN acc;
 END $$;
 
-GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA t TO crdo_app, crdo_ops;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA t TO crdo_app, crdo_ops, crdo_readonly, crdo_backup;
 
 -- Código TOTP actual de un usuario (solo para pruebas; la app no tiene este poder)
 CREATE OR REPLACE FUNCTION t.code(p_user uuid, p_offset int DEFAULT 0) RETURNS text LANGUAGE sql AS $$

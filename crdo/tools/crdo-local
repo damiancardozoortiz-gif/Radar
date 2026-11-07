@@ -1,0 +1,218 @@
+#!/usr/bin/env bash
+# C.R.D.O. — Prototipo local (Etapa 1, v3.1). Corre en Termux (Android), proot-distro Ubuntu, Ubuntu o macOS/Linux.
+# NO se conecta a ningún servicio externo, no usa cuentas y no genera gastos. Todo vive en $CRDO_LOCAL_DIR.
+#
+#   crdo-local doctor              diagnóstico del entorno (qué se puede ejecutar acá)
+#   crdo-local test                corre las baterías de pruebas y guarda un informe
+#   crdo-local start | stop        arranca/detiene la base local persistente (esquema real de C.R.D.O.)
+#   crdo-local enroll              crea el usuario dueño: secreto TOTP para tu app + 10 códigos de recuperación
+#   crdo-local login               contraseña + código de tu app TOTP -> sesión local
+#   crdo-local status              presupuesto, agentes, aprobaciones pendientes, integridad de auditoría
+#   crdo-local demo                un agente de prueba pide "publicar un video" (tarea R3: necesita tu aprobación)
+#   crdo-local approvals           lista aprobaciones pendientes con su contenido exacto y huella
+#   crdo-local approve <id>        aprueba con tu código TOTP (ligado al contenido que viste)
+#   crdo-local audit               últimos eventos + verificación de la cadena
+#   crdo-local logout | reset      cerrar sesión | borrar la instancia local
+# Para pruebas automatizadas: CRDO_LOCAL_PASSWORD y CRDO_LOCAL_CODE evitan las preguntas interactivas.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+DIR="${CRDO_LOCAL_DIR:-$HOME/.crdo-local}"
+PORT="${CRDO_LOCAL_PORT:-55450}"
+if [[ -z "${PGBIN:-}" ]]; then
+  if [[ -x /usr/lib/postgresql/16/bin/initdb ]]; then PGBIN=/usr/lib/postgresql/16/bin
+  elif command -v pg_config >/dev/null && [[ -x "$(pg_config --bindir)/initdb" ]]; then PGBIN="$(pg_config --bindir)"
+  else PGBIN="$(dirname "$(command -v initdb 2>/dev/null || echo /usr/bin/initdb)")"; fi
+fi
+# PostgreSQL no corre como root. Como root (p. ej. proot-distro), el motor usa una carpeta del usuario postgres.
+if [[ $EUID -eq 0 ]] && id postgres >/dev/null 2>&1; then
+  RUN=(su postgres -s /bin/bash -c); PGROOT="${CRDO_LOCAL_PGROOT:-/var/lib/crdo-local/$(basename "$DIR")-$PORT}"
+else
+  RUN=(bash -c); PGROOT="$DIR"
+fi
+SOCK="$PGROOT/sock"
+export PGHOST="$SOCK" PGPORT="$PORT" PGUSER=postgres PGDATABASE=crdo
+
+die() { echo "crdo-local: $*" >&2; exit 1; }
+q()   { psql -X -q -At -v ON_ERROR_STOP=1 "$@"; }
+app() { psql -X -q -At -v ON_ERROR_STOP=1 -c "SET ROLE crdo_app" "$@"; }   # simula al backend: rol de la app
+running() { pg_isready -q 2>/dev/null; }
+need_running() { running || die "la base local no está corriendo: crdo-local start"; }
+session() { [[ -f "$DIR/session" ]] || die "sin sesión: crdo-local login"; cat "$DIR/session"; }
+whoami_() {
+  local u; u="$(app -c "SELECT user_id FROM auth.validate_session('$(session)') WHERE kind = 'normal'")"
+  [[ -n "$u" ]] || die "la sesión venció o fue cerrada: crdo-local login"; echo "$u"
+}
+ask() {  # $1 variable de entorno, $2 pregunta, $3 secreto(1/0)
+  local v="${!1:-}"
+  if [[ -z "$v" ]]; then
+    if [[ "$3" == 1 ]]; then read -r -s -p "$2" v; echo >&2; else read -r -p "$2" v; fi
+  fi
+  printf '%s' "$v"
+}
+sqlq() { printf "%s" "${1//\'/\'\'}"; }   # escapa comillas simples para SQL
+
+cmd_doctor() {
+  echo "== Entorno"
+  echo "  sistema: $(uname -sm)$( [[ -n "${TERMUX_VERSION:-}" ]] && echo " · Termux $TERMUX_VERSION")$( [[ -f /etc/os-release ]] && . /etc/os-release && echo " · ${PRETTY_NAME:-}")"
+  local okc=0
+  for t in psql pg_dump pg_restore pg_isready restic python3; do
+    if command -v "$t" >/dev/null; then echo "  ok: $t"; else echo "  falta: $t"; okc=1; fi
+  done
+  if [[ -x "$PGBIN/initdb" ]]; then echo "  ok: initdb en $PGBIN ($("$PGBIN/postgres" --version 2>/dev/null))"; else echo "  falta: initdb (PGBIN=$PGBIN)"; okc=1; fi
+  local share; share="$("$PGBIN/pg_config" --sharedir 2>/dev/null || pg_config --sharedir 2>/dev/null || echo /usr/share/postgresql/16)"
+  if ls "$share"/extension/vector.control >/dev/null 2>&1; then echo "  ok: pgvector"; else echo "  falta: pgvector (las 8 pruebas de memoria vectorial se omitirán)"; fi
+  echo "== Qué se puede ejecutar"
+  echo "  pruebas de base de datos: $([[ -x "$PGBIN/initdb" ]] && echo sí || echo no)"
+  echo "  pruebas de respaldo:      $(command -v restic >/dev/null && command -v python3 >/dev/null && ls "$share"/extension/vector.control >/dev/null 2>&1 && echo sí || echo 'no (requiere restic, python3 y pgvector)')"
+  echo "  prototipo (start/enroll/login/approve): $([[ -x "$PGBIN/initdb" ]] && echo sí || echo no)"
+  return $okc
+}
+
+cmd_test() {
+  mkdir -p "$DIR/informes"
+  local rep; rep="$DIR/informes/pruebas-$(date +%Y%m%d-%H%M%S).txt"
+  CRDO_REPORT="$rep" CRDO_EXPECT_PG_MAJOR="${CRDO_EXPECT_PG_MAJOR:-any}" bash "$ROOT/tests/run-all.sh"
+  local rc=$?
+  echo; echo "Informe guardado en: $rep"
+  return $rc
+}
+
+cmd_start() {
+  mkdir -p "$DIR" "$PGROOT" "$SOCK"; chmod 700 "$DIR"
+  if [[ ${RUN[0]} == su ]]; then chown postgres "$PGROOT" "$SOCK"; chmod 700 "$PGROOT"; fi
+  if [[ ! -d "$PGROOT/pg" ]]; then
+    mkdir -p "$PGROOT/pg"; chmod 700 "$PGROOT/pg"; [[ ${RUN[0]} == su ]] && chown postgres "$PGROOT/pg"
+    "${RUN[@]}" "$PGBIN/initdb -D $PGROOT/pg -A trust -U postgres" >/dev/null
+    echo "Base local creada en $PGROOT/pg"
+  fi
+  if ! running; then
+    "${RUN[@]}" "$PGBIN/pg_ctl -D $PGROOT/pg -o \"-p $PORT -k $SOCK -c listen_addresses='' -c dynamic_shared_memory_type=mmap\" -l $PGROOT/pg/server.log -w start" >/dev/null
+  fi
+  if [[ "$(psql -X -At -d postgres -c "SELECT count(*) FROM pg_database WHERE datname = 'crdo'")" == 0 ]]; then
+    psql -X -q -d postgres -c "CREATE DATABASE crdo"
+    POSTGRES_USER=postgres POSTGRES_DB=crdo CRDO_DB_APP_PASSWORD="$(head -c 18 /dev/urandom | base64)" \
+      CRDO_DB_READONLY_PASSWORD="$(head -c 18 /dev/urandom | base64)" CRDO_DB_BACKUP_PASSWORD="$(head -c 18 /dev/urandom | base64)" \
+      CRDO_DB_OPS_PASSWORD="$(head -c 18 /dev/urandom | base64)" bash "$ROOT/infra/db/init/00-roles.sh" >/dev/null
+    local hasvec; hasvec="$(q -d postgres -c "SELECT count(*) FROM pg_available_extensions WHERE name = 'vector'")"
+    for f in "$ROOT"/infra/db/init/0[1-9]*.sql; do
+      if [[ "$(basename "$f")" == 02-memory-vector.sql && "$hasvec" == 0 ]]; then echo "  (sin pgvector: se omite $(basename "$f"))"; continue; fi
+      psql -X -q -v ON_ERROR_STOP=1 -f "$f" >/dev/null
+    done
+    q -c "INSERT INTO org.agents (id, department_id, code, name, is_enabled) VALUES
+          ('00000000-0000-0000-0000-00000000de01', (SELECT id FROM org.departments WHERE code = 'publishing'),
+           'publicacion.demo', 'Agente de demostración', true)"
+    echo "Esquema de C.R.D.O. cargado (los mismos archivos que usará el servidor)."
+  fi
+  echo "Base local corriendo (puerto $PORT, solo socket local en $SOCK)."
+}
+
+cmd_stop() { if running; then "${RUN[@]}" "$PGBIN/pg_ctl -D $PGROOT/pg -m fast stop" >/dev/null; fi; echo "Base local detenida."; }
+
+cmd_enroll() {
+  need_running
+  [[ "$(q -c "SELECT count(*) FROM auth.users WHERE role = 'owner'")" == 0 ]] || die "ya existe un dueño en esta instancia (crdo-local reset para empezar de cero)"
+  local email name pw pw2
+  email="$(ask CRDO_LOCAL_EMAIL 'Email del dueño: ' 0)"
+  name="$(ask CRDO_LOCAL_NAME 'Nombre: ' 0)"
+  pw="$(ask CRDO_LOCAL_PASSWORD 'Contraseña (mín. 12): ' 1)"
+  pw2="${CRDO_LOCAL_PASSWORD:-$(ask CRDO_LOCAL_PASSWORD2 'Repetir contraseña: ' 1)}"
+  [[ "$pw" == "$pw2" ]] || die "las contraseñas no coinciden"
+  local row; row="$(q -F '|' -c "SELECT user_id, totp_secret_base32, otpauth_uri, array_to_string(recovery_codes, ' ')
+                                 FROM auth.create_user('$(sqlq "$email")', '$(sqlq "$name")', 'owner', '$(sqlq "$pw")')")"
+  IFS='|' read -r _uid sec uri codes <<<"$row"
+  echo
+  echo "== Dueño creado. Esto se muestra UNA sola vez."
+  echo "1) En tu app TOTP (Aegis, Google Authenticator…): agregar cuenta manualmente"
+  echo "   Cuenta: CRDO:$email    Clave: $sec    Tipo: TOTP · SHA1 · 6 dígitos · 30 s"
+  echo "   URI: $uri"
+  if command -v qrencode >/dev/null; then qrencode -t ANSIUTF8 "$uri"; fi
+  echo "2) Códigos de recuperación (guardalos en papel, FUERA del teléfono). Cada uno sirve una vez:"
+  for c in $codes; do echo "     $c"; done
+  if [[ "${CRDO_LOCAL_SHOW_SECRET_FILE:-0}" == 1 ]]; then printf '%s' "$sec" >"$DIR/.secret-for-tests"; chmod 600 "$DIR/.secret-for-tests"; fi
+}
+
+cmd_login() {
+  need_running
+  local email pw code row
+  email="$(ask CRDO_LOCAL_EMAIL 'Email: ' 0)"
+  pw="$(ask CRDO_LOCAL_PASSWORD 'Contraseña: ' 1)"
+  code="$(ask CRDO_LOCAL_CODE 'Código de tu app TOTP: ' 0)"
+  row="$(app -F '|' -c "SELECT (l).result, (l).token, (l).expires_at FROM (SELECT auth.login('$(sqlq "$email")', '$(sqlq "$pw")', '$(sqlq "$code")', NULL, 'crdo-local') l) x")"
+  IFS='|' read -r result token exp <<<"$row"
+  [[ "$result" == ok ]] || die "inicio de sesión rechazado ($result)"
+  umask 077; printf '%s' "$token" >"$DIR/session"
+  echo "Sesión iniciada hasta $exp."
+}
+
+cmd_logout() { [[ -f "$DIR/session" ]] && app -c "SELECT auth.logout('$(session)')" >/dev/null; rm -f "$DIR/session"; echo "Sesión cerrada."; }
+
+cmd_status() {
+  need_running; whoami_ >/dev/null
+  echo "== Presupuesto de infraestructura"
+  app -F ' ' -c "SELECT '  nivel:', level, '· proyección US\$' || projected_usd, '· tope operativo US\$' || operating_cap_usd, '· tope US\$' || hard_cap_usd FROM finance.budget_status('infra')"
+  app -F ' ' -c "SELECT '  -', code, CASE WHEN essential THEN '(indispensable)' ELSE '(opcional)' END, 'US\$' || round(gross_usd, 2) FROM finance.projection('infra') ORDER BY gross_usd DESC"
+  echo "== IA (presupuesto separado)"
+  app -F ' ' -c "SELECT '  tope US\$' || hard_cap_usd, '· gastado US\$' || projected_usd, '· nivel', level FROM finance.budget_status('ai')"
+  echo "== Operación"
+  app -F ' ' -c "SELECT '  agentes:', CASE WHEN value = 'true'::jsonb THEN 'ENCENDIDOS' ELSE 'apagados' END FROM sys.settings WHERE key = 'agents_enabled'"
+  app -F ' ' -c "SELECT '  aprobaciones pendientes:', count(*) FROM ops.approvals WHERE status = 'pending' AND expires_at > now()"
+  app -F ' ' -c "SELECT '  auditoría:', CASE WHEN audit.verify_chain() IS NULL THEN 'cadena íntegra' ELSE 'ROTA en evento ' || audit.verify_chain() END, '(' || count(*) || ' eventos)' FROM audit.events" 2>/dev/null \
+    || q -F ' ' -c "SELECT '  auditoría:', CASE WHEN audit.verify_chain() IS NULL THEN 'cadena íntegra' ELSE 'ROTA' END"
+}
+
+cmd_demo() {
+  need_running
+  local title="${1:-Video de prueba: 5 datos sobre el espacio}"
+  local id; id="$(q -c "INSERT INTO ops.tasks (requested_by_agent, kind, title, payload, risk)
+      VALUES ('00000000-0000-0000-0000-00000000de01', 'youtube.publish', 'Publicar: $(sqlq "$title")',
+              jsonb_build_object('video', 'demo-' || floor(random()*1e6)::int, 'title', '$(sqlq "$title")', 'visibility', 'public'), 'R3')
+      RETURNING id")"
+  app -c "SELECT ops.request_approval('$id', 'Publicar \"$(sqlq "$title")\" como público')" >/dev/null
+  echo "El agente de demostración pidió publicar un video. Quedó esperando tu aprobación: crdo-local approvals"
+}
+
+cmd_approvals() {
+  need_running; whoami_ >/dev/null
+  app -F $'\n' -c "SELECT '── ' || a.id, '   ' || a.summary, '   contenido exacto: ' || t.payload::text,
+                          '   huella: ' || upper(substr(encode(a.payload_hash, 'hex'), 1, 12)) || '   vence: ' || to_char(a.expires_at, 'YYYY-MM-DD HH24:MI')
+                     FROM ops.approvals a JOIN ops.tasks t ON t.id = a.task_id
+                    WHERE a.status = 'pending' AND a.expires_at > now() ORDER BY a.requested_at"
+}
+
+cmd_approve() {
+  need_running
+  local aid="${1:?Uso: crdo-local approve <id>}" uid hash code res
+  uid="$(whoami_)"
+  hash="$(app -c "SELECT encode(payload_hash, 'hex') FROM ops.approvals WHERE id = '$(sqlq "$aid")'")"
+  [[ -n "$hash" ]] || die "no existe la aprobación $aid"
+  app -F $'\n' -c "SELECT '   ' || a.summary, '   contenido exacto: ' || t.payload::text, '   huella: ' || upper(substr(encode(a.payload_hash, 'hex'), 1, 12))
+                     FROM ops.approvals a JOIN ops.tasks t ON t.id = a.task_id WHERE a.id = '$(sqlq "$aid")'"
+  code="$(ask CRDO_LOCAL_CODE 'Código de tu app TOTP para APROBAR esto: ' 0)"
+  res="$(app -c "SELECT ops.approve('$(sqlq "$aid")', '$uid', '$(sqlq "$code")', decode('$hash', 'hex'), 'aprobado desde crdo-local')")"
+  echo "Resultado: $res"
+  [[ "$res" == approved ]]
+}
+
+cmd_audit() {
+  need_running
+  q -F ' | ' -c "SELECT id, to_char(occurred_at, 'MM-DD HH24:MI:SS'), action, outcome, severity FROM audit.events ORDER BY id DESC LIMIT ${1:-15}"
+  q -c "SELECT CASE WHEN audit.verify_chain() IS NULL THEN 'Cadena de auditoría: ÍNTEGRA' ELSE 'Cadena de auditoría: ROTA en el evento ' || audit.verify_chain() END"
+}
+
+cmd_reset() {
+  local ok; ok="${CRDO_LOCAL_CONFIRM:-}"
+  [[ -n "$ok" ]] || read -r -p "Esto borra la instancia local en $DIR. Escribí 'borrar' para continuar: " ok
+  [[ "$ok" == borrar ]] || die "cancelado"
+  cmd_stop >/dev/null || true
+  rm -rf "$DIR"; [[ "$PGROOT" != "$DIR" ]] && rm -rf "$PGROOT"
+  echo "Instancia local borrada."
+}
+
+c="${1:-help}"; shift || true
+case "$c" in
+  doctor) cmd_doctor ;; test) cmd_test ;; start) cmd_start ;; stop) cmd_stop ;; enroll) cmd_enroll ;;
+  login) cmd_login ;; logout) cmd_logout ;; status) cmd_status ;; demo) cmd_demo "$@" ;;
+  approvals) cmd_approvals ;; approve) cmd_approve "$@" ;; audit) cmd_audit "$@" ;; reset) cmd_reset ;;
+  *) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//' ;;
+esac

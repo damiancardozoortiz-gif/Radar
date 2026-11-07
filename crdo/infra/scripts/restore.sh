@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# C.R.D.O. — Restauración (BORRADOR v2).
+# C.R.D.O. — Restauración (Etapa 1, v3.1).
 #   restore.sh test             restaura el último respaldo en una base TEMPORAL y lo compara con su manifiesto
-#   restore.sh into <entorno>   restaura sobre prod o staging (pide confirmación escrita)
+#   restore.sh into <entorno>   restaura sobre prod o staging el último respaldo DE ESE MISMO entorno
+#                               (pide confirmación escrita). Nunca restaura datos de producción en staging.
 #
 # Para `test`:
 #   - en el servidor: levanta un contenedor Postgres temporal sin red y lo borra al final;
@@ -9,6 +10,10 @@
 set -euo pipefail
 
 MODE="${1:?Uso: restore.sh test | into <prod|staging>}"
+TARGET="${2:-prod}"
+[[ "$TARGET" == prod || "$TARGET" == staging ]] || { echo "Entorno inválido: $TARGET" >&2; exit 1; }
+SOURCE_TAG="prod"                                     # test: se prueba el respaldo de producción
+[[ "$MODE" == into ]] && SOURCE_TAG="$TARGET"         # into: solo respaldos del MISMO entorno
 SECRETS="${CRDO_SECRETS_DIR:-/opt/crdo/secrets}"
 WORKROOT="${CRDO_BACKUP_WORK:-/opt/crdo/backups}"
 WORK="$(mktemp -d "$WORKROOT/restore.XXXXXX")"
@@ -18,7 +23,11 @@ trap cleanup EXIT
 
 set -a; source "$SECRETS/restic.env"; set +a
 
-restic restore latest --quiet --tag db --target "$WORK"
+if ! restic snapshots --quiet --tag "db,$SOURCE_TAG" --json 2>/dev/null | grep -q '"id"'; then
+  echo "No hay respaldos de '$SOURCE_TAG'. (Restaurar producción en staging está prohibido sin anonimizar.)" >&2
+  exit 1
+fi
+restic restore latest --quiet --tag "db,$SOURCE_TAG" --target "$WORK" >/dev/null  # "a,b" = ambas etiquetas (varios --tag serían "o")
 DUMP="$(find "$WORK" -name crdo.dump | head -n1)"
 MANIFEST="$(dirname "$DUMP")/manifest.txt"
 [[ -f "$DUMP" && -f "$MANIFEST" ]] || { echo "Respaldo incompleto (falta volcado o manifiesto)" >&2; exit 1; }
@@ -64,13 +73,12 @@ case "$MODE" in
     echo "Prueba de restauración OK"
     ;;
   into)
-    TARGET="${2:?Indicar prod o staging}"
     read -r -p "Esto REEMPLAZA la base de datos de $TARGET. Escribí 'restaurar $TARGET' para continuar: " ok
     [[ "$ok" == "restaurar $TARGET" ]] || { echo "Cancelado"; exit 1; }
-    docker compose -p "crdo-$TARGET" stop api worker scheduler
+    for svc in api worker scheduler; do docker stop "crdo-$TARGET-$svc-1" >/dev/null; done
     docker exec -i "crdo-$TARGET-postgres-1" pg_restore -U crdo_owner -d crdo --clean --if-exists <"$DUMP"
     check_against_manifest "docker exec -i crdo-$TARGET-postgres-1 psql -U crdo_owner -d crdo"
-    docker compose -p "crdo-$TARGET" start api worker scheduler
+    for svc in api worker scheduler; do docker start "crdo-$TARGET-$svc-1" >/dev/null; done
     echo "Restauración en $TARGET completada. Verificar /health."
     ;;
   *) echo "Modo desconocido: $MODE" >&2; exit 1 ;;

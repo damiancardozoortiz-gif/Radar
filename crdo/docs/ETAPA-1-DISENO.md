@@ -1,6 +1,8 @@
 # C.R.D.O. — Etapa 1: Infraestructura central en la nube
 
-> **Versión 3 — actualización presupuestaria oficial.**
+> **Versión 3.1 — base oficial (v3) + cierre técnico sin costos.** La arquitectura no cambia.
+> Cambios de la v3.1: procedimiento autenticado para cambiar límites, autenticación en la base, correcciones de
+> seguridad halladas por pruebas nuevas, prototipo local y runbooks. Detalle en [`CIERRE-ETAPA-1.md`](CIERRE-ETAPA-1.md).
 >
 > **Estado: DISEÑO. No hay nada instalado, contratado ni conectado. Instalación y gastos sin autorizar.**
 >
@@ -8,7 +10,8 @@
 >   dominio prorrateado, impuestos y comisiones). La IA tiene un presupuesto **separado**.
 > - Las pruebas corrieron solo en el contenedor temporal de diseño (§E.1).
 > - Historial: v1 diseño inicial · v2 revisión técnica ([`CAMBIOS-v2.md`](CAMBIOS-v2.md)) · v3 presupuesto
->   ([`CAMBIOS-v3.md`](CAMBIOS-v3.md)).
+>   ([`CAMBIOS-v3.md`](CAMBIOS-v3.md)) · v3.1 cierre técnico ([`CIERRE-ETAPA-1.md`](CIERRE-ETAPA-1.md),
+>   [`INFORME-SEGURIDAD.md`](INFORME-SEGURIDAD.md), [`PROTOTIPO-LOCAL.md`](PROTOTIPO-LOCAL.md), [`runbooks/`](runbooks/INSTALACION.md)).
 >
 > Fecha: 7 de noviembre de 2026.
 
@@ -30,7 +33,7 @@
 
 | # | Decisión | Cómo queda en el diseño |
 |---|---|---|
-| 1 | Tope absoluto US$ 20/mes | Impuesto **en la base de datos**: ni el dueño puede fijar un tope de infraestructura mayor a 20 (CHECK + función) |
+| 1 | Tope absoluto US$ 20/mes | Cargado en la base (US$ 20, reserva 15 %). **v3.1:** solo el dueño humano puede cambiarlo, con TOTP + justificación, con historial inmutable y auditoría. Los agentes nunca. Un cambio por SQL directo se rechaza |
 | 2 | Hetzner CX33 europeo (4 vCPU / 8 GB) | Servidor por defecto. **Regla de respaldo:** si el precio final verificado lo pone por encima del tope operativo, se usa CX23 (§B.5) |
 | 3 | Europa | Falkenstein, Núremberg o Helsinki, según disponibilidad |
 | 4 | Ubuntu 24.04, Docker, FastAPI, PostgreSQL 16 + pgvector | Sin cambios |
@@ -112,7 +115,7 @@ Todo lo aprobado en la revisión técnica sigue igual (detalle en `CAMBIOS-v2.md
 | Servidor | CX23 | **CX33** (CX23 como respaldo si el precio no entra) |
 | Panel | Solo Tailscale | Tailscale + **Cloudflare Tunnel/Access** (perfil `edge`, un túnel por entorno) |
 | Staging | A pedido | **Encendido permanente**, con topes que caben en 8 GB |
-| Presupuesto | Tabla en el documento | **Control en la base**: tope inviolable, reserva, alertas, guardián, rechazo de opcionales |
+| Presupuesto | Tabla en el documento | **Control en la base**: tope cambiable solo por el dueño (procedimiento auditado), reserva, alertas, guardián, rechazo de opcionales |
 | IA | Presupuesto por departamento | Categoría **`ai` independiente**; bloqueada hasta que fijes su tope |
 
 ### A.4 Control presupuestario
@@ -131,7 +134,7 @@ flowchart LR
 
 | Regla | Mecanismo | Probado |
 |---|---|---|
-| Tope ≤ US$ 20, inviolable | `CHECK` en `finance.budget_policy` y validación en la función del dueño | ✅ |
+| Tope oficial US$ 20 que solo cambia el dueño (v3.1) | `finance.set_budget_policy`: dueño + TOTP + justificación de 15 caracteres o más; un trigger rechaza todo cambio por fuera; historial inmutable | ✅ |
 | Reserva 15 % (tope operativo US$ 17) | `reserve_pct` entre 10 y 50 | ✅ |
 | Activar un opcional que superaría la reserva | `finance.set_cost_item` lo **rechaza** y revierte | ✅ (dominio en el peor escenario) |
 | Un indispensable sube de precio | Se registra (es la realidad), alerta `accepted_over_budget` y el dueño decide (p. ej. CX23) | ✅ |
@@ -287,8 +290,9 @@ de Hetzner y el perfil impositivo verificado. Si la proyección bruta supera US$
 
 | Suite | Resultado |
 |---|---|
-| `tests/run-db-tests.sh`: seguridad (24), aprobaciones (23), cola (25), pgvector (8), **presupuesto (29, nuevas)**, concurrencia (3) | ✅ **112 verificaciones, 0 fallas** |
-| `tests/run-backup-tests.sh`: cifrado, integridad, restauración, auditoría + **medidor B2 y `budget-guard` real (4, nuevas)** | ✅ **22 verificaciones, 0 fallas** |
+| `tests/run-db-tests.sh` (v3): seguridad (24), aprobaciones (23), cola (25), pgvector (8), presupuesto (29), concurrencia (3) | ✅ 112 verificaciones, 0 fallas (reproducido 3 veces en la v3.1) |
+| `tests/run-backup-tests.sh` (v3): cifrado, integridad, restauración, auditoría, medidor B2 y `budget-guard` | ✅ 22 verificaciones, 0 fallas (reproducido 3 veces) |
+| **v3.1** — las cuatro baterías actuales (`tests/run-all.sh`) | ✅ **283 verificaciones, 0 fallas**. Ver [`CIERRE-ETAPA-1.md`](CIERRE-ETAPA-1.md) |
 | `docker compose config`: prod, staging, prod+edge, staging+edge | ✅ 4 variantes válidas. El túnel de staging solo ve redes `crdo-staging_*` |
 | `bash -n` en todos los scripts | ✅ |
 
@@ -303,9 +307,8 @@ Cifras verificadas por las pruebas, no estimadas a mano:
 
 ### E.2 Pruebas de aceptación tras instalar
 
-T01–T24 de la v2 se mantienen (disponibilidad, acceso Android, 0 puertos abiertos, TOTP, SSH, secretos, permisos,
-aprobaciones, respaldos, desastre, staging aislado, despliegue con rollback, cola, render, matriz Android, CI).
-Se agregan:
+La lista completa y vigente de pruebas de aceptación (T01–T30) está en [`CIERRE-ETAPA-1.md`](CIERRE-ETAPA-1.md) §4.
+Las nuevas de la v3 son:
 
 | ID | Prueba | Criterio |
 |---|---|---|

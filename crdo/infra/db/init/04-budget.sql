@@ -1,10 +1,11 @@
--- C.R.D.O. — Control presupuestario (BORRADOR v3, Etapa 1)
+-- C.R.D.O. — Control presupuestario (Etapa 1, v3.1)
 -- Tope oficial de infraestructura: US$ 20/mes TODO INCLUIDO (servicios, almacenamiento, respaldos, dominio
 -- prorrateado, impuestos y comisiones). La IA (Claude API) tiene un presupuesto SEPARADO.
 --
 -- Principios:
 --   * Se presupuesta el costo BRUTO: precio neto x tipo de cambio conservador x impuestos y comisiones.
 --   * Reserva obligatoria (15 % por defecto): el tope operativo es US$ 17.
+--   * Los límites solo los cambia el dueño humano con TOTP + justificación (auditado, con historial).
 --   * Un servicio OPCIONAL no se puede activar si la proyección superaría el tope operativo.
 --   * Si la proyección supera el tope operativo, el guardián pausa los opcionales y avisa.
 --   * Los servicios INDISPENSABLES nunca se apagan solos (servidor, IPv4, respaldos): se avisa al dueño.
@@ -30,8 +31,23 @@ CREATE TABLE finance.budget_policy (
   reserve_pct   numeric(4,1)  NOT NULL CHECK (reserve_pct BETWEEN 10 AND 50),
   alert_pcts    int[] NOT NULL DEFAULT '{50,75,90}',
   updated_by    uuid REFERENCES auth.users(id),
-  updated_at    timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT tope_oficial_infra CHECK (category <> 'infra' OR hard_cap_usd <= 20)   -- decisión del dueño, 7/11/2026
+  updated_at    timestamptz NOT NULL DEFAULT now()
+);
+-- v3.1: el tope ya no está fijado con un CHECK (impedía que el propio dueño lo cambiara). Ahora solo se cambia
+-- con finance.set_budget_policy: dueño humano + TOTP + justificación + historial inmutable + auditoría.
+-- Los agentes no pueden: no tienen el TOTP y además la función se niega en contexto de agente.
+
+-- Historial inmutable de cambios de límites
+CREATE TABLE finance.budget_policy_history (
+  id               bigserial PRIMARY KEY,
+  changed_at       timestamptz NOT NULL DEFAULT now(),
+  category         text NOT NULL,
+  old_hard_cap_usd numeric(10,2),
+  new_hard_cap_usd numeric(10,2) NOT NULL,
+  old_reserve_pct  numeric(4,1),
+  new_reserve_pct  numeric(4,1) NOT NULL,
+  changed_by       uuid REFERENCES auth.users(id),
+  reason           text NOT NULL
 );
 
 -- ------------------------------------------------------------------
@@ -87,9 +103,7 @@ CREATE INDEX ON finance.meter_readings (metric, read_at DESC);
 -- ------------------------------------------------------------------
 -- Datos iniciales (precios netos de fuentes secundarias, nov 2026: verificar antes de contratar)
 -- ------------------------------------------------------------------
-INSERT INTO finance.budget_policy (category, hard_cap_usd, reserve_pct) VALUES
-  ('infra', 20, 15),     -- tope operativo = US$ 17
-  ('ai',     0, 15);     -- IA deshabilitada hasta que el dueño fije su presupuesto propio
+-- (la carga inicial se hace al final del archivo, una vez creado el trigger, para que quede en el historial)
 
 -- Escenario por defecto = el PEOR razonable: pago con tarjeta en pesos (con percepción del 30 %)
 INSERT INTO finance.tax_profile (eur_usd, foreign_vat_pct, ar_iva_pct, ar_perception_pct, ar_iibb_pct, card_fee_pct, notes)
@@ -206,25 +220,64 @@ END $$;
 -- ------------------------------------------------------------------
 -- Cambios del dueño (desde el panel, con TOTP de un solo uso)
 -- ------------------------------------------------------------------
+-- Procedimiento AUTENTICADO Y AUDITADO para cambiar límites (decisión del dueño, v3.1).
+-- Resultado: updated | agents_forbidden | forbidden | reason_required | invalid_value | invalid_code
 CREATE FUNCTION finance.set_budget_policy(p_user uuid, p_code text, p_category text,
-                                          p_hard_cap numeric, p_reserve_pct numeric)
+                                          p_hard_cap numeric, p_reserve_pct numeric, p_reason text)
 RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path = finance, pg_catalog, public AS $$
+DECLARE old finance.budget_policy%ROWTYPE;
 BEGIN
+  IF NOT auth.is_human_context() THEN RETURN 'agents_forbidden'; END IF;
   IF NOT EXISTS (SELECT 1 FROM auth.users WHERE id = p_user AND role = 'owner' AND is_active) THEN RETURN 'forbidden'; END IF;
-  IF p_category = 'infra' AND p_hard_cap > 20 THEN RETURN 'above_official_cap'; END IF;
+  IF length(btrim(coalesce(p_reason, ''))) < 15 THEN RETURN 'reason_required'; END IF;
+  SELECT * INTO old FROM finance.budget_policy WHERE category = p_category FOR UPDATE;
+  IF NOT FOUND OR p_hard_cap IS NULL OR p_hard_cap < 0 OR p_reserve_pct NOT BETWEEN 10 AND 50 THEN
+    RETURN 'invalid_value';
+  END IF;
   IF auth.verify_totp(p_user, p_code) IS NULL THEN RETURN 'invalid_code'; END IF;
+  PERFORM set_config('crdo.budget_change', 'on', true);
+  PERFORM set_config('crdo.budget_change_by', p_user::text, true);
+  PERFORM set_config('crdo.budget_change_reason', p_reason, true);
   UPDATE finance.budget_policy SET hard_cap_usd = p_hard_cap, reserve_pct = p_reserve_pct,
          updated_by = p_user, updated_at = now() WHERE category = p_category;
+  PERFORM set_config('crdo.budget_change', 'off', true);
   INSERT INTO audit.events (actor_type, actor_user, action, resource, outcome, severity, detail)
-  VALUES ('user', p_user, 'budget.policy_changed', p_category, 'success', 'warning',
-          jsonb_build_object('hard_cap_usd', p_hard_cap, 'reserve_pct', p_reserve_pct));
+  VALUES ('user', p_user, 'budget.policy_changed', p_category, 'success',
+          CASE WHEN p_hard_cap > old.hard_cap_usd THEN 'high' ELSE 'warning' END,
+          jsonb_build_object('old_hard_cap_usd', old.hard_cap_usd, 'new_hard_cap_usd', p_hard_cap,
+                             'old_reserve_pct', old.reserve_pct, 'new_reserve_pct', p_reserve_pct,
+                             'reason', p_reason));
   RETURN 'updated';
 END $$;
+
+-- Ningún cambio de límites por fuera del procedimiento (ni siquiera de un superusuario por SQL directo),
+-- y cada cambio queda en el historial.
+CREATE FUNCTION finance.guard_budget_policy() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = finance, pg_catalog AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN RAISE EXCEPTION 'Los límites no se borran'; END IF;
+  IF coalesce(current_setting('crdo.budget_change', true), '') <> 'on' THEN
+    RAISE EXCEPTION 'Los límites solo se cambian con finance.set_budget_policy (dueño + TOTP + justificación)';
+  END IF;
+  INSERT INTO finance.budget_policy_history (category, old_hard_cap_usd, new_hard_cap_usd, old_reserve_pct,
+                                             new_reserve_pct, changed_by, reason)
+  VALUES (NEW.category, CASE WHEN TG_OP = 'UPDATE' THEN OLD.hard_cap_usd END, NEW.hard_cap_usd,
+          CASE WHEN TG_OP = 'UPDATE' THEN OLD.reserve_pct END, NEW.reserve_pct,
+          nullif(current_setting('crdo.budget_change_by', true), '')::uuid,
+          coalesce(nullif(current_setting('crdo.budget_change_reason', true), ''), 'carga inicial'));
+  RETURN NEW;
+END $$;
+
+CREATE FUNCTION finance.forbid_history_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN RAISE EXCEPTION 'El historial de límites es inmutable'; END $$;
+CREATE TRIGGER budget_policy_history_immutable BEFORE UPDATE OR DELETE ON finance.budget_policy_history
+  FOR EACH ROW EXECUTE FUNCTION finance.forbid_history_change();
 
 CREATE FUNCTION finance.set_tax_profile(p_user uuid, p_code text, p_eur_usd numeric, p_foreign_vat numeric,
                                         p_iva numeric, p_perception numeric, p_iibb numeric, p_fee numeric)
 RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path = finance, pg_catalog, public AS $$
 BEGIN
+  IF NOT auth.is_human_context() THEN RETURN 'agents_forbidden'; END IF;
   IF NOT EXISTS (SELECT 1 FROM auth.users WHERE id = p_user AND role = 'owner' AND is_active) THEN RETURN 'forbidden'; END IF;
   IF auth.verify_totp(p_user, p_code) IS NULL THEN RETURN 'invalid_code'; END IF;
   UPDATE finance.tax_profile SET eur_usd = p_eur_usd, foreign_vat_pct = p_foreign_vat, ar_iva_pct = p_iva,
@@ -243,6 +296,7 @@ CREATE FUNCTION finance.set_cost_item(p_user uuid, p_code text, p_item text, p_n
 RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path = finance, pg_catalog, public AS $$
 DECLARE old finance.cost_items%ROWTYPE; s record;
 BEGIN
+  IF NOT auth.is_human_context() THEN RETURN 'agents_forbidden'; END IF;
   IF NOT EXISTS (SELECT 1 FROM auth.users WHERE id = p_user AND role = 'owner' AND is_active) THEN RETURN 'forbidden'; END IF;
   SELECT * INTO old FROM finance.cost_items WHERE code = p_item FOR UPDATE;
   IF NOT FOUND THEN RETURN 'not_found'; END IF;
@@ -275,6 +329,7 @@ CREATE FUNCTION finance.resume_optional(p_user uuid, p_code text) RETURNS text
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = finance, pg_catalog, public AS $$
 DECLARE s record;
 BEGIN
+  IF NOT auth.is_human_context() THEN RETURN 'agents_forbidden'; END IF;
   IF NOT EXISTS (SELECT 1 FROM auth.users WHERE id = p_user AND role = 'owner' AND is_active) THEN RETURN 'forbidden'; END IF;
   SELECT * INTO s FROM finance.budget_status('infra');
   IF s.level IN ('critico', 'excedido') THEN RETURN 'still_at_risk'; END IF;
@@ -286,17 +341,32 @@ BEGIN
 END $$;
 
 -- ------------------------------------------------------------------
+-- Carga inicial de límites (decisión del dueño, 7/11/2026): infra US$ 20 con reserva 15 %; IA 0 (bloqueada)
+-- ------------------------------------------------------------------
+CREATE TRIGGER budget_policy_guard BEFORE INSERT OR UPDATE OR DELETE ON finance.budget_policy
+  FOR EACH ROW EXECUTE FUNCTION finance.guard_budget_policy();
+DO $$ BEGIN   -- set_config(…, true) dura hasta el fin de la transacción del archivo
+  PERFORM set_config('crdo.budget_change', 'on', true);
+  PERFORM set_config('crdo.budget_change_reason', 'Carga inicial: decisión oficial del dueño del 7/11/2026', true);
+END $$;
+INSERT INTO finance.budget_policy (category, hard_cap_usd, reserve_pct) VALUES
+  ('infra', 20, 15),     -- tope operativo = US$ 17
+  ('ai',     0, 15);     -- IA deshabilitada hasta que el dueño fije su presupuesto propio
+DO $$ BEGIN PERFORM set_config('crdo.budget_change', 'off', true); END $$;
+
+-- ------------------------------------------------------------------
 -- Permisos
 -- ------------------------------------------------------------------
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA finance FROM PUBLIC;
-GRANT SELECT ON finance.budget_policy, finance.tax_profile, finance.cost_items, finance.meter_readings
-  TO crdo_app, crdo_readonly, crdo_backup;
-REVOKE INSERT, UPDATE, DELETE ON finance.budget_policy, finance.tax_profile, finance.cost_items, finance.meter_readings
-  FROM crdo_app;
+GRANT SELECT ON finance.budget_policy, finance.budget_policy_history, finance.tax_profile, finance.cost_items,
+  finance.meter_readings TO crdo_app, crdo_readonly, crdo_backup;
+GRANT USAGE ON SEQUENCE finance.budget_policy_history_id_seq TO crdo_app;
+REVOKE INSERT, UPDATE, DELETE ON finance.budget_policy, finance.budget_policy_history, finance.tax_profile,
+  finance.cost_items, finance.meter_readings FROM crdo_app;
 GRANT USAGE ON SCHEMA finance TO crdo_ops;
 GRANT EXECUTE ON FUNCTION finance.projection(text), finance.budget_status(text), finance.ai_authorize(numeric),
   finance.record_meter(text, numeric, text) TO crdo_app;
-GRANT EXECUTE ON FUNCTION finance.set_budget_policy(uuid, text, text, numeric, numeric),
+GRANT EXECUTE ON FUNCTION finance.set_budget_policy(uuid, text, text, numeric, numeric, text),
   finance.set_tax_profile(uuid, text, numeric, numeric, numeric, numeric, numeric, numeric),
   finance.set_cost_item(uuid, text, text, numeric, boolean, boolean),
   finance.resume_optional(uuid, text) TO crdo_app;

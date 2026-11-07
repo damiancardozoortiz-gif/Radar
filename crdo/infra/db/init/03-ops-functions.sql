@@ -1,10 +1,20 @@
--- C.R.D.O. — Funciones de control (BORRADOR v2, Etapa 1)
+-- C.R.D.O. — Funciones de control (Etapa 1, v3.1)
 -- Todo cambio crítico pasa por aquí. La app (crdo_app) no tiene permiso de escritura directa sobre
 -- aprobaciones, trabajos, permisos de agentes, comandos administrativos ni secretos TOTP.
 -- Las funciones devuelven códigos de resultado en vez de lanzar errores en los casos esperados, para que
 -- los contadores de intentos fallidos se guarden (un error desharía la transacción).
 
 BEGIN;
+
+-- ==================================================================
+-- 0. Contexto humano: el backend marca cada petición originada por un agente con
+--    SET LOCAL crdo.actor = 'agent'. Las operaciones reservadas a humanos se niegan en ese contexto.
+--    Es una capa adicional: la barrera principal es el TOTP, cuyo secreto ningún agente puede leer.
+-- ==================================================================
+CREATE FUNCTION auth.is_human_context() RETURNS boolean
+LANGUAGE sql STABLE SET search_path = pg_catalog AS $$
+  SELECT coalesce(current_setting('crdo.actor', true), '') IS DISTINCT FROM 'agent';
+$$;
 
 -- ==================================================================
 -- 1. TOTP (RFC 6238, HMAC-SHA1, 6 dígitos, pasos de 30 s) verificado DENTRO de la base
@@ -106,6 +116,7 @@ DECLARE
   role text;
   step bigint;
 BEGIN
+  IF NOT auth.is_human_context() THEN RETURN 'agents_forbidden'; END IF;
   SELECT * INTO a FROM ops.approvals WHERE id = p_approval FOR UPDATE;
   IF NOT FOUND THEN RETURN 'not_found'; END IF;
   IF a.status <> 'pending' THEN RETURN 'not_pending'; END IF;
@@ -326,6 +337,7 @@ CREATE FUNCTION ops.request_admin_command(p_user uuid, p_code text, p_command te
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = ops, pg_catalog, public AS $$
 DECLARE step bigint;
 BEGIN
+  IF NOT auth.is_human_context() THEN result := 'agents_forbidden'; RETURN; END IF;
   IF NOT EXISTS (SELECT 1 FROM auth.users WHERE id = p_user AND role = 'owner' AND is_active) THEN
     result := 'forbidden'; RETURN;
   END IF;
@@ -356,6 +368,7 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM auth.users WHERE id = p_user AND role IN ('owner','admin') AND is_active) THEN
     RETURN 'forbidden';
   END IF;
+  IF p_enabled AND NOT auth.is_human_context() THEN RETURN 'agents_forbidden'; END IF;
   IF p_enabled AND auth.verify_totp(p_user, p_code) IS NULL THEN RETURN 'invalid_code'; END IF;
   UPDATE sys.settings SET value = to_jsonb(p_enabled), updated_by = p_user, updated_at = now()
    WHERE key = 'agents_enabled';
@@ -370,6 +383,7 @@ CREATE FUNCTION org.grant_permission(p_user uuid, p_code text, p_agent uuid, p_p
                                      p_expires timestamptz DEFAULT NULL)
 RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path = org, pg_catalog, public AS $$
 BEGIN
+  IF NOT auth.is_human_context() THEN RETURN 'agents_forbidden'; END IF;
   IF NOT EXISTS (SELECT 1 FROM auth.users WHERE id = p_user AND role = 'owner' AND is_active) THEN
     RETURN 'forbidden';
   END IF;
@@ -401,10 +415,17 @@ CREATE OR REPLACE FUNCTION audit.chain_hash() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = audit, pg_catalog, public AS $$
 BEGIN
   PERFORM pg_advisory_xact_lock(hashtext('audit.events'));
+  -- El id se asigna DENTRO del candado (el DEFAULT lo asigna antes, fuera de orden con escrituras concurrentes:
+  -- la prueba de concurrencia de la v3.1 detectó la cadena rota por eso). Así, orden de id = orden de encadenado.
+  NEW.id := nextval(pg_get_serial_sequence('audit.events', 'id'));
+  NEW.occurred_at := clock_timestamp();
   SELECT hash INTO NEW.prev_hash FROM audit.events ORDER BY id DESC LIMIT 1;
   NEW.hash := audit.compute_hash(NEW.prev_hash, NEW);
   RETURN NEW;
 END $$;
+
+-- Sin DEFAULT: el id lo asigna únicamente el trigger, dentro del candado (numeración sin huecos y en orden de cadena)
+ALTER TABLE audit.events ALTER COLUMN id DROP DEFAULT;
 
 -- Devuelve el id del primer evento alterado, o NULL si la cadena está íntegra.
 CREATE FUNCTION audit.verify_chain() RETURNS bigint
@@ -440,6 +461,7 @@ GRANT EXECUTE ON FUNCTION
 TO crdo_app;
 
 GRANT EXECUTE ON FUNCTION ops.claim_admin_command(), audit.verify_chain() TO crdo_ops;
+GRANT EXECUTE ON FUNCTION auth.is_human_context() TO crdo_app, crdo_ops;
 GRANT EXECUTE ON FUNCTION audit.verify_chain() TO crdo_backup;
 
 -- Los triggers corren con permisos de su dueño o del que inserta; se habilita lo necesario
