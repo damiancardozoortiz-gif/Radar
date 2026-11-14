@@ -614,7 +614,7 @@ nav button.on{
   <h2>⚙️ Configuración</h2>
   <div class="card">
    <h3>YouTube Data API v3</h3>
-   <label for="apiKey">Clavede API</label>
+   <label for="apiKey">Clave de API</label>
    <input id="apiKey" type="password" autocomplete="off" placeholder="Pegá tu API key">
    <button class="btn" id="saveKey">Guardar clave</button>
    <button class="btn sec" id="testKey">Probar conexión</button>
@@ -705,7 +705,7 @@ nav button.on{
 <nav>
  <button class="on" data-view="radar">📡<br>Radar</button>
  <button data-view="favorites">⭐<br>Favoritos</button>
- <button data-view="creator">🧠<br>IA Creator</button>
+ <button data-view="creator">🧠<br>Creator</button>
  <button data-view="studio">🎬<br>Studio</button>
  <button data-view="settings">⚙️<br>Ajustes</button>
 </nav>
@@ -1023,7 +1023,7 @@ $("s3ex").onclick=async()=>{
   if(v.currentTime>=outT||v.ended){if(++si<sg.length){go().then(()=>requestAnimationFrame(d));return}v.pause();rec.stop();v.playbackRate=1;inT=o0;outT=o1;tm();return}
   requestAnimationFrame(d)})()};
 $("s3th").onclick=()=>{if(!v.videoWidth)return say("s3st","Cargá un video primero.",1);const c=document.createElement("canvas");c.width=1280;c.height=720;const x=c.getContext("2d");x.filter=flt();x.drawImage(v,0,0,1280,720);x.filter="none";
- const t=($("s3tx").value\vert{}\vert{}$("s3t").value).slice(0,22);if(t){x.font="bold 90px sans-serif";x.lineWidth=14;x.strokeStyle="#000";x.fillStyle="#ffe600";x.strokeText(t,50,650);x.fillText(t,50,650)}
+ const t=($("s3tx").value||$("s3t").value).slice(0,22);if(t){x.font="bold 90px sans-serif";x.lineWidth=14;x.strokeStyle="#000";x.fillStyle="#ffe600";x.strokeText(t,50,650);x.fillText(t,50,650)}
  c.toBlob(b=>{thumb=b;save(b,"miniatura.png");say("s3st","Miniatura guardada.")})};
 
 $("s3sil").onclick=async()=>{
@@ -1060,7 +1060,7 @@ function an(){const t=$("s3t").value,d=$("s3d").value,g=$("s3g").value.split(","
  const C=[["Título de 40 a 65 caracteres (tenés "+t.length+")",t.length>=40&&t.length<=65,20],["Incluye número o paréntesis",/\d|[\[(]/.test(t),10],["Tiene gancho: pregunta o palabra potente",/\?|cómo|secreto|error|nunca|mejor|gratis|rápido|truco|final/i.test(t),15],["Sin exceso de mayúsculas",!!t&&(t.match(/[A-ZÁÉÍÓÚÑ]/g)||[]).length/t.length<.4,10],["Descripción de 200 caracteres o más",d.length>=200,15],["Palabra clave en título y descripción",!!k&&t.toLowerCase().includes(k)&&d.toLowerCase().includes(k),15],["Entre 5 y 15 etiquetas (tenés "+g.length+")",g.length>=5&&g.length<=15,10],["Capítulos desde 0:00 en la descripción",/(^|\n)0:00/.test(d),5]];
  const s=C.reduce((a,c)=>a+(c[1]?c[2]:0),0);$("s3sc").textContent=s+"/100";$("s3sb").style.width=s+"%";
  $("s3cl").innerHTML=C.map(c=>`<li class="${c[1]?"ok":""}">${c[1]?"✓":"○"} ${c[0]}</li>`).join("");
- const b=t.replace(/[?!]/g,"").trim();$("s3vr").innerHTML=b?[`Cómo ${b} (sin errores)`,`${b}: lo que nadie te cuenta`,`7 trucos para ${b}`,`${b} en 10 minutos [guía real]`].map(x=>`<button class="s3v" data-v="${esc(x)}">${esc(x)}</button>`).join(""):'<div class="notice">Escribí un título para ver variantes.</div>';
+ const b=t.replace(/[?!¿¡]/g,"").trim(),b0=b.replace(/^c[oó]mo\s+/i,"");$("s3vr").innerHTML=b?[`Cómo ${b0} (sin errores)`,`${b}: lo que nadie te cuenta`,`7 trucos para ${b}`,`${b} en 10 minutos [guía real]`].map(x=>`<button class="s3v" data-v="${esc(x)}">${esc(x)}</button>`).join(""):'<div class="notice">Escribí un título para ver variantes.</div>';
  try{localStorage.setItem("radar_studio_draft",JSON.stringify([t,d,$("s3g").value]))}catch{}}
 ["s3t","s3d","s3g"].forEach(i=>$(i).oninput=an);$("s3vr").onclick=e=>{const b=e.target.closest("[data-v]");if(b){$("s3t").value=b.dataset.v;an()}};
 $("s3cp").onclick=async()=>{const p=`Actuá como estratega experto en YouTube. Mejorá este paquete en español.\nTítulo actual: ${$("s3t").value||"(vacío)"}\nDescripción actual: ${$("s3d").value||"(vacía)"}\nEtiquetas: ${$("s3g").value||"(vacías)"}${ref?"\nVideo de referencia del Radar: "+ref:""}\nDevolveme: 5 títulos optimizados, descripción atractiva, 10 etiquetas y un guion para los primeros 15 segundos.`;
@@ -1069,7 +1069,7 @@ $("s3cp").onclick=async()=>{const p=`Actuá como estratega experto en YouTube. M
 /* VER */
 let notes=[];$("s3vs").onchange=()=>v2.playbackRate=+$("s3vs").value;
 const nl=()=>$("s3nl").innerHTML=notes.map((n,i)=>`<li><a href="#" data-i="${i}">${fmt(n.t)}</a> ${esc(n.x)}</li>`).join("");
-$("s3na").onclick=()=>{notes.push({t:v2.currentTime,x:$("s3nt").value\vert{}\vert{}"Nota"});$("s3nt").value="";notes.sort((a,b)=>a.t-b.t);nl()};
+$("s3na").onclick=()=>{notes.push({t:v2.currentTime,x:$("s3nt").value||"Nota"});$("s3nt").value="";notes.sort((a,b)=>a.t-b.t);nl()};
 $("s3nl").onclick=e=>{const i=e.target.dataset.i;if(i!=null){e.preventDefault();v2.currentTime=notes[i].t;v2.play()}};
 $("s3cb").onclick=()=>{const l=notes.slice();if(!l.length||l[0].t>1)l.unshift({t:0,x:"Introducción"});$("s3d").value=($("s3d").value+"\n\n"+l.map(n=>fmt(n.t)+" "+n.x).join("\n")).trim();an();document.querySelector('.s3t [data-p="s3a"]').click()};
 $("s3yo").onclick=()=>{const m=$("s3yu").value.match(/(?:v=|youtu\.be\/|shorts\/|embed\/)([\w-]{11})/);if(!m)return say("s3ys","Enlace de YouTube inválido.",1);
@@ -1089,7 +1089,7 @@ $("s3up").onclick=async()=>{
  if(!file)return say("s3us",$("s3sr").value=="exp"?"Todavía no exportaste un recorte.":"Cargá un video en Editar.",1);
  const title=$("s3t").value.trim();if(!title)return say("s3us","Falta el título.",1);
  const pend=document.querySelectorAll("#s3pf input:not(:checked)").length;if(pend&&!confirm("Tenés "+pend+" puntos pendientes en la lista previa. ¿Subir igual?"))return;
- const w=$("s3w").value,meta={snippet:{title:title.slice(0,100),description:$("s3d").value+(short()&&!/#shorts/i.test($("s3d").value)?"\n\n#Shorts":""),tags:$("s3g").value.split(",").map(s=>s.trim()).filter(Boolean),categoryId:"24"},status:{privacyStatus:w?"private":$("s3pv").value,selfDeclaredMadeForKids:$("s3kids".value=="1")}};
+ const w=$("s3w").value,meta={snippet:{title:title.slice(0,100),description:$("s3d").value+(short()&&!/#shorts/i.test($("s3d").value)?"\n\n#Shorts":""),tags:$("s3g").value.split(",").map(s=>s.trim()).filter(Boolean),categoryId:"24"},status:{privacyStatus:w?"private":$("s3pv").value,selfDeclaredMadeForKids:$("s3kids").value=="1"}};
  if(w)meta.status.publishAt=new Date(w).toISOString();
  $("s3up").disabled=true;$("s3pb").value=0;
  try{say("s3us","Conectando con Google…");const t=tok||await auth();
@@ -1098,81 +1098,21 @@ $("s3up").onclick=async()=>{
   const loc=r.headers.get("Location");if(!loc)throw Error("YouTube no devolvió la URL de subida.");
   const res=await new Promise((ok,no)=>{const x=new XMLHttpRequest();x.open("PUT",loc);x.setRequestHeader("Content-Type",file.type||"video/*");
    x.upload.onprogress=e=>{if(e.lengthComputable){const p=Math.round(e.loaded/e.total*100);$("s3pb").value=p;say("s3us","Subiendo… "+p+"%")}};
-   x.onload=()=>{try{x.status<300?ok(JSON.parse(x.responseText)):no(Error("Error "+x.status+" al subir."))}catch{no(Error("Error "+x.status+" al subir."))}catch{no(Error("Respuesta inesperada de YouTube."))}};x.onerror=()=>no(Error("Se cortó la conexión."));x.send(file)});
+   x.onload=()=>{try{x.status<300?ok(JSON.parse(x.responseText)):no(Error("Error "+x.status+" al subir."))}catch{no(Error("Respuesta inesperada de YouTube."))}};x.onerror=()=>no(Error("Se cortó la conexión."));x.send(file)});
   let extra="";
   if(thumb){try{const tr=await fetch("https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId="+res.id+"&uploadType=media",{method:"POST",headers:{Authorization:"Bearer "+t,"Content-Type":"image/png"},body:thumb});extra=tr.ok?" Miniatura aplicada.":" La miniatura no se aplicó."}catch{extra=" La miniatura no se aplicó."}}
   $("s3us").className="status";$("s3us").innerHTML=`Listo: <a href="https://studio.youtube.com/video/${esc(res.id)}/edit" target="_blank" rel="noopener" style="color:#fff">abrir en YouTube Studio</a>.`+esc(extra);
  }catch(e){say("s3us","No se pudo publicar: "+e.message,1)}
  $("s3up").disabled=false};
 
-try{const p=JSON.parse(localStorage.getItem("radar_studio_draft")||"[]");$("s3t").value=p[0]||"";$("s3d").value=p[1]\vert{}\vert{}"";$("s3g").value=p[2]||""}catch{}
+try{const p=JSON.parse(localStorage.getItem("radar_studio_draft")||"[]");$("s3t").value=p[0]||"";$("s3d").value=p[1]||"";$("s3g").value=p[2]||""}catch{}
 document.querySelector('nav [data-view="studio"]').addEventListener("click",()=>{fillRef();pub()});
 fillRef();an();pub();
 })();
 </script>
-  <script>
-// Corrección y activación del Studio de Edición de Video
-document.addEventListener("DOMContentLoaded", () => {
-    const fileInput = document.querySelector('input[type="file"]');
-    const videoElement = document.querySelector('video');
-    
-    if (!fileInput || !videoElement) return;
-
-    fileInput.addEventListener('change', function(event) {
-        const file = event.target.files[0];
-        if (!file) return;
-
-        const videoURL = URL.createObjectURL(file);
-        videoElement.src = videoURL;
-        videoElement.load();
-        videoElement.play().catch(() => {}); // Intenta reproducir o queda listo para los controles
-    });
-
-    // Conectar control de velocidad si existe
-    const speedSelect = document.querySelector('select');
-    if (speedSelect) {
-        speedSelect.addEventListener('change', function() {
-            videoElement.playbackRate = parseFloat(this.value) || 1.0;
-        });
-    }
-});
-  </script>
-  <script>
-// Solución definitiva para el reproductor del Studio
-document.addEventListener("DOMContentLoaded", () => {
-    const fileInput = document.querySelector('input[type="file"]');
-    const videoElement = document.querySelector('video');
-    
-    if (!fileInput || !videoElement) {
-        console.warn("No se encontró el input o el video en el DOM.");
-        return;
-    }
-
-    // Asegurar que el video muestre controles y dimensiones correctas
-    videoElement.setAttribute('controls', 'true');
-    videoElement.style.width = '100%';
-    videoElement.style.maxHeight = '280px';
-    videoElement.style.backgroundColor = '#000';
-
-    fileInput.addEventListener('change', function(event) {
-        const file = event.target.files[0];
-        if (!file) return;
-
-        console.log("Cargando video:", file.name);
-        const videoURL = URL.createObjectURL(file);
-        
-        videoElement.src = videoURL;
-        videoElement.load();
-
-        // Forzar reproducción inicial para destrabar el primer frame
-        videoElement.play().then(() => {
-            // Si arranca bien, lo pausamos en el inicio para que el usuario controle
-            videoElement.pause();
-        }).catch(err => {
-            console.log("Reproducción automática bloqueada o pendiente de interacción:", err);
-        });
-    });
-});
-  </script>
+<script src="./cockpit6.js" defer></script>
+<script>
+if("serviceWorker" in navigator&&location.protocol==="https:")addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(()=>{}));
+</script>
 </body>
 </html>

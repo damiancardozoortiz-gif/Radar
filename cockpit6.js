@@ -75,7 +75,7 @@ input:focus,select:focus{border-color:var(--v);box-shadow:0 0 0 3px rgba(34,228,
 
 /* Navigation */
 nav{background:rgba(2,6,12,.95);border-top:1px solid var(--b)}
-nav button{font-family:var(--mono);font-size:11px;color:#6f8ba3;border-radius:6px;background:transparent;border:0;cursor:pointer;padding:8px}
+nav button{font-family:var(--mono);font-size:10px;color:#6f8ba3;border-radius:6px;background:transparent;border:0;cursor:pointer;padding:8px 2px;min-width:0;overflow:hidden;text-overflow:ellipsis}
 nav button svg{display:block;width:22px;height:22px;margin:0 auto 3px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 nav button.on{color:#e8fbff;background:linear-gradient(180deg,rgba(34,228,255,.16),rgba(34,228,255,.02));
  box-shadow:inset 0 -2px 0 var(--v),0 0 16px rgba(34,228,255,.15)}

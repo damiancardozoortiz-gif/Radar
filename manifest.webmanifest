@@ -10,22 +10,26 @@
  "orientation": "portrait-primary",
  "background_color": "#0b0d12",
  "theme_color": "#ff2a2a",
- "categories": ["productivity", "utilities", "social"],
+ "categories": [
+  "productivity",
+  "utilities",
+  "social"
+ ],
  "icons": [
   {
    "src": "icon-192.png",
    "sizes": "192x192",
    "type": "image/png",
-   "purpose": "any maskable"
+   "purpose": "any"
   },
   {
    "src": "icon-512.png",
    "sizes": "512x512",
    "type": "image/png",
-   "purpose": "any maskable"
+   "purpose": "any"
   },
   {
-   "src": "icon-maskable-512.png",
+   "src": "icon-512.png",
    "sizes": "512x512",
    "type": "image/png",
    "purpose": "maskable"
@@ -37,13 +41,23 @@
    "short_name": "Radar",
    "description": "Ver videos despegando ahora",
    "url": "./index.html?view=radar",
-   "icons": [{ "src": "icon-192.png", "sizes": "192x192" }]
+   "icons": [
+    {
+     "src": "icon-192.png",
+     "sizes": "192x192"
+    }
+   ]
   },
   {
    "name": "Guardados",
    "short_name": "Favoritos",
-   "url": "./index.html?view=saved",
-   "icons": [{ "src": "icon-192.png", "sizes": "192x192" }]
+   "url": "./index.html?view=favorites",
+   "icons": [
+    {
+     "src": "icon-192.png",
+     "sizes": "192x192"
+    }
+   ]
   }
  ],
  "related_applications": [],
