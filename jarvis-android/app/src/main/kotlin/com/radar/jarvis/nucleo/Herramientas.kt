@@ -176,8 +176,7 @@ class Herramientas(
     private fun verVideo(a: Map<String, Any?>): Resultado {
         val id = a["id"]?.toString().orEmpty()
         val m = estudio().medios().firstOrNull { it.id == id } ?: return Resultado("No existe el medio «$id». Usa medios para ver los que hay.", error = true)
-        if (m.tipo == "audio") return Resultado("«$id» es un audio: no tiene imagen.", error = true)
-        if (m.tipo == "imagen") return Resultado("La imagen $id (${m.ancho}×${m.alto}).", estudio().hojaDeContactos(id, 0, 0, 1))
+        if (m.tipo != "video") return Resultado("«$id» es un audio: no tiene imagen.", error = true)
         val desde = (((a["desde"] as? Number)?.toDouble() ?: 0.0) * 1000).toLong().coerceIn(0, m.duracionMs)
         val hasta = ((a["hasta"] as? Number)?.toDouble()?.let { (it * 1000).toLong() } ?: m.duracionMs).coerceIn(desde, m.duracionMs)
         val cuadros = (entero(a["cuadros"]) ?: 9).coerceIn(1, 16)
@@ -188,7 +187,7 @@ class Herramientas(
     }
 
     private suspend fun montar(a: Map<String, Any?>): Resultado {
-        val plan = Montaje.plan(a, estudio().medios()) { estudio().tiemposDeVoz(it) }
+        val plan = Montaje.plan(a, estudio().medios())
         var ultimo = -1
         val n = acciones
         val etiqueta = etiquetaPaso("montar_video", a)
@@ -381,21 +380,16 @@ class Herramientas(
             Herramienta("abrir_url", "Abre una dirección web en el navegador del teléfono. Úsala cuando haya que HACER algo en una web; para informarte, la búsqueda web es más rápida.",
                 mapOf("url" to mapOf<String, Any>("type" to "string")) + PROPOSITO, listOf("url")),
             Herramienta("esperar", "Espera unos segundos (máximo 15) a que algo cargue y devuelve la pantalla.", mapOf("segundos" to mapOf("type" to "number"))),
-            Herramienta("medios", "Lista los videos, imágenes y audios con los que puedes trabajar: los que la persona adjuntó, los videos recientes de su galería y los montajes que ya hiciste. Cada uno con su id, duración y tamaño."),
+            Herramienta("medios", "Lista los videos y audios con los que puedes trabajar: los que la persona adjuntó, los videos recientes de su galería y los montajes que ya hiciste. Cada uno con su id, duración y tamaño."),
             Herramienta("ver_video", "Tus ojos sobre un video: devuelve una hoja de contactos con fotogramas repartidos por el tramo que pidas, cada uno con su minuto:segundo. Empieza por el video entero y acércate (desde/hasta en segundos) a los tramos que te interesen para decidir dónde cortar.",
                 mapOf("id" to mapOf("type" to "string"), "desde" to mapOf("type" to "number", "description" to "segundo inicial"),
                     "hasta" to mapOf("type" to "number", "description" to "segundo final"),
                     "cuadros" to mapOf("type" to "integer", "description" to "cuántos fotogramas, de 1 a 16 (por defecto 9)")), listOf("id")),
             Herramienta("transcribir_video", "Tus oídos sobre un video: devuelve lo que se dice, con marcas de tiempo. Úsala cuando el contenido hablado importe para decidir los cortes. Necesita la clave de ElevenLabs en Ajustes.",
                 mapOf("id" to mapOf("type" to "string")), listOf("id")),
-            Herramienta("montar_video", "Exporta un video nuevo uniendo trozos de uno o varios videos e imágenes fijas, en el orden dado. Cada trozo puede llevar texto, cambio de velocidad, su propio volumen, fundido desde o hacia negro y un movimiento lento (pensado para fotos). Además: música de fondo con volumen por tramos, narración, subtítulos sincronizados con la narración y cambio de formato. No modifica los originales. Tarda: un minuto de video puede llevar uno o dos minutos.",
+            Herramienta("montar_video", "Exporta un video nuevo uniendo trozos de uno o varios videos, en el orden dado, con cortes directos. Puede poner un texto sobre cada trozo, música de fondo y cambiar el formato. No modifica los originales. Tarda: un minuto de video puede llevar uno o dos minutos.",
                 mapOf("clips" to mapOf("type" to "array", "description" to "Los trozos, en orden.", "items" to mapOf("type" to "object",
-                        "properties" to mapOf("id" to mapOf("type" to "string", "description" to "id del video o de la imagen"),
-                            "duracion" to mapOf("type" to "number", "description" to "solo para imágenes: segundos que se queda en pantalla (por defecto 4)"),
-                            "velocidad" to mapOf("type" to "number", "description" to "de 0.25 a 4; 2 = el doble de rápido, 0.5 = cámara lenta (por defecto 1). Cambia también el sonido"),
-                            "volumen" to mapOf("type" to "number", "description" to "volumen del sonido propio de este trozo, de 0 a 2 (por defecto 1)"),
-                            "fundido" to mapOf("type" to "string", "enum" to listOf("entrada", "salida", "ambos"), "description" to "medio segundo desde negro al empezar, hacia negro al terminar, o las dos cosas"),
-                            "movimiento" to mapOf("type" to "string", "enum" to listOf("acercar", "alejar", "izquierda", "derecha"), "description" to "movimiento lento durante el trozo, para dar vida a una imagen fija"),
+                        "properties" to mapOf("id" to mapOf("type" to "string", "description" to "id del video"),
                             "desde" to mapOf("type" to "number", "description" to "segundo donde empieza el trozo (por defecto 0)"),
                             "hasta" to mapOf("type" to "number", "description" to "segundo donde termina (por defecto, el final)"),
                             "texto" to mapOf("type" to "string", "description" to "título o rótulo que se ve sobre este trozo (opcional)"),
@@ -405,13 +399,9 @@ class Herramientas(
                     "encuadre" to mapOf("type" to "string", "enum" to listOf("recortar", "encajar"), "description" to "al cambiar de formato: recortar llena el cuadro (por defecto); encajar deja el video entero con bandas"),
                     "musica" to mapOf("type" to "string", "description" to "id de un audio para ponerlo de fondo, repetido si hace falta (opcional)"),
                     "volumen_musica" to mapOf("type" to "number", "description" to "de 0 a 1; por defecto 0.25, o 0.12 si hay narración"),
-                    "volumen_musica_tramos" to mapOf("type" to "array", "description" to "tramos del video final donde la música suena a otro volumen, por ejemplo más baja mientras alguien habla (opcional)",
-                        "items" to mapOf("type" to "object", "properties" to mapOf("desde" to mapOf("type" to "number", "description" to "segundo del video final"),
-                            "hasta" to mapOf("type" to "number"), "volumen" to mapOf("type" to "number", "description" to "de 0 a 1")), "required" to listOf("desde", "hasta", "volumen"))),
-                    "subtitulos" to mapOf("type" to "boolean", "description" to "true: pone como rótulos lo que dice la narración, cambiando al ritmo de la voz. Necesita narracion, y los trozos no pueden llevar texto propio"),
                     "narracion" to mapOf("type" to "string", "description" to "id de un audio hecho con narrar: suena una vez, a volumen completo, desde el principio (opcional)"),
                     "nombre" to mapOf("type" to "string", "description" to "nombre corto del archivo")) + PROPOSITO, listOf("clips")),
-            Herramienta("narrar", "Convierte un guion en una narración hablada (voz de ElevenLabs) y la deja como un audio para usarla en montar_video; guarda cuándo se dice cada palabra, para los subtítulos sincronizados. Necesita la clave de ElevenLabs en Ajustes y gasta créditos de esa cuenta.",
+            Herramienta("narrar", "Convierte un guion en una narración hablada (voz de ElevenLabs) y la deja como un audio para usarla en montar_video. Necesita la clave de ElevenLabs en Ajustes y gasta créditos de esa cuenta.",
                 mapOf("texto" to mapOf("type" to "string", "description" to "el guion, tal como debe decirse (máximo 2500 letras)")) + PROPOSITO, listOf("texto")),
             Herramienta("compartir_video", "Abre el menú de compartir del teléfono con un video, hacia una aplicación (TikTok, Instagram, WhatsApp…). Después sigue tú en esa aplicación con ver_pantalla y tocar; publicar esperará el sí de la persona.",
                 mapOf("id" to mapOf("type" to "string"), "app" to mapOf("type" to "string", "description" to "nombre de la aplicación; vacío = el menú general")) + PROPOSITO, listOf("id")),

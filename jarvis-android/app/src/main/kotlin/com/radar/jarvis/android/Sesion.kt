@@ -219,11 +219,11 @@ object Sesion {
         else { estado = Estado.ESPERA; subtitulo = "Listo."; avisar() }
     }
 
-    /** Los videos, imágenes o audios que eliges con el botón de adjuntar. */
+    /** Los videos o audios que eliges con el botón de adjuntar. */
     fun adjuntar(uris: List<android.net.Uri>) {
         ambito.launch {
             val n = estudio.adjuntar(uris)
-            poner(estado, if (n == 0) "No pude leer esos archivos: tienen que ser videos, imágenes o audios."
+            poner(estado, if (n == 0) "No pude leer esos archivos: tienen que ser videos o audios."
                 else "$n ${if (n == 1) "archivo adjunto" else "archivos adjuntos"}. Dime qué hago con ${if (n == 1) "él" else "ellos"}.")
         }
     }

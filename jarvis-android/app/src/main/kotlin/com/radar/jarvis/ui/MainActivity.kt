@@ -160,7 +160,7 @@ class MainActivity : Activity() {
     private fun elegirArchivos() {
         try {
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")
-                .putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("video/*", "audio/*", "image/*")).putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true), 2)
+                .putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("video/*", "audio/*")).putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true), 2)
         } catch (e: Exception) {
             android.widget.Toast.makeText(this, "Este teléfono no tiene selector de archivos.", android.widget.Toast.LENGTH_LONG).show()
         }

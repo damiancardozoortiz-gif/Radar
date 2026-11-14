@@ -2,9 +2,9 @@
 
 Decidido con el dueño del proyecto el 14 de noviembre de 2026. Estado: **construido en la versión 2.0** (ver README).
 
-**Versión 2.1, construida:** rótulos sincronizados con la voz, movimiento en imágenes fijas, fundidos, cambio de velocidad y
-volumen por partes. **Sigue pendiente:** generar imágenes y video con ElevenLabs (requiere plan Pro o superior en esa cuenta, y
-leer antes su documentación, que no se pudo abrir desde el entorno de trabajo).
+Pendiente para la 2.1, pedido por el dueño a partir de la lista que propuso el propio JARVIS: rótulos sincronizados con la voz,
+movimiento en imágenes fijas, fundidos y cambio de velocidad, volumen por partes, y generar imágenes y video con ElevenLabs
+(requiere plan Pro o superior en esa cuenta). Ya entraron en la 2.0: narración a partir de un guion y compartir hacia TikTok.
 
 ## Punto de partida
 

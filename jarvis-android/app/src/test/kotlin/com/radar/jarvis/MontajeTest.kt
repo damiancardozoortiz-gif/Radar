@@ -22,10 +22,7 @@ class EstudioFalso : Estudio {
         Medio("v2", "vertical.mp4", "video", 20_000, 1080, 1920),
         Medio("a1", "cancion.mp3", "audio", 180_000),
         Medio("v3", "4k.mp4", "video", 5_000, 3840, 2160),
-        Medio("i1", "foto.jpg", "imagen", 0, 4000, 3000),
     )
-    val voces = mutableMapOf<String, List<com.radar.jarvis.nucleo.Palabra>>()
-    override fun tiemposDeVoz(id: String) = voces[id]
     val planes = mutableListOf<Plan>()
     val hojas = mutableListOf<String>()
     override fun medios() = lista.toList()

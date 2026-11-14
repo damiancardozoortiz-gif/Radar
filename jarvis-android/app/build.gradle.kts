@@ -11,8 +11,8 @@ android {
         applicationId = "com.radar.jarvis"
         minSdk = 26          // Android 8.0
         targetSdk = 35
-        versionCode = 4
-        versionName = "2.1"
+        versionCode = 3
+        versionName = "2.0"
     }
 
     signingConfigs {
