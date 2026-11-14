@@ -7,6 +7,8 @@ Asistente personal autónomo. Le hablas, y **actúa**: maneja tu teléfono Andro
 - Servidor: solo librería estándar de Python. Interfaz: JavaScript sin frameworks. Nada que compilar.
 - Solo lectura sobre tus carpetas. Lo único que se escribe es `memory/` y el diario de acciones `registro/`.
 
+> **¿Sin computadora?** En [`jarvis-android/`](../jarvis-android/README.md) hay una versión que vive entera dentro del teléfono Android (una APK). Usa una clave de la API de Claude en lugar de la suscripción.
+
 ---
 
 ## 1. Instalación
