@@ -71,9 +71,3 @@ interface Manos {
         val DIRECCIONES = listOf("arriba", "abajo", "izquierda", "derecha")
     }
 }
-
-/** Lo que JARVIS recuerda entre conversaciones. */
-interface Memoria {
-    fun guardar(texto: String)
-    fun todo(): List<String>
-}

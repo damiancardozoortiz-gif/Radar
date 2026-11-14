@@ -2,6 +2,7 @@ package com.radar.jarvis
 
 import com.radar.jarvis.nucleo.Freno
 import com.radar.jarvis.nucleo.Herramientas
+import com.radar.jarvis.nucleo.Mente
 import com.radar.jarvis.nucleo.Peticion
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -40,7 +41,7 @@ class FrenoTest {
     }
 
     private fun h(tel: TelefonoFalso, pedidos: MutableList<Peticion>, respuesta: Boolean) =
-        Herramientas(tel, MemoriaFalsa(), { pedidos += it; respuesta }, pausaTrasActuar = 0)
+        Herramientas(tel, Mente(CajaFalsa()), { pedidos += it; respuesta }, pausaTrasActuar = 0)
 
     @Test fun rechazarNoEnvia() = runBlocking {
         val tel = TelefonoFalso(); val pedidos = mutableListOf<Peticion>()

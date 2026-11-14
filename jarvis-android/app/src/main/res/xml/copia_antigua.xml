@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copia de seguridad de Android (hasta Android 11): solo viaja lo incluido (la mente y los ajustes).
+     Las claves están en jarvis_secretos, que no se incluye. -->
+<full-backup-content>
+    <include domain="file" path="mente" />
+    <include domain="sharedpref" path="jarvis.xml" />
+</full-backup-content>

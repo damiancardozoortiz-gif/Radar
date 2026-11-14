@@ -38,6 +38,7 @@ class MainActivity : Activity() {
     private lateinit var btnPausa: TextView
     private lateinit var btnDetener: TextView
     private lateinit var btnVer: android.widget.Button
+    private lateinit var votos: LinearLayout
     private val alCambiar: () -> Unit = { pintar() }
 
     override fun onCreate(guardado: Bundle?) {
@@ -54,6 +55,7 @@ class MainActivity : Activity() {
             addView(Estilo.texto(c, "J.A.R.V.I.S.", 13f, Estilo.TINTA, mono = true), LinearLayout.LayoutParams(0, -2, 1f))
             addView(btnDetener); addView(btnPausa)
             addView(enlace("nueva", Estilo.TENUE) { Sesion.nuevaConversacion() })
+            addView(enlace("mente", Estilo.MENTA) { startActivity(Intent(c, MenteActivity::class.java)) })
             addView(enlace("ajustes", Estilo.CIAN) { startActivity(Intent(c, AjustesActivity::class.java)) })
         })
 
@@ -100,6 +102,13 @@ class MainActivity : Activity() {
             addView(LinearLayout(c).apply {
                 orientation = LinearLayout.VERTICAL; setPadding(dp(c, 20), 0, dp(c, 20), 0)
                 addView(pasos); addView(detalle)
+                votos = LinearLayout(c).apply {
+                    gravity = Gravity.CENTER_VERTICAL
+                    addView(Estilo.texto(c, "¿Cómo salió?", 13f, Estilo.TENUE), LinearLayout.LayoutParams(0, -2, 1f))
+                    addView(Estilo.boton(c, "Bien", tinta = Estilo.MENTA, borde = Estilo.MENTA) { Sesion.votar(true) }, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(c, 8) })
+                    addView(Estilo.boton(c, "Mal", tinta = Estilo.ROJO, borde = Estilo.ROJO) { Sesion.votar(false) })
+                }
+                addView(votos, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(c, 6) })
                 addView(btnVer, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(c, 6); bottomMargin = dp(c, 12) })
             })
         }
@@ -242,6 +251,7 @@ class MainActivity : Activity() {
                     LinearLayout.LayoutParams(0, -2, 1f))
             })
         }
+        votos.visibility = if (Sesion.porVotar > 0 && !Sesion.ocupado) View.VISIBLE else View.GONE
         val hayVideo = Sesion.estudio.ultimoMontaje?.scheme == "content"
         btnVer.visibility = if (hayVideo && !Sesion.ocupado) View.VISIBLE else View.GONE
         detalle.text = Sesion.detalle

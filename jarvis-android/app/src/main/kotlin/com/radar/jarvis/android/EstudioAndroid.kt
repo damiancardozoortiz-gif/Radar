@@ -282,6 +282,66 @@ class EstudioAndroid(private val ctx: Context, private val almacen: Almacen) : E
         return lineas.joinToString("\n").ifBlank { "(no se oye a nadie hablar)" }
     }
 
+    // ------------------------------------------------------------ narrar y compartir
+    private fun pedir(url: String, cuerpo: ByteArray?, clave: String, acepta: String): Pair<Int, ByteArray> {
+        val con = (URL(url).openConnection() as HttpURLConnection).apply {
+            requestMethod = if (cuerpo == null) "GET" else "POST"; connectTimeout = 20_000; readTimeout = 120_000
+            setRequestProperty("xi-api-key", clave); setRequestProperty("Accept", acepta)
+            if (cuerpo != null) { doOutput = true; setRequestProperty("Content-Type", "application/json") }
+        }
+        if (cuerpo != null) con.outputStream.use { it.write(cuerpo) }
+        val codigo = con.responseCode
+        return codigo to ((if (codigo in 200..299) con.inputStream else con.errorStream)?.readBytes() ?: ByteArray(0))
+    }
+
+    override suspend fun narrar(texto: String): Medio = withContext(Dispatchers.IO) {
+        val clave = almacen.claveVoz
+        if (clave.isBlank()) throw ErrorManos("para narrar hace falta una clave de ElevenLabs, que la persona pone en Ajustes de JARVIS")
+        try {
+            // la voz: la primera de la cuenta de la persona
+            val (c1, voces) = pedir("https://api.elevenlabs.io/v1/voices", null, clave, "application/json")
+            if (c1 == 401) throw ErrorManos("la clave de ElevenLabs no es válida")
+            if (c1 !in 200..299) throw ErrorManos("ElevenLabs no dio la lista de voces (código $c1)")
+            val voz = JSONObject(String(voces)).optJSONArray("voices")?.optJSONObject(0)?.optString("voice_id").orEmpty()
+            if (voz.isEmpty()) throw ErrorManos("la cuenta de ElevenLabs no tiene ninguna voz")
+            val cuerpo = JSONObject().put("text", texto).put("model_id", "eleven_multilingual_v2").toString().toByteArray()
+            val (c2, audio) = pedir("https://api.elevenlabs.io/v1/text-to-speech/$voz?output_format=mp3_44100_128", cuerpo, clave, "audio/mpeg")
+            if (c2 !in 200..299 || audio.size < 1000) throw ErrorManos("ElevenLabs no pudo generar la voz (código $c2)" +
+                if (c2 == 401 || c2 == 402) ": revisa la clave o el saldo de la cuenta" else "")
+            val carpeta = File(ctx.filesDir, "narraciones").apply { mkdirs() }
+            carpeta.listFiles()?.sortedBy { it.lastModified() }?.dropLast(20)?.forEach { it.delete() }      // se guardan las 20 últimas
+            val archivo = File(carpeta, "narracion-${System.currentTimeMillis()}.mp3").apply { writeBytes(audio) }
+            val uri = Uri.fromFile(archivo)
+            val f = ficha(uri, "narración") ?: throw ErrorManos("la narración se generó pero no se puede leer")
+            synchronized(this@EstudioAndroid) { adjuntos.add(0, uri) }
+            f.medio
+        } catch (e: ErrorManos) {
+            throw e
+        } catch (e: Exception) {
+            throw ErrorManos("no hubo conexión con ElevenLabs para narrar (${e.javaClass.simpleName})")
+        }
+    }
+
+    override fun compartir(id: String, app: String) {
+        val f = porId(id)
+        if (f.medio.tipo != "video") throw ErrorManos("«$id» no es un video")
+        if (f.uri.scheme != "content") throw ErrorManos("ese video no se puede compartir desde aquí; está en Películas/JARVIS")
+        val enviar = Intent(Intent.ACTION_SEND).setType("video/mp4").putExtra(Intent.EXTRA_STREAM, f.uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        if (app.isNotBlank()) {
+            val q = com.radar.jarvis.nucleo.Freno.norm(app).replace(" ", "")
+            val destino = ctx.packageManager.queryIntentActivities(enviar, 0).firstOrNull {
+                q in com.radar.jarvis.nucleo.Freno.norm(it.loadLabel(ctx.packageManager).toString()).replace(" ", "") ||
+                    q in it.activityInfo.packageName.lowercase() ||
+                    (q == "tiktok" && it.activityInfo.packageName.let { p -> "musically" in p || "ugc.trill" in p })
+            } ?: throw ErrorManos("no encuentro «$app» entre las aplicaciones que aceptan videos. ¿Está instalada?")
+            enviar.setClassName(destino.activityInfo.packageName, destino.activityInfo.name)
+            ctx.grantUriPermission(destino.activityInfo.packageName, f.uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            ctx.startActivity(enviar.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } else {
+            ctx.startActivity(Intent.createChooser(enviar, "Compartir el video").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION))
+        }
+    }
+
     // ------------------------------------------------------------ montar
     private fun rotulo(texto: String, plan: Plan): TextOverlay {
         // líneas de unas 26 letras, cortando entre palabras
@@ -319,9 +379,13 @@ class EstudioAndroid(private val ctx: Context, private val almacen: Almacen) : E
                 .setEffects(Effects(listOf(volumen), emptyList())).build()
             secuencias += EditedMediaItemSequence(listOf(musica), /* isLooping = */ true)     // se repite hasta que acaba el video
         }
+        plan.narracionId?.let { id ->
+            // la voz suena una vez, a volumen completo, desde el principio
+            secuencias += EditedMediaItemSequence(listOf(EditedMediaItem.Builder(MediaItem.fromUri(porId(id).uri)).setRemoveVideo(true).build()))
+        }
         val b = Composition.Builder(secuencias)
         // sin música, si algún trozo va sin sonido se fuerza una pista de audio para que el resto no se quede mudo
-        if (plan.musicaId == null && plan.cortes.any { it.sinSonido } && !plan.cortes.all { it.sinSonido }) b.experimentalSetForceAudioTrack(true)
+        if (plan.musicaId == null && plan.narracionId == null && plan.cortes.any { it.sinSonido } && !plan.cortes.all { it.sinSonido }) b.experimentalSetForceAudioTrack(true)
         return b.build()
     }
 

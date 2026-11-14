@@ -26,6 +26,7 @@ data class Plan(
     val recortar: Boolean,           // true: llena el cuadro recortando; false: encaja el video entero con bandas
     val musicaId: String? = null,
     val volumenMusica: Float = 0.25f,
+    val narracionId: String? = null,   // una voz que suena una vez, a volumen completo, por encima de todo
     val nombre: String = "Montaje",
 ) {
     val duracionMs get() = cortes.sumOf { it.hastaMs - it.desdeMs }
@@ -41,6 +42,10 @@ interface Estudio {
     fun hojaDeContactos(id: String, desdeMs: Long, hastaMs: Long, cuadros: Int): ByteArray
     /** Lo que se dice en el video, con marcas de tiempo. Lanza ErrorManos si no se puede transcribir. */
     suspend fun transcribir(id: String): String
+    /** Convierte un guion en una narración hablada y la deja como un audio más. Lanza ErrorManos si no se puede. */
+    suspend fun narrar(texto: String): Medio
+    /** Abre el menú de compartir del teléfono con ese video, hacia la aplicación indicada si está instalada. */
+    fun compartir(id: String, app: String)
     /** Exporta el montaje y devuelve el video nuevo. `progreso` recibe de 0 a 100. */
     suspend fun montar(plan: Plan, progreso: (Int) -> Unit): Medio
 }
@@ -96,8 +101,15 @@ object Montaje {
             val m = porId[musica] ?: throw ErrorManos("la música «$musica» no está entre los medios disponibles")
             if (m.tipo != "audio") throw ErrorManos("«$musica» no es un audio")
         }
-        val volumen = (segundos(a["volumen_musica"]) ?: 0.25).coerceIn(0.0, 1.0).toFloat()
+        val narracion = a["narracion"]?.toString()?.takeIf { it.isNotBlank() }
+        if (narracion != null) {
+            val m = porId[narracion] ?: throw ErrorManos("la narración «$narracion» no está entre los medios disponibles")
+            if (m.tipo != "audio") throw ErrorManos("«$narracion» no es un audio")
+        }
+        if (narracion != null && porId.getValue(narracion).duracionMs > total + 1500) throw ErrorManos(
+            "la narración dura ${reloj(porId.getValue(narracion).duracionMs)} y el video ${reloj(total)}: alarga o añade trozos hasta cubrirla, o acorta el guion")
+        val volumen = (segundos(a["volumen_musica"]) ?: if (narracion != null) 0.12 else 0.25).coerceIn(0.0, 1.0).toFloat()
         val nombre = a["nombre"]?.toString()?.replace(Regex("[^\\p{L}\\p{N} _-]"), "")?.trim()?.take(40).orEmpty().ifEmpty { "Montaje" }
-        return Plan(cortes, ancho, alto, a["encuadre"]?.toString() != "encajar" && formato != "original", musica, volumen, nombre)
+        return Plan(cortes, ancho, alto, a["encuadre"]?.toString() != "encajar" && formato != "original", musica, volumen, narracion, nombre)
     }
 }

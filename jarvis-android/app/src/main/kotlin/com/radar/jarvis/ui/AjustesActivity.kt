@@ -29,7 +29,9 @@ class AjustesActivity : Activity() {
     private lateinit var estadoClave: TextView
     private lateinit var estadoGaleria: TextView
     private lateinit var estadoVoz: TextView
-    private lateinit var memoria: TextView
+    private lateinit var estadoAvisar: TextView
+    private lateinit var estadoAvisos: TextView
+    private lateinit var estadoFuentes: TextView
     private lateinit var diario: TextView
     private val a get() = Sesion.almacen
 
@@ -85,7 +87,7 @@ class AjustesActivity : Activity() {
         estadoGaleria = nota("")
         nota("Con este permiso JARVIS encuentra solo tus videos recientes («monta los tres últimos»). Sin él, adjúntalos con el botón + de la pantalla principal.")
         boton("Permitir ver mis videos") { requestPermissions(arrayOf(com.radar.jarvis.android.EstudioAndroid.PERMISO_GALERIA), 2) }
-        nota("Oídos (opcional). Para que entienda lo que se DICE en los videos, pon una clave de ElevenLabs (elevenlabs.io → API keys). Sin ella decide solo por la imagen. Al transcribir, el sonido del video se envía a ElevenLabs.")
+        nota("Oídos y voz (opcional). Con una clave de ElevenLabs (elevenlabs.io → API keys) entiende lo que se DICE en los videos y puede narrar un guion con voz. Sin ella decide solo por la imagen y no narra. Al transcribir, el sonido del video se envía a ElevenLabs; al narrar, el guion.")
         val claveVoz = campo("Clave de ElevenLabs", "", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD)
         estadoVoz = nota("")
         boton("Guardar clave de ElevenLabs") {
@@ -108,9 +110,34 @@ class AjustesActivity : Activity() {
         val quien = campo("Me llamo…", a.quien, InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES, 3)
         boton("Guardar") { a.quien = quien.text.toString(); Sesion.reconfigurar(); Toast.makeText(c, "Guardado.", Toast.LENGTH_SHORT).show() }
 
-        titulo("Memoria")
-        memoria = nota("")
-        boton("Borrar la memoria") { a.borrarMemoria(); Sesion.reconfigurar(); pintar() }
+        titulo("Autonomía")
+        interruptor("Recordar solo lo importante de cada conversación", a.memoriaSola) { a.memoriaSola = it }
+        interruptor("Crear rutinas por su cuenta cuando vea una costumbre", a.rutinasSolas) { a.rutinasSolas = it }
+        nota("Fusible: lo máximo que pueden gastar en un día las tareas que lanza él solo, en dólares. Al llegar se detiene hasta mañana y te avisa. Lo que tú le pides no cuenta.")
+        val fusible = campo("5", "%.2f".format(java.util.Locale.US, a.fusible), InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL)
+        boton("Guardar límite") {
+            val v = fusible.text.toString().replace(',', '.').toFloatOrNull()
+            if (v == null) Toast.makeText(c, "Escribe un número, por ejemplo 5.", Toast.LENGTH_SHORT).show()
+            else { a.fusible = v; Toast.makeText(c, "Límite: %.2f $ al día.".format(a.fusible), Toast.LENGTH_SHORT).show() }
+        }
+        estadoAvisar = nota("")
+        boton("Permitir que JARVIS me avise") { if (android.os.Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 4) }
+        boton("Ver su mente: memoria, habilidades y rutinas") { startActivity(Intent(c, MenteActivity::class.java)) }
+
+        titulo("Lo que sabe de tu día")
+        nota("Todo apagado hasta que lo enciendas. Cada fuente necesita su interruptor Y el permiso de Android. Lo que lea de ellas se envía a Claude solo cuando lo necesite para una tarea.")
+        interruptor("Notificaciones en vivo", a.fuenteAvisos) { a.fuenteAvisos = it; pintar() }
+        estadoAvisos = nota("")
+        boton("Dar acceso a notificaciones") { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
+        interruptor("Agenda", a.fuenteAgenda) { a.fuenteAgenda = it; if (it) requestPermissions(arrayOf(Manifest.permission.READ_CALENDAR), 5); pintar() }
+        interruptor("Contactos", a.fuenteContactos) { a.fuenteContactos = it; if (it) requestPermissions(arrayOf(Manifest.permission.READ_CONTACTS), 6); pintar() }
+        interruptor("Ubicación", a.fuenteUbicacion) {
+            a.fuenteUbicacion = it
+            if (it) requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION), 7)
+            pintar()
+        }
+        estadoFuentes = nota("")
+        nota("Para las rutinas «al llegar a un sitio», Android exige además permitir la ubicación «todo el tiempo»: Ajustes → Aplicaciones → JARVIS → Permisos → Ubicación.")
 
         titulo("Diario de acciones")
         nota("Todo lo que JARVIS ha hecho y los permisos que ha pedido, lo más reciente arriba.")
@@ -138,7 +165,19 @@ class AjustesActivity : Activity() {
         estadoGaleria.setTextColor(if (galeria) Estilo.MENTA else Estilo.TENUE)
         estadoVoz.text = if (a.hayClaveVoz) "✓ Hay una clave de ElevenLabs guardada." else "Sin clave de ElevenLabs: JARVIS no oye los videos, solo los ve."
         estadoVoz.setTextColor(if (a.hayClaveVoz) Estilo.MENTA else Estilo.TENUE)
-        memoria.text = a.todo().joinToString("\n") { "· $it" }.ifEmpty { "Todavía no le has pedido que recuerde nada." }
+        val f = Sesion.fuentes
+        val puedeAvisar = com.radar.jarvis.android.Avisador.puede(this)
+        estadoAvisar.text = if (puedeAvisar) "✓ JARVIS puede avisarte de lo que hace por iniciativa." else "JARVIS no puede ponerte notificaciones: no verás lo que hace por iniciativa si no abres la app."
+        estadoAvisar.setTextColor(if (puedeAvisar) Estilo.MENTA else Estilo.AMBAR)
+        estadoAvisos.text = if (!a.fuenteAvisos) "Apagado." else if (f.puedeAvisos()) "✓ JARVIS ve tus notificaciones." else "Encendido, pero falta darle el acceso a notificaciones."
+        estadoAvisos.setTextColor(if (!a.fuenteAvisos) Estilo.TENUE else if (f.puedeAvisos()) Estilo.MENTA else Estilo.AMBAR)
+        val faltan = buildList {
+            if (a.fuenteAgenda && !f.puedeAgenda()) add("agenda")
+            if (a.fuenteContactos && !f.puedeContactos()) add("contactos")
+            if (a.fuenteUbicacion && !f.puedeUbicacion()) add("ubicación")
+        }
+        estadoFuentes.text = if (faltan.isEmpty()) "" else "Falta el permiso de Android para: ${faltan.joinToString()}. Apaga y enciende el interruptor para pedirlo otra vez."
+        estadoFuentes.setTextColor(Estilo.AMBAR)
         diario.text = a.diario().ifEmpty { "Todavía no ha hecho nada." }
     }
 }

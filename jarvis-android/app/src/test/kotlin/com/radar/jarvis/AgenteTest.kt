@@ -3,6 +3,7 @@ package com.radar.jarvis
 import com.radar.jarvis.nucleo.Agente
 import com.radar.jarvis.nucleo.Ajustes
 import com.radar.jarvis.nucleo.Herramientas
+import com.radar.jarvis.nucleo.Mente
 import com.radar.jarvis.nucleo.Peticion
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
@@ -63,7 +64,7 @@ class AgenteTest {
 
     private fun agente(tel: TelefonoFalso, pedidos: MutableList<Peticion>, aprobar: Boolean, modelo: String = "claude-opus-5-5") =
         Agente(Ajustes("sk-ant-api03-prueba", modelo = modelo, baseUrl = "http://127.0.0.1:$puerto"),
-            Herramientas(tel, MemoriaFalsa(), { pedidos += it; aprobar }, pausaTrasActuar = 0), MemoriaFalsa())
+            Herramientas(tel, Mente(CajaFalsa()), { pedidos += it; aprobar }, pausaTrasActuar = 0), Mente(CajaFalsa()))
 
     private fun guion() {
         respuestas += mensaje(usa("t1", "tocar", """{"ref":3,"proposito":"Enfocar el campo"}"""), "tool_use")
@@ -140,6 +141,28 @@ class AgenteTest {
         assertEquals("web_search_20250305", tools.getJSONObject(tools.length() - 1).getString("type"))
     }
 
+    @Test fun laMemoriaViajaEnElMensajeYNoEnElSistema() = runBlocking {
+        respuestas += mensaje(dice("Hola, Damián."), "end_turn")
+        val mente = Mente(CajaFalsa()).apply { recordar("perfil", "Se llama Damián y vive en Buenos Aires", "p"); recordar("hecho", "El wifi de la oficina va lento", "p") }
+        val a = Agente(Ajustes("sk-ant-api03-prueba", baseUrl = "http://127.0.0.1:$puerto"), Herramientas(TelefonoFalso(), mente, { true }, pausaTrasActuar = 0), mente)
+        val r = a.correr("Hola", rutina = "«Buenos días» (nivel avisar), porque son las 8:00")
+        val p = peticiones[0]
+        val primero = p.getJSONArray("messages").getJSONObject(0).get("content").toString()
+        assertTrue(primero.contains("Se llama Damián")); assertTrue(primero.contains("NO lo ha pedido la persona")); assertTrue(primero.contains("Buenos días"))
+        assertFalse("lo que no viene al caso no se manda", primero.contains("wifi"))
+        assertFalse("el sistema no cambia con la memoria: así se cobra menos", p.getString("system").contains("Damián"))
+        assertTrue(r.coste > 0.0)
+    }
+
+    @Test fun laRevisionEsUnaLlamadaBarataYSinHerramientas() = runBlocking {
+        respuestas += mensaje(dice("{}"), "end_turn")
+        val a = agente(TelefonoFalso(), mutableListOf(), true)
+        assertEquals("{}", a.pensar("Eres la revisión.", "Qué pasó."))
+        val p = peticiones[0]
+        assertEquals("claude-haiku-5-5", p.getString("model")); assertFalse(p.has("tools")); assertFalse(p.has("fallbacks"))
+        assertTrue(a.cobrarRevision() > 0.0); assertEquals(0.0, a.cobrarRevision(), 0.0)
+    }
+
     @Test fun laConversacionSeRecuerda() = runBlocking {
         respuestas += mensaje(dice("Hola."), "end_turn"); respuestas += mensaje(dice("Bien."), "end_turn")
         val a = agente(TelefonoFalso(), mutableListOf(), true)
@@ -160,7 +183,7 @@ class AgenteTest {
     }
 
     @Test fun sinClaveNoLlama() = runBlocking {
-        val r = Agente(Ajustes(""), Herramientas(TelefonoFalso(), MemoriaFalsa(), { true }), MemoriaFalsa()).correr("Hola")
+        val r = Agente(Ajustes(""), Herramientas(TelefonoFalso(), Mente(CajaFalsa()), { true }), Mente(CajaFalsa())).correr("Hola")
         assertEquals("fallo", r.estado); assertTrue(peticiones.isEmpty())
     }
 }

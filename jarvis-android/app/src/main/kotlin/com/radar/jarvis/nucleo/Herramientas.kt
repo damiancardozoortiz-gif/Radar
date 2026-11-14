@@ -26,17 +26,22 @@ private class Rechazo(mensaje: String) : Exception(mensaje)
  */
 class Herramientas(
     private val manos: Manos,
-    private val memoria: Memoria,
+    private val mente: Mente,
     private val permiso: suspend (Peticion) -> Boolean,
     private val paso: (Int, String, String, String) -> Unit = { _, _, _, _ -> },
+    private val alCrearRutina: (Rutina) -> Unit = {},
     private val pausaTrasActuar: Long = 900,
     private val estudio: Estudio? = null,
+    private val fuentes: Fuentes? = null,
 ) {
     private var vista: Vista? = null
     private var vistaT = 0L
     private val zonasOk = mutableSetOf<String>()
     var acciones = 0
         private set
+
+    /** El nivel de la rutina que lanzó este turno: avisar (no toca nada), preparar (no pide permisos) o hacer. */
+    var nivel = "hacer"
 
     fun nuevaTarea() {
         zonasOk.clear()
@@ -61,6 +66,9 @@ class Herramientas(
 
     // ------------------------------------------------------------ freno
     private suspend fun pedir(p: Peticion) {
+        if (nivel == "preparar") throw Rechazo(
+            "NO SE HACE: esta rutina es de nivel «preparar» y «${p.accion}» necesitaría el sí de la persona. Déjalo listo como está y cuéntaselo."
+        )
         if (!permiso(p)) throw Rechazo(
             "NO APROBADO por la persona. No lo intentes de otra manera: cuéntale qué quedó preparado y termina."
         )
@@ -188,7 +196,85 @@ class Herramientas(
             "Míralo con ver_video (id ${nuevo.id}) para comprobar que quedó como se pidió antes de decir que está listo.")
     }
 
+    // ------------------------------------------------------------ lo que sabe de tu día
+    private fun <T> fuente(cual: String, leer: (Fuentes) -> T?, contar: (T) -> String): Resultado {
+        val f = fuentes ?: return Resultado("Esa fuente no está disponible en este teléfono.", error = true)
+        val dato = leer(f) ?: return Resultado("No puedo: ${f.porQueNo(cual)}. Díselo a la persona; no intentes conseguirlo de otra forma.", error = true)
+        return Resultado(contar(dato))
+    }
+
+    private fun notificaciones() = fuente("notificaciones", { it.avisos() }) { l ->
+        if (l.isEmpty()) "No hay notificaciones." else "${l.size} notificaciones, la más reciente primero:\n" + noConfiable("notificaciones",
+            l.take(40).joinToString("\n") { "- ${it.app} · ${it.titulo}: ${it.texto}".take(300) })
+    }
+
+    private fun agenda(a: Map<String, Any?>): Resultado {
+        val dias = (entero(a["dias"]) ?: 2).coerceIn(1, 30)
+        val fmt = java.time.format.DateTimeFormatter.ofPattern("EEE d MMM HH:mm", java.util.Locale("es"))
+        return fuente("agenda", { it.citas(dias) }) { l ->
+            if (l.isEmpty()) "No hay nada en la agenda en los próximos $dias días." else "${l.size} eventos en los próximos $dias días:\n" + noConfiable("agenda",
+                l.take(60).joinToString("\n") { c ->
+                    "- " + java.time.Instant.ofEpochMilli(c.inicio).atZone(java.time.ZoneId.systemDefault()).format(fmt) + " · ${c.titulo}" +
+                        if (c.lugar.isNotEmpty()) " (${c.lugar})" else ""
+                })
+        }
+    }
+
+    private fun contactos(a: Map<String, Any?>): Resultado {
+        val q = a["buscar"]?.toString()?.trim().orEmpty()
+        if (q.length < 2) return Resultado("Di a quién buscas (al menos dos letras).", error = true)
+        return fuente("contactos", { it.contactos(q) }) { l ->
+            if (l.isEmpty()) "No hay ningún contacto parecido a «$q»." else noConfiable("contactos", l.take(20).joinToString("\n") { "- ${it.first}: ${it.second}" })
+        }
+    }
+
+    private fun ubicacion() = fuente("ubicacion", { it.posicion() }) { p ->
+        "La persona está en ${p.nombre.ifEmpty { "un punto sin nombre" }} (latitud ${"%.5f".format(java.util.Locale.US, p.lat)}, longitud ${"%.5f".format(java.util.Locale.US, p.lon)})."
+    }
+
+    // ------------------------------------------------------------ lo que aprende y lo que hace por iniciativa
+    private fun habilidadGuardar(a: Map<String, Any?>): Resultado {
+        val h = mente.aprender(a["nombre"]?.toString().orEmpty(), a["cuando"]?.toString().orEmpty(), a["pasos"]?.toString().orEmpty(), "enseñada")
+            ?: return Resultado("No la guardé: hace falta un nombre y los pasos, y no puede llevar contraseñas ni códigos.", error = true)
+        return Resultado("Habilidad «${h.nombre}» guardada. Díselo a la persona.")
+    }
+
+    private fun rutinaCrear(a: Map<String, Any?>): Resultado {
+        val r = mente.crearRutina(a["nombre"]?.toString().orEmpty(), Rutinas.disparador(a), a["encargo"]?.toString().orEmpty(),
+            a["nivel"]?.toString() ?: "hacer", if (a["la_pidio_la_persona"] == true) "persona" else "jarvis")
+        alCrearRutina(r)
+        return Resultado("Rutina «${r.nombre}» creada: ${r.disparador.frase()}. Díselo a la persona, y que puede verla o borrarla en «mente».")
+    }
+
+    private fun rutinas(): Resultado {
+        val l = mente.rutinas()
+        return Resultado(if (l.isEmpty()) "No hay ninguna rutina." else l.joinToString("\n") {
+            "${it.id} · «${it.nombre}» · ${it.disparador.frase()} · ${it.nivel}${if (it.activa) "" else " · APAGADA"} · ha saltado ${it.veces} veces · ${it.encargo}"
+        })
+    }
+
     private suspend fun uno(nombre: String, a: Map<String, Any?>): Resultado = when (nombre) {
+        "notificaciones" -> notificaciones()
+        "agenda" -> agenda(a)
+        "contactos" -> contactos(a)
+        "ubicacion" -> ubicacion()
+        "habilidad_guardar" -> habilidadGuardar(a)
+        "rutina_crear" -> rutinaCrear(a)
+        "rutinas" -> rutinas()
+        "rutina_borrar" -> if (mente.borrarRutina(a["id"]?.toString().orEmpty())) Resultado("Rutina borrada.") else Resultado("No hay ninguna rutina con ese id.", error = true)
+        "narrar" -> {
+            val t = a["texto"]?.toString()?.trim().orEmpty()
+            if (t.length < 3) Resultado("Falta el guion.", error = true)
+            else if (t.length > 2500) Resultado("El guion es demasiado largo (máximo 2500 letras por narración). Pártelo.", error = true)
+            else estudio().narrar(t).let { Resultado("Narración lista: ${it.linea()}. Úsala en montar_video con narracion=\"${it.id}\".") }
+        }
+        "compartir_video" -> {
+            val id = a["id"]?.toString().orEmpty()
+            estudio().compartir(id, a["app"]?.toString()?.trim().orEmpty())
+            delay(pausaTrasActuar + 1200)
+            Resultado("Abierto el menú de compartir con el video $id. Publicar es irreversible: la aplicación pedirá el sí de la persona cuando toques el botón de publicar.\n" +
+                if (manos.noDisponible() == null) textoVista() else "(No puedo seguir yo: la accesibilidad está apagada. Que termine la persona.)")
+        }
         "medios" -> medios()
         "ver_video" -> verVideo(a)
         "transcribir_video" -> Resultado(noConfiable("lo que se dice en el video", estudio().transcribir(a["id"]?.toString().orEmpty())))
@@ -224,14 +310,18 @@ class Herramientas(
         "recordar" -> {
             val t = a["texto"]?.toString()?.trim().orEmpty()
             if (t.isEmpty()) Resultado("Falta qué recordar.", error = true)
-            else { memoria.guardar(t); Resultado("Guardado en la memoria: $t. Díselo a la persona en tu respuesta final.") }
+            else if (mente.recordar(if (a["sobre_la_persona"] == true) "perfil" else "hecho", t, "se lo pediste") != null)
+                Resultado("Guardado en la memoria: $t. Díselo a la persona en tu respuesta final.")
+            else Resultado("No lo guardé: o ya lo sabía, o parece una contraseña, un código o una tarjeta, y eso JARVIS no lo guarda nunca.")
         }
         else -> Resultado("No existe la herramienta $nombre.", error = true)
     }
 
     /** Ejecuta una herramienta. Nunca lanza: un fallo vuelve como Resultado con error, para que el agente lo vea. */
     suspend fun ejecutar(nombre: String, args: Map<String, Any?>): Resultado {
-        manos.noDisponible()?.let { if (nombre != "recordar" && nombre !in DE_VIDEO) return Resultado("No puedo usar el teléfono: $it. Díselo a la persona y termina.", error = true) }
+        manos.noDisponible()?.let { if (nombre !in SIN_MANOS) return Resultado("No puedo usar el teléfono: $it. Díselo a la persona y termina.", error = true) }
+        if (nivel == "avisar" && nombre in ACTUAN) return Resultado(
+            "Esta rutina es de nivel «avisar»: no toques el teléfono ni gastes en generar nada. Cuéntale lo que haya y termina.", error = true)
         acciones++
         if (acciones > MAX_ACCIONES) return Resultado("Límite de $MAX_ACCIONES acciones por tarea alcanzado. Termina y cuenta hasta dónde llegaste.", error = true)
         val n = acciones
@@ -256,8 +346,11 @@ class Herramientas(
 
     companion object {
         const val MAX_ACCIONES = 80
+        /** Las que cambian algo. Una rutina de nivel «avisar» no puede usarlas. */
+        val ACTUAN = setOf("tocar", "escribir", "tecla", "deslizar", "abrir_app", "abrir_url", "compartir_video", "montar_video", "narrar")
         /** Estas no necesitan manejar la pantalla: funcionan aunque la accesibilidad esté apagada. */
-        val DE_VIDEO = setOf("medios", "ver_video", "transcribir_video", "montar_video")
+        val SIN_MANOS = setOf("medios", "ver_video", "transcribir_video", "montar_video", "narrar", "compartir_video", "recordar",
+            "notificaciones", "agenda", "contactos", "ubicacion", "habilidad_guardar", "rutina_crear", "rutinas", "rutina_borrar")
         private val INYECCION = Regex(
             "ignora\\w*\\s+(tus|las|todas|sus)?\\s*(instrucciones|ordenes|órdenes|reglas)|ignore (all |your )?(previous )?instructions" +
                 "|olvida tus instrucciones|system prompt|eres ahora|you are now|nuevas instrucciones", RegexOption.IGNORE_CASE
@@ -305,10 +398,39 @@ class Herramientas(
                     "formato" to mapOf("type" to "string", "enum" to listOf("original", "vertical", "horizontal", "cuadrado"), "description" to "vertical 1080×1920 (TikTok, Reels, Shorts), horizontal 1920×1080, cuadrado 1080×1080"),
                     "encuadre" to mapOf("type" to "string", "enum" to listOf("recortar", "encajar"), "description" to "al cambiar de formato: recortar llena el cuadro (por defecto); encajar deja el video entero con bandas"),
                     "musica" to mapOf("type" to "string", "description" to "id de un audio para ponerlo de fondo, repetido si hace falta (opcional)"),
-                    "volumen_musica" to mapOf("type" to "number", "description" to "de 0 a 1; por defecto 0.25"),
+                    "volumen_musica" to mapOf("type" to "number", "description" to "de 0 a 1; por defecto 0.25, o 0.12 si hay narración"),
+                    "narracion" to mapOf("type" to "string", "description" to "id de un audio hecho con narrar: suena una vez, a volumen completo, desde el principio (opcional)"),
                     "nombre" to mapOf("type" to "string", "description" to "nombre corto del archivo")) + PROPOSITO, listOf("clips")),
-            Herramienta("recordar", "Guarda UNA cosa en la memoria de JARVIS (una frase autocontenida). Solo si la persona lo pidió o seguirá importando dentro de meses.",
-                mapOf("texto" to mapOf("type" to "string")), listOf("texto")),
+            Herramienta("narrar", "Convierte un guion en una narración hablada (voz de ElevenLabs) y la deja como un audio para usarla en montar_video. Necesita la clave de ElevenLabs en Ajustes y gasta créditos de esa cuenta.",
+                mapOf("texto" to mapOf("type" to "string", "description" to "el guion, tal como debe decirse (máximo 2500 letras)")) + PROPOSITO, listOf("texto")),
+            Herramienta("compartir_video", "Abre el menú de compartir del teléfono con un video, hacia una aplicación (TikTok, Instagram, WhatsApp…). Después sigue tú en esa aplicación con ver_pantalla y tocar; publicar esperará el sí de la persona.",
+                mapOf("id" to mapOf("type" to "string"), "app" to mapOf("type" to "string", "description" to "nombre de la aplicación; vacío = el menú general")) + PROPOSITO, listOf("id")),
+            Herramienta("notificaciones", "Las notificaciones que tiene ahora el teléfono, sin abrir el panel. Solo si la persona encendió esa fuente."),
+            Herramienta("agenda", "Los eventos del calendario de los próximos días. Solo si la persona encendió esa fuente.",
+                mapOf("dias" to mapOf("type" to "integer", "description" to "cuántos días mirar, de 1 a 30 (por defecto 2)"))),
+            Herramienta("contactos", "Busca en los contactos del teléfono por nombre y devuelve sus teléfonos. Solo si la persona encendió esa fuente.",
+                mapOf("buscar" to mapOf("type" to "string")), listOf("buscar")),
+            Herramienta("ubicacion", "Dónde está la persona ahora. Solo si encendió esa fuente."),
+            Herramienta("habilidad_guardar", "Aprende una habilidad: una receta para repetir algo. Úsala cuando la persona te enseñe cómo quiere que hagas una cosa («aprende a…», «cuando te pida X, haz Y»). Si ya existe una con ese nombre, la corrige.",
+                mapOf("nombre" to mapOf("type" to "string"), "cuando" to mapOf("type" to "string", "description" to "en qué situaciones usarla"),
+                    "pasos" to mapOf("type" to "string", "description" to "los pasos, numerados y generales")), listOf("nombre", "pasos")),
+            Herramienta("rutina_crear", "Crea una rutina: algo que harás tú solo cuando se cumpla una condición. Créala cuando la persona lo pida o cuando veas claro que le conviene. El freno sigue valiendo dentro de las rutinas.",
+                mapOf("nombre" to mapOf("type" to "string"),
+                    "tipo" to mapOf("type" to "string", "enum" to listOf("hora", "notificacion", "lugar", "calendario")),
+                    "hora" to mapOf("type" to "string", "description" to "tipo hora: en 24 horas, como 08:30"),
+                    "dias" to mapOf("type" to "array", "items" to mapOf("type" to "integer"), "description" to "tipo hora: 1 = lunes … 7 = domingo; vacío = todos los días"),
+                    "contiene" to mapOf("type" to "string", "description" to "tipo notificacion: texto o aplicación que debe aparecer; tipo calendario: texto del evento (vacío = cualquiera)"),
+                    "lat" to mapOf("type" to "number"), "lon" to mapOf("type" to "number"),
+                    "radio" to mapOf("type" to "integer", "description" to "tipo lugar: metros, de 50 a 5000"),
+                    "lugar" to mapOf("type" to "string", "description" to "tipo lugar: cómo se llama ese sitio"),
+                    "antes" to mapOf("type" to "integer", "description" to "tipo calendario: minutos antes del evento"),
+                    "encargo" to mapOf("type" to "string", "description" to "lo que hay que hacer cuando salte, entero y con nombres: quien lo ejecute no verá esta conversación"),
+                    "nivel" to mapOf("type" to "string", "enum" to Mente.NIVELES, "description" to "avisar: solo contarle; preparar: dejarlo listo; hacer: hacerlo (lo irreversible sigue esperando su sí)"),
+                    "la_pidio_la_persona" to mapOf("type" to "boolean")), listOf("nombre", "tipo", "encargo")),
+            Herramienta("rutinas", "Lista las rutinas que hay, con su id."),
+            Herramienta("rutina_borrar", "Borra una rutina por su id.", mapOf("id" to mapOf("type" to "string")), listOf("id")),
+            Herramienta("recordar", "Guarda UNA cosa en la memoria de JARVIS (una frase autocontenida, con nombres). Úsala cuando la persona te pida recordar algo. Lo demás lo recuerdas solo al terminar, sin usar esta herramienta.",
+                mapOf("texto" to mapOf("type" to "string"), "sobre_la_persona" to mapOf("type" to "boolean", "description" to "true si es sobre quién es o cómo le gustan las cosas; false si es un dato de su mundo")), listOf("texto")),
         )
 
         fun etiquetaPaso(nombre: String, a: Map<String, Any?>): String {
@@ -328,6 +450,16 @@ class Herramientas(
                 "ver_video" -> "Mirar el video ${a["id"]}"
                 "transcribir_video" -> "Escuchar el video ${a["id"]}"
                 "montar_video" -> "Montar el video"
+                "narrar" -> "Grabar la narración"
+                "compartir_video" -> "Compartir el video ${a["id"]}"
+                "notificaciones" -> "Leer las notificaciones"
+                "agenda" -> "Mirar la agenda"
+                "contactos" -> "Buscar a ${a["buscar"]} en los contactos"
+                "ubicacion" -> "Ver dónde estás"
+                "habilidad_guardar" -> "Aprender «${a["nombre"]}»"
+                "rutina_crear" -> "Crear la rutina «${a["nombre"]}»"
+                "rutinas" -> "Ver las rutinas"
+                "rutina_borrar" -> "Borrar una rutina"
                 else -> nombre
             }
         }

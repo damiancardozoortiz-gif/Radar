@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copia de seguridad de Android (12 o superior), a tu Google Drive y al pasar de un teléfono a otro.
+     Solo viaja lo que se incluye aquí: la mente (memoria, habilidades, rutinas, evaluaciones) y los ajustes.
+     Las claves están en otro archivo (jarvis_secretos) que no se incluye, así que nunca salen del teléfono. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <include domain="file" path="mente" />
+        <include domain="sharedpref" path="jarvis.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <include domain="file" path="mente" />
+        <include domain="sharedpref" path="jarvis.xml" />
+    </device-transfer>
+</data-extraction-rules>

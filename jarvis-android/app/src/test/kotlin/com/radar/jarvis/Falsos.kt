@@ -3,7 +3,7 @@ package com.radar.jarvis
 import com.radar.jarvis.nucleo.Elemento
 import com.radar.jarvis.nucleo.ErrorManos
 import com.radar.jarvis.nucleo.Manos
-import com.radar.jarvis.nucleo.Memoria
+import com.radar.jarvis.nucleo.Caja
 import com.radar.jarvis.nucleo.Vista
 
 /** Un teléfono de mentira: un chat de WhatsApp con un campo y, si hay texto, un botón Enviar. */
@@ -53,8 +53,9 @@ class TelefonoFalso : Manos {
     override fun tamano() = 1080 to 2400
 }
 
-class MemoriaFalsa : Memoria {
-    val notas = mutableListOf<String>()
-    override fun guardar(texto: String) { notas += texto }
-    override fun todo() = notas.toList()
+/** La mente guardada en memoria, para las pruebas. */
+class CajaFalsa : Caja {
+    val archivos = mutableMapOf<String, String>()
+    override fun leer(nombre: String) = archivos[nombre].orEmpty()
+    override fun escribir(nombre: String, texto: String) { archivos[nombre] = texto }
 }

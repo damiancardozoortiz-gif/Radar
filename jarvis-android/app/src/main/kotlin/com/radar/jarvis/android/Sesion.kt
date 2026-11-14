@@ -4,8 +4,16 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import com.radar.jarvis.nucleo.Agente
+import com.radar.jarvis.nucleo.Aprendido
+import com.radar.jarvis.nucleo.Evaluacion
 import com.radar.jarvis.nucleo.Herramientas
+import com.radar.jarvis.nucleo.Mente
+import com.radar.jarvis.nucleo.Momento
 import com.radar.jarvis.nucleo.Peticion
+import com.radar.jarvis.nucleo.Reflexion
+import com.radar.jarvis.nucleo.Respuesta
+import com.radar.jarvis.nucleo.Rutina
+import com.radar.jarvis.nucleo.Vivido
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -26,6 +34,8 @@ data class Paso(val n: Int, val texto: String, val estado: String, val detalle: 
 /**
  * Lo que JARVIS está haciendo ahora mismo. Una sola instancia para toda la app: la pantalla principal y el orbe
  * flotante la observan y pintan lo mismo. Todo lo que cambia aquí se avisa en el hilo principal.
+ *
+ * También lleva el pulso de la iniciativa: cada minuto mira si alguna rutina debe saltar.
  */
 object Sesion {
     private val principal = Handler(Looper.getMainLooper())
@@ -33,7 +43,9 @@ object Sesion {
     private val oyentes = CopyOnWriteArraySet<() -> Unit>()
     private var trabajo: Job? = null
     private var agente: Agente? = null
+    private var herramientas: Herramientas? = null
     private var decision: CompletableDeferred<Boolean>? = null
+    private lateinit var ctx: Context
 
     lateinit var almacen: Almacen
         private set
@@ -41,6 +53,9 @@ object Sesion {
         private set
     lateinit var estudio: EstudioAndroid
         private set
+    lateinit var fuentes: FuentesAndroid
+        private set
+    val mente: Mente get() = almacen.mente
 
     @Volatile var estado = Estado.ESPERA; private set
     @Volatile var subtitulo = ""; private set
@@ -48,14 +63,19 @@ object Sesion {
     @Volatile var peticion: Peticion? = null; private set
     @Volatile var pausa = false; private set
     @Volatile var enPrimerPlano = false
+    /** La fecha de la última tarea evaluada que aún puedes votar, o 0. */
+    @Volatile var porVotar = 0L; private set
     val pasos = java.util.Collections.synchronizedList(mutableListOf<Paso>())
 
     val ocupado get() = trabajo?.isActive == true
 
-    fun iniciar(ctx: Context) {
-        almacen = Almacen(ctx.applicationContext)
-        voz = Voz(ctx.applicationContext)
-        estudio = EstudioAndroid(ctx.applicationContext, almacen)
+    fun iniciar(contexto: Context) {
+        ctx = contexto.applicationContext
+        almacen = Almacen(ctx)
+        voz = Voz(ctx)
+        estudio = EstudioAndroid(ctx, almacen)
+        fuentes = FuentesAndroid(ctx, almacen)
+        principal.postDelayed(pulso, 20_000)
     }
 
     fun observar(o: () -> Unit) { oyentes += o }
@@ -69,19 +89,21 @@ object Sesion {
     }
 
     /** Los ajustes cambiaron: el próximo mensaje usa un agente nuevo (y una conversación nueva). */
-    fun reconfigurar() { agente = null }
+    fun reconfigurar() { agente = null; herramientas = null }
 
     fun nuevaConversacion() {
         agente?.olvidarConversacion()
-        pasos.clear(); detalle = ""
+        pasos.clear(); detalle = ""; porVotar = 0
         poner(Estado.ESPERA, "Conversación nueva.")
     }
 
-    private fun agente(): Agente = agente ?: Agente(
-        almacen.ajustes(),
-        Herramientas(ServicioAccesibilidad.manos, almacen, ::pedirPermiso, ::alPaso, estudio = estudio),
-        almacen,
-    ) { nota -> pasos += Paso(0, nota, "nota", ""); avisar() }.also { agente = it }
+    private fun agente(): Agente = agente ?: run {
+        val h = Herramientas(ServicioAccesibilidad.manos, mente, ::pedirPermiso, ::alPaso,
+            alCrearRutina = { r -> almacen.apuntar("RUTINA creada: ${r.nombre} (${r.disparador.frase()})"); programarDespertador() },
+            estudio = estudio, fuentes = fuentes)
+        herramientas = h
+        Agente(almacen.ajustes(), h, mente) { nota -> pasos += Paso(0, nota, "nota", ""); avisar() }.also { agente = it }
+    }
 
     private fun alPaso(n: Int, texto: String, est: String, det: String) {
         synchronized(pasos) {
@@ -99,6 +121,7 @@ object Sesion {
         peticion = p
         almacen.apuntar("PERMISO pedido: ${p.accion} en ${p.donde} (${p.motivo})")
         poner(Estado.ESPERA_SI, "Necesito tu sí: ${p.accion}")
+        if (!enPrimerPlano) Avisador.avisar(ctx, "JARVIS necesita tu sí", p.accion)
         if (almacen.voz) principal.post { voz.decir("Necesito tu sí en pantalla.") }
         val ok = try { withTimeoutOrNull(ESPERA_MAX) { d.await() } ?: false } finally { peticion = null; decision = null }
         almacen.apuntar("PERMISO ${if (ok) "APROBADO" else "rechazado"}: ${p.accion}")
@@ -109,32 +132,91 @@ object Sesion {
     /** Tu respuesta a la tarjeta de permiso. Solo vale tocar el botón. */
     fun decidir(aprobar: Boolean) { decision?.complete(aprobar) }
 
+    /** Lo que le dices o le escribes. */
     fun enviar(texto: String) {
         val t = texto.trim()
         if (t.isEmpty()) return
         if (pausa) return poner(Estado.PAUSA, "Estoy en pausa. Quítala para seguir.")
         if (ocupado) return poner(estado, "Estoy con otra cosa. Espera o pulsa Detener.")
+        lanzar(t, null, null)
+    }
+
+    private fun lanzar(t: String, rutina: Rutina?, motivo: String?) {
         voz.callar()
-        pasos.clear(); detalle = ""
-        almacen.apuntar("TAREA: $t")
-        poner(Estado.PENSANDO, "«$t»")
+        pasos.clear(); detalle = ""; porVotar = 0
+        almacen.apuntar(if (rutina != null) "RUTINA «${rutina.nombre}» salta: $motivo" else "TAREA: $t")
+        poner(Estado.PENSANDO, if (rutina != null) "Rutina «${rutina.nombre}»: $motivo" else "«$t»")
         trabajo = ambito.launch {
+            val fecha = System.currentTimeMillis()
+            val a = agente()
+            herramientas?.nivel = rutina?.nivel ?: "hacer"
             val r = try {
-                agente().correr(t)
+                a.correr(t, rutina?.let { "«${it.nombre}» (nivel ${it.nivel}), porque $motivo" })
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                com.radar.jarvis.nucleo.Respuesta("Algo falló dentro de JARVIS: ${e.javaClass.simpleName}. ${e.message.orEmpty().take(120)}", "fallo", 0)
-            }
-            almacen.apuntar("FIN (${r.estado}, ${r.pasos} pasos): ${r.texto.take(160)}")
+                Respuesta("Algo falló dentro de JARVIS: ${e.javaClass.simpleName}. ${e.message.orEmpty().take(120)}", "fallo", 0)
+            } finally { herramientas?.nivel = "hacer" }
+            almacen.apuntar("FIN (${r.estado}, ${r.pasos} pasos, ~${"%.3f".format(java.util.Locale.US, r.coste)} $): ${r.texto.take(160)}")
             val partes = r.texto.trim().split(Regex("\n\\s*\n"), limit = 2)
             detalle = partes.getOrElse(1) { "" }.trim()
             val decir = partes[0].trim()
+
+            // se apunta cómo fue; la revisión posterior lo afina y aprende de ello
+            val hechos = synchronized(pasos) { pasos.filter { it.n > 0 }.map { "${it.texto} (${it.estado}${if (it.detalle.isNotEmpty()) ": " + it.detalle else ""})" } }
+            mente.evaluar(Evaluacion(fecha, t, r.estado == "terminada", 3, r.pasos, System.currentTimeMillis() - fecha, r.coste, sola = rutina != null))
+            if (r.estado != "fallo" || r.pasos > 0) porVotar = fecha
+            if (almacen.memoriaSola && almacen.hayClave) ambito.launch {
+                revisar(a, Vivido(fecha, t, r.texto, hechos, r.estado == "terminada", rutina != null, r.habilidades, almacen.rutinasSolas))
+            }
+
+            if (rutina != null) Avisador.avisar(ctx, "JARVIS · ${rutina.nombre}", decir)
             if (almacen.voz && !pausa) {
                 poner(Estado.HABLANDO, decir)
                 principal.post { voz.decir(limpiar(decir)) { if (estado == Estado.HABLANDO) poner(Estado.ESPERA) } }
             } else poner(Estado.ESPERA, decir)
         }
+    }
+
+    /** Después de cada turno, sin que nadie lo pida: qué recordar, cómo salió, qué aprender. */
+    private suspend fun revisar(a: Agente, v: Vivido) {
+        val ap: Aprendido = try { Reflexion.revisar(mente, a, v) } catch (e: CancellationException) { throw e } catch (e: Exception) { Aprendido() }
+        val extra = a.cobrarRevision()
+        if (extra > 0) mente.corregir(v.fecha) { it.copy(coste = it.coste + extra) }
+        val notas = buildList {
+            if (ap.recuerdos > 0) add("Recordé ${ap.recuerdos} ${if (ap.recuerdos == 1) "cosa nueva" else "cosas nuevas"}.")
+            ap.leccion?.let { add("Lección: $it") }
+            ap.habilidad?.let { add("Aprendí la habilidad «$it».") }
+            ap.rutina?.let { add("Creé la rutina «${it.nombre}»: ${it.disparador.frase()}. Puedes verla o borrarla en «mente».") }
+        }
+        if (notas.isEmpty()) return
+        notas.forEach { almacen.apuntar("APRENDIDO: $it"); pasos += Paso(0, it, "nota", "") }
+        ap.rutina?.let { programarDespertador(); Avisador.avisar(ctx, "JARVIS creó una rutina", "${it.nombre}: ${it.disparador.frase()}") }
+        avisar()
+    }
+
+    /** Tu voto sobre la última respuesta: pesa más que su propia nota. */
+    fun votar(gusto: Boolean) {
+        val fecha = porVotar.takeIf { it > 0 } ?: return
+        porVotar = 0
+        mente.corregir(fecha) { it.copy(voto = if (gusto) 1 else -1, logrado = if (gusto) it.logrado else false) }
+        almacen.apuntar("VOTO: ${if (gusto) "bien" else "mal"}")
+        poner(estado, if (gusto) "Anotado, gracias." else "Anotado. Dime qué salió mal y lo aprendo.")
+    }
+
+    /** Para lo que esté haciendo: rechaza lo que esperaba permiso y corta la tarea. */
+    fun detener(motivo: String = "Detenido.") {
+        decision?.complete(false)
+        trabajo?.cancel()
+        voz.callar(); voz.dejarDeEscuchar()
+        poner(Estado.ESPERA, motivo)
+    }
+
+    /** Pausa de emergencia: corta todo, tampoco saltan las rutinas, y no acepta nada hasta que la quites. */
+    fun ponerPausa(on: Boolean) {
+        pausa = on
+        if (on) { detener("En pausa. No hago nada hasta que la quites."); almacen.apuntar("PAUSA activada") }
+        else { estado = Estado.ESPERA; subtitulo = "Listo."; avisar() }
     }
 
     /** Los videos o audios que eliges con el botón de adjuntar. */
@@ -146,27 +228,63 @@ object Sesion {
         }
     }
 
-    /** Para lo que esté haciendo: rechaza lo que esperaba permiso y corta la tarea. */
-    fun detener(motivo: String = "Detenido.") {
-        decision?.complete(false)
-        trabajo?.cancel()
-        voz.callar(); voz.dejarDeEscuchar()
-        poner(Estado.ESPERA, motivo)
-    }
-
-    /** Pausa de emergencia: corta todo y no acepta nada hasta que la quites. */
-    fun ponerPausa(on: Boolean) {
-        pausa = on
-        if (on) { detener("En pausa. No hago nada hasta que la quites."); almacen.apuntar("PAUSA activada") }
-        else { estado = Estado.ESPERA; subtitulo = "Listo."; avisar() }
-    }
-
     /** Escucha una frase por el micrófono y la manda. Desde el hilo principal. */
     fun escucharVoz() {
         if (pausa || ocupado) return
         if (estado == Estado.ESCUCHANDO) { voz.dejarDeEscuchar(); return poner(Estado.ESPERA, "") }
         poner(Estado.ESCUCHANDO, "Te escucho…")
         voz.escuchar({ enviar(it) }, { poner(Estado.ESPERA, it) })
+    }
+
+    // ------------------------------------------------------------ iniciativa
+    private val pulso = object : Runnable {
+        override fun run() { latido(); principal.postDelayed(this, 60_000) }
+    }
+    private val enCola = mutableListOf<Triple<Rutina, String, Long>>()      // rutinas que saltaron mientras estaba ocupado
+    @Volatile private var fusibleAvisado = ""
+
+    /** Llegó una notificación: si alguna rutina las espera, se mira enseguida en vez de esperar al minuto. */
+    fun alLlegarAviso() {
+        if (mente.rutinas().any { it.activa && it.disparador.tipo == "notificacion" }) principal.postDelayed({ latido() }, 2_000)
+    }
+
+    fun programarDespertador() = Despertador.programar(ctx, mente.proximaHora(System.currentTimeMillis()))
+
+    /** El pulso de la iniciativa: ¿toca alguna rutina? Se llama cada minuto, al llegar una notificación y al sonar el despertador. */
+    fun latido() {
+        ambito.launch {
+            try {
+                val rutinas = mente.rutinas().filter { it.activa }
+                if (rutinas.isEmpty()) return@launch
+                val ahora = System.currentTimeMillis()
+                val tipos = rutinas.map { it.disparador.tipo }.toSet()
+                val m = Momento(ahora,
+                    avisos = if ("notificacion" in tipos) ServicioNotificaciones.nuevas() else emptyList(),
+                    posicion = if ("lugar" in tipos) fuentes.posicion(conNombre = false) else null,
+                    citas = if ("calendario" in tipos) fuentes.citas(1).orEmpty() else emptyList())
+                synchronized(enCola) {
+                    mente.debidas(m).forEach { enCola += Triple(it.first, it.second, ahora) }
+                    enCola.removeAll { ahora - it.third > COLA_MAX }                 // lo que lleva media hora esperando, ya no viene a cuento
+                }
+                programarDespertador()
+                if (pausa || ocupado) return@launch
+                val siguiente = synchronized(enCola) { enCola.removeFirstOrNull() } ?: return@launch
+                val gastado = mente.gastoSoloHoy(ahora)
+                if (gastado >= almacen.fusible) {                                     // el fusible: hoy ya no hace nada más por su cuenta
+                    val hoy = java.time.LocalDate.now().toString()
+                    if (fusibleAvisado != hoy) {
+                        fusibleAvisado = hoy
+                        almacen.apuntar("FUSIBLE: hoy lleva ~${"%.2f".format(java.util.Locale.US, gastado)} $ por iniciativa; rutinas detenidas hasta mañana")
+                        Avisador.avisar(ctx, "JARVIS detuvo sus rutinas por hoy",
+                            "Hoy ha gastado unos ${"%.2f".format(gastado)} dólares por iniciativa, más que el límite de ${"%.2f".format(almacen.fusible)}. Mañana siguen. Puedes cambiar el límite en Ajustes.")
+                    }
+                    synchronized(enCola) { enCola.clear() }
+                    return@launch
+                }
+                if (!almacen.hayClave) return@launch
+                principal.post { if (!ocupado && !pausa) lanzar(siguiente.first.encargo, siguiente.first, siguiente.second) }
+            } catch (e: CancellationException) { throw e } catch (e: Exception) { almacen.apuntar("FALLO en el pulso de rutinas: ${e.javaClass.simpleName}") }
+        }
     }
 
     /** Cuánto debe latir el orbe ahora: tu voz al escuchar, un pulso al hablar. */
@@ -179,4 +297,5 @@ object Sesion {
     private fun limpiar(s: String) = s.replace(Regex("https?://\\S+"), "").replace(Regex("[*_#`>|\\[\\]]"), "").trim()
 
     private const val ESPERA_MAX = 10 * 60 * 1000L
+    private const val COLA_MAX = 30 * 60 * 1000L
 }
