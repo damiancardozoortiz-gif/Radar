@@ -10,15 +10,17 @@ const VAD_INTERVAL_MS = 50;    // bucle del volumen: setInterval (rAF se para en
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const secs = ms => (ms / 1000).toFixed(1).replace(".", ",") + " s";
 
 const EXAMPLES = [
-  "¿Qué tengo hoy?", "¿Cómo va la semana?", "Planéame el día",
-  "¿Qué pólizas de Logística Delta tenemos?", "¿Quién me ha escrito?",
-  "¿Cuánto nos deja un seguro de vehículo?", "Recuerda que Marta vuelve el lunes",
-  "Busca en internet cuánto sube el IPC y qué me supone",
+  "Mira qué notificaciones tengo en el teléfono", "Escríbele a Ana por WhatsApp que llego a las nueve",
+  "Busca en internet unos auriculares con cancelación de ruido por menos de 100 euros y compáralos",
+  "¿Qué tengo hoy?", "Planéame el día", "¿Quién me ha escrito?", "Recuerda que Marta vuelve el lunes",
 ];
+const HINTS = EXAMPLES.slice(0, 4);
 
-const App = { state: "idle", status: null, conv: (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2)), busy: false };
+const App = { state: "idle", status: null, conv: (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2)),
+  busy: false, task: null, permits: [], seq: 0, canal: "telefono", screens: { telefono: 0, web: 0 }, level: 0 };
 
 // ---------------- avisos ----------------
 let toastTimer = null;
@@ -28,6 +30,11 @@ function toast(msg, bad = false, ms = 6000) {
   clearTimeout(toastTimer); if (ms) toastTimer = setTimeout(() => t.classList.add("hidden"), ms);
 }
 function chip(id, text, cls) { const el = $(id); el.textContent = text; el.className = "chip st " + (cls || ""); }
+async function post(path, body) {
+  const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+  const o = await r.json().catch(() => ({}));
+  return { ok: r.ok, status: r.status, o };
+}
 
 // ---------------- markdown mínimo con [[enlaces]] pulsables ----------------
 function renderMarkdown(md, links) {
@@ -98,51 +105,171 @@ async function buildTop() {
   $("#top-list").onclick = e => { const li = e.target.closest("li"); if (li) openNote(li.dataset.id); };
 }
 
-// ---------------- reactor ----------------
-const REACTOR_LABEL = { idle: "en espera", listening: "escuchando", thinking: "pensando", speaking: "hablando", paused: "en pausa" };
-function setState(s) {
-  App.state = s;
-  $("#reactor-state").textContent = REACTOR_LABEL[s] || s;
+// ---------------- estado y orbe ----------------
+const STATE_LABEL = { idle: "en espera", listening: "escuchando", thinking: "pensando", speaking: "hablando",
+  acting: "actuando", waiting: "espera tu sí", paused: "en pausa" };
+function orbState() {
+  if (App.paused) return "paused";
+  if (App.permits.length) return "waiting";
+  if (App.state === "speaking" || App.state === "listening") return App.state;
+  if (App.state === "thinking") return "thinking";
+  if (App.task && App.task.estado === "en curso") return "acting";
+  return "idle";
 }
-function drawReactor() {
-  const c = $("#reactor"), ctx = c.getContext("2d"), dpr = window.devicePixelRatio || 1;
-  if (c.width !== 200 * dpr) { c.width = 200 * dpr; c.height = 200 * dpr; }
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, 200, 200);
-  const t = performance.now() / 1000, s = App.state;
-  const speed = { idle: 0.15, listening: 0.6, thinking: 1.6, speaking: 0.9 }[s] || 0.15;
-  const active = s !== "idle";
-  const lvl = App.level || 0;
-  const rings = [[88, 72, 4, 1], [74, 48, 7, -1.4], [60, 36, 3, 0.8], [47, 24, 5, -2]];
-  ctx.translate(100, 100);
-  rings.forEach(([r, n, len, dir], i) => {
-    ctx.save(); ctx.rotate(t * speed * dir * 0.6 + i);
-    ctx.strokeStyle = active ? `rgba(92,200,214,${0.35 + 0.12 * i})` : `rgba(140,152,165,${0.18 + 0.06 * i})`;
-    ctx.lineWidth = i % 2 ? 1.5 : 1;
-    for (let k = 0; k < n; k++) {
-      if (i === 1 && k % 6 === 0) continue;
-      const a = (k / n) * Math.PI * 2;
-      const extra = s === "listening" && i === 0 ? lvl * 14 * (0.5 + 0.5 * Math.sin(k * 1.7 + t * 8)) : 0;
-      ctx.beginPath();
-      ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r);
-      ctx.lineTo(Math.cos(a) * (r - len - extra), Math.sin(a) * (r - len - extra));
-      ctx.stroke();
-    }
-    ctx.restore();
-  });
-  const pulse = s === "speaking" ? 0.5 + 0.5 * Math.sin(t * 9) : s === "thinking" ? 0.5 + 0.5 * Math.sin(t * 4) : 0.3;
-  ctx.strokeStyle = active ? `rgba(92,200,214,${0.25 + 0.35 * pulse})` : "rgba(140,152,165,0.25)";
-  ctx.beginPath(); ctx.arc(0, 0, 32, 0, Math.PI * 2); ctx.stroke();
-  ctx.fillStyle = active ? "#5cc8d6" : "#9aa4ae";
-  ctx.font = "600 10px ui-monospace, Menlo, Consolas, monospace";
-  ctx.textAlign = "center"; ctx.textBaseline = "middle";
-  ctx.fillText("J.A.R.V.I.S.", 0, 0);
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  requestAnimationFrame(drawReactor);
+function paint() {
+  const s = orbState();
+  document.body.dataset.state = s;
+  Orb.state = s;
+  $("#state-label").textContent = STATE_LABEL[s] || s;
+  $("#btn-stop").classList.toggle("hidden", !(App.task && App.task.estado === "en curso"));
+}
+function setState(s) { App.state = s; paint(); }
+function said(text) { $("#said").textContent = text || ""; }
+setInterval(() => {   // el orbe late con tu voz al escuchar y con la suya al hablar
+  if (App.state === "listening") Orb.level = App.level || 0;
+  else if (App.state === "speaking") Orb.level = Voice.level();
+  else Orb.level = 0;
+}, 40);
+
+// ---------------- actividad: lo que hace, paso a paso ----------------
+const ICONS = {
+  telefono: '<svg viewBox="0 0 16 16"><rect x="4" y="1.5" width="8" height="13" rx="1.8"/><path d="M7 12.4h2"/></svg>',
+  web: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2"/><path d="M1.8 8h12.4M8 1.8c2.2 2 2.2 10.400 0 12.4M8 1.8c-2.2 2-2.2 10.4 0 12.4"/></svg>',
+  otro: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.2"/></svg>',
+};
+function taskStart(t) {
+  App.task = { id: t.id, texto: t.texto, estado: "en curso" };
+  $("#steps").innerHTML = "";
+  $("#task-text").textContent = t.texto; $("#task-text").classList.remove("hidden");
+  $("#activity-empty").classList.add("hidden");
+  $("#task-meta").textContent = "en curso"; $("#task-meta").style.color = "";
+  $("#answer").classList.add("hidden");
+  paint();
+}
+function stepEvent(e) {
+  let li = document.getElementById("step-" + e.n);
+  if (!li) {
+    li = document.createElement("li"); li.id = "step-" + e.n;
+    li.innerHTML = `<span class="ic">${ICONS[e.canal] || ICONS.otro}</span><span class="tx"></span><span class="ms"></span>`;
+    $("#steps").appendChild(li);
+  }
+  li.className = e.estado === "en curso" ? "run" : e.estado === "hecho" ? "done" : "fail";
+  li.querySelector(".tx").innerHTML = esc(e.texto) + (e.detalle ? `<span class="sub">${esc(e.detalle)}</span>` : "");
+  li.querySelector(".ms").textContent = e.ms != null ? secs(e.ms) : "";
+  $("#steps").scrollTop = $("#steps").scrollHeight;
+  if (e.estado === "en curso" && !App.permits.length && App.state !== "speaking") said(e.texto + "…");
+}
+function stepNote(text, cls) {
+  const li = document.createElement("li"); li.className = cls || "note"; li.textContent = text;
+  $("#steps").appendChild(li); $("#steps").scrollTop = $("#steps").scrollHeight;
+}
+function taskEnd(e, quiet) {
+  if (App.task) App.task.estado = e.estado;
+  const label = { terminada: "terminada", detenida: "detenida", fallo: "no se pudo" }[e.estado] || e.estado;
+  $("#task-meta").textContent = `${label} · ${e.pasos} pasos · ${secs(e.ms)}`;
+  $("#task-meta").style.color = e.estado === "terminada" ? "" : "var(--bad)";
+  stepNote(e.decir, "end");
+  showAnswer({ tool: "tarea", brain: "claude", ms: e.ms, say: e.decir, detail: e.detalle }, App.task && App.task.texto);
+  paint();
+  if (!quiet) sayAloud(e.decir);
+}
+
+// ---------------- vista: lo que ve en el teléfono y en el navegador ----------------
+function setCanal(c) {
+  App.canal = c;
+  for (const k of ["telefono", "web"]) { $("#tab-" + k).classList.toggle("on", k === c); if (k === c) $("#tab-" + k).classList.remove("fresh"); }
+  $("#screen").className = "screen " + c;
+  renderScreen();
+}
+function renderScreen(toque) {
+  const c = App.canal, v = App.screens[c], st = App.status || {}, img = $("#screen-img");
+  if (v) { img.src = `/api/screen?canal=${c}&v=${v}`; img.classList.remove("hidden"); $("#screen-empty").classList.add("hidden"); }
+  else {
+    img.classList.add("hidden"); $("#screen-empty").classList.remove("hidden");
+    const ph = st.phone || {}, br = st.browser || {};
+    $("#screen-empty").textContent = c === "telefono"
+      ? (ph.conectado ? "Teléfono conectado. Pulsa ⟳ para ver su pantalla." : "Sin teléfono: " + (ph.detalle || "conéctalo por USB con la depuración activada") + ".")
+      : (br.disponible ? "El navegador de JARVIS se abre cuando lo necesita." : "No encuentro Chrome, Chromium ni Edge en esta computadora.");
+  }
+  const tap = $("#tap");
+  if (toque && v) {
+    tap.style.left = (toque.fx * 100) + "%"; tap.style.top = (toque.fy * 100) + "%";
+    tap.classList.remove("hidden"); tap.style.animation = "none"; void tap.offsetWidth; tap.style.animation = "";
+  } else if (!toque) tap.classList.add("hidden");
+  viewMeta();
+}
+function viewMeta() {
+  const st = App.status || {}, ph = st.phone || {};
+  $("#view-meta").textContent = App.canal === "telefono"
+    ? (ph.conectado ? `${ph.modelo} · ${ph.bateria ?? "?"} %${ph.cargando ? " ⚡" : ""}${ph.bloqueado ? " · BLOQUEADO" : ""} · ${App.titles.telefono || ph.app || ""}` : "sin conexión")
+    : (App.titles.web || "sin página abierta");
+}
+App.titles = { telefono: "", web: "" };
+function screenEvent(e, quiet) {
+  App.screens[e.canal] = e.v; App.titles[e.canal] = e.titulo || App.titles[e.canal];
+  if (quiet) return;
+  if (e.canal !== App.canal) { if (App.task && App.task.estado === "en curso") setCanal(e.canal); else $("#tab-" + e.canal).classList.add("fresh"); }
+  if (e.canal === App.canal) renderScreen(e.toque);
+}
+$("#tab-telefono").onclick = () => setCanal("telefono");
+$("#tab-web").onclick = () => setCanal("web");
+$("#view-refresh").onclick = async () => {
+  const r = await post("/api/look", { canal: App.canal });
+  if (!r.ok) toast(r.o.error || "No pude mirar.", true);
+};
+
+// ---------------- permisos: lo que espera tu sí ----------------
+function renderPermits(list, quiet) {
+  const before = new Set(App.permits.map(a => a.id));
+  App.permits = list || [];
+  const a = App.permits[0];
+  $("#permit").classList.toggle("hidden", !a);
+  if (a) {
+    $("#permit").dataset.aid = a.id;
+    $("#permit-action").textContent = a.accion;
+    $("#permit-why").textContent = `En ${a.donde || (a.canal === "web" ? "el navegador" : "el teléfono")} · ${a.motivo}.`;
+    $("#permit-extra").textContent = a.text || "";
+    $("#permit-more").textContent = App.permits.length > 1 ? `y ${App.permits.length - 1} más en espera` : "Solo vale tu clic: decir «sí» no aprueba nada.";
+    if (a.canal && a.canal !== App.canal) setCanal(a.canal);
+    if (!before.has(a.id) && !quiet) { said("Necesito tu sí: " + a.accion); sayAloud("Necesito tu sí en pantalla."); }
+  }
+  paint();
+}
+async function decidePermit(decision) {
+  const id = $("#permit").dataset.aid; if (!id) return;
+  const r = await post("/api/approve", { id, decision });
+  if (!r.ok) toast("No se pudo registrar: " + (r.o.error || r.status), true);
+  else renderPermits(App.permits.filter(a => a.id !== id), true);
+}
+$("#permit-yes").onclick = () => decidePermit("aprobar");
+$("#permit-no").onclick = () => decidePermit("descartar");
+
+// ---------------- eventos del servidor (espera larga) ----------------
+function handle(e, quiet) {
+  if (e.tipo === "tarea") taskStart(e);
+  else if (e.tipo === "paso") stepEvent(e);
+  else if (e.tipo === "nota") stepNote(e.texto);
+  else if (e.tipo === "guardado") stepNote("Guardado en la memoria: " + e.texto);
+  else if (e.tipo === "pantalla") screenEvent(e, quiet);
+  else if (e.tipo === "permiso") renderPermits(e.pendientes, quiet);
+  else if (e.tipo === "fin") taskEnd(e, quiet);
+}
+async function eventLoop() {
+  for (;;) {
+    try {
+      const r = await fetch("/api/events?desde=" + App.seq);
+      if (!r.ok) throw new Error(r.status);
+      const d = await r.json();
+      for (const e of d.eventos) { App.seq = e.seq; handle(e, false); }
+      if (d.ultimo < App.seq) App.seq = 0;                      // el servidor se reinició
+    } catch (_) { await new Promise(r => setTimeout(r, 2000)); }
+  }
 }
 
 // ---------------- conversación ----------------
 const TOOL_LABEL = { conversacion: "conversación", buscar_en_mi_cerebro: "mis archivos", investigar_en_la_web: "internet",
-  leer_correo: "correo", parte_del_dia: "parte del día", recordar: "memoria", planear_el_dia: "plan" };
+  leer_correo: "correo", parte_del_dia: "parte del día", recordar: "memoria", planear_el_dia: "plan", tarea: "tarea autónoma",
+  autorizacion: "permiso", pausa: "pausa" };
 
 function renderCard(card) {
   if (!card) return "";
@@ -158,10 +285,9 @@ function renderCard(card) {
 }
 
 function showAnswer(o, question) {
-  const secs = (o.ms / 1000).toFixed(1).replace(".", ",");
-  const who = o.brain === "claude" ? "claude" : "RESPALDO · sin cerebro";
-  $("#answer-meta").textContent = `${TOOL_LABEL[o.tool] || o.tool} · ${who} · ${secs} s`;
-  $("#answer-meta").style.color = o.brain === "claude" ? (o.ms > 6000 && o.tool !== "investigar_en_la_web" ? "var(--warn)" : "") : "var(--bad)";
+  const who = o.brain === "claude" ? "claude" : o.brain === "servidor" || o.brain === "pausa" ? "servidor" : "RESPALDO · sin cerebro";
+  $("#answer-meta").textContent = `${TOOL_LABEL[o.tool] || o.tool} · ${who} · ${secs(o.ms || 0)}`;
+  $("#answer-meta").style.color = who === "RESPALDO · sin cerebro" ? "var(--bad)" : (o.ms > 6000 && !["investigar_en_la_web", "tarea"].includes(o.tool) ? "var(--warn)" : "");
   $("#answer-say").textContent = o.say || "";
   let html = "";
   if (question) html += `<div class="src">Tú: ${esc(question)}</div>`;
@@ -171,22 +297,22 @@ function showAnswer(o, question) {
   html += renderCard(o.card);
   $("#answer-card").innerHTML = html;
   $("#answer").classList.remove("hidden");
+  said(o.say);
   if (o.warning) toast(o.warning, o.brain !== "claude", 9000);
 }
-// ---------------- autorizaciones humanas ----------------
+// ---------------- borradores: esperan tu sí y los envías tú ----------------
 function approvalHtml(a) {
   const done = a.state !== "pendiente";
   return `<div class="approval ${done ? "done" : ""}" data-aid="${esc(a.id)}">
-    <div class="state">${done ? esc(a.state.toUpperCase() + " · " + (a.result || "")) : "BORRADOR · espera tu sí. JARVIS nunca envía nada."}</div>
+    <div class="state">${done ? esc(a.state.toUpperCase() + " · " + (a.result || "")) : "BORRADOR · espera tu sí. Aprobar lo copia; lo envías tú."}</div>
     ${done ? "" : `<div class="row"><button class="pill" data-decision="aprobar">Aprobar</button><button class="pill" data-decision="descartar">Descartar</button></div>`}
   </div>`;
 }
 document.addEventListener("click", async e => {
   const b = e.target.closest(".approval button[data-decision]"); if (!b) return;
   const box = b.closest(".approval");
-  const r = await fetch("/api/approve", { method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id: box.dataset.aid, decision: b.dataset.decision }) });
-  const a = await r.json();
+  const r = await post("/api/approve", { id: box.dataset.aid, decision: b.dataset.decision });
+  const a = r.o;
   if (!r.ok) { toast("No se pudo registrar: " + (a.error || r.status), true); return; }
   box.outerHTML = approvalHtml(a);
   if (a.state === "aprobado") {
@@ -202,43 +328,37 @@ function showPause(on) {
   $("#pause-banner").classList.toggle("hidden", !App.paused);
   $("#btn-pause").classList.toggle("on", App.paused);
   $("#btn-pause").textContent = App.paused ? "en pausa" : "pausa";
-  if (App.paused) {
-    if (typeof stopSpeaking === "function") { stopSpeaking(); stopConversation(); }
-    setState("paused");
-  } else if (App.state === "paused") setState("idle");
+  if (App.paused) { stopSpeaking(); stopConversation(); }
+  paint();
 }
 async function setPause(on) {
   if (on) showPause(true); // corta en el navegador ya, sin esperar al servidor
-  try {
-    const r = await fetch("/api/pause", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on }) });
-    const st = await r.json(); showPause(st.on);
-  } catch (e) { toast("No pude hablar con el servidor para cambiar la pausa.", true); }
+  try { const r = await post("/api/pause", { on }); showPause(r.o.on); }
+  catch (e) { toast("No pude hablar con el servidor para cambiar la pausa.", true); }
 }
 $("#btn-pause").onclick = () => setPause(!App.paused);
 $("#btn-unpause").onclick = () => setPause(false);
-
+$("#btn-stop").onclick = async () => { await post("/api/task/stop"); };
 $("#answer-close").onclick = () => $("#answer").classList.add("hidden");
 
 async function ask(text, tool) {
   if (App.busy) return;
   if (App.paused && !(text && /^\s*pausa\s*$/i.test(text))) { toast("JARVIS está en pausa. Quítala para seguir."); return; }
-  App.busy = true; setState("thinking");
+  App.busy = true; setState("thinking"); said(text ? "«" + text + "»" : "");
   try {
     if (text && !tool) {
       const r = await (await fetch("/api/route?q=" + encodeURIComponent(text))).json();
       if (r.tool === "investigar_en_la_web") toast("Buscando en internet: tarda entre 15 y 40 segundos.", false, 40000);
     }
-    const res = await fetch("/api/ask", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: text || "", tool: tool || null, conv: App.conv }) });
-    const o = await res.json();
+    const res = await post("/api/ask", { text: text || "", tool: tool || null, conv: App.conv });
+    const o = res.o;
     if (!res.ok) throw new Error(o.error || res.status);
     if (o.tool === "investigar_en_la_web" && !o.warning) $("#toast").classList.add("hidden");
-    showAnswer(o, text);
+    if (o.task) { said(o.say); if (o.warning) toast(o.warning, true, 9000); } else showAnswer(o, text);
     if (o.saved) refreshStatus();
     if (o.paused) showPause(true);
-    App.last = o;
     App.busy = false;
-    if (window.onAnswer && !o.paused) await window.onAnswer(o); // voz
+    if (!o.paused) await sayAloud(o.say);
   } catch (e) {
     toast("Error del servidor: " + e.message, true);
   } finally {
@@ -260,18 +380,42 @@ $("#btn-memory").onclick = async () => {
   $("#answer-say").textContent = ""; $("#answer-card").innerHTML = renderCard(o.card);
   $("#answer").classList.remove("hidden");
 };
+$("#hints").innerHTML = HINTS.map(h => `<li>${esc(h)}</li>`).join("");
+$("#hints").onclick = e => { const li = e.target.closest("li"); if (li) ask(li.textContent); };
+
+// ---------------- mapa de notas (se carga la primera vez que lo abres) ----------------
+$("#btn-map").onclick = async () => {
+  const on = !document.body.classList.contains("mapa");
+  document.body.classList.toggle("mapa", on); $("#btn-map").classList.toggle("on", on);
+  if (on && !App.graphReady) {
+    App.graphReady = true;
+    try {
+      const graph = await (await fetch("/api/graph")).json();
+      Graph.init($("#graph"), graph);
+      Graph.onClick = n => openNote(n.id, false);
+      buildFilters(App.status.by_type); buildTop();
+    } catch (e) { toast("No pude cargar el mapa.", true); }
+  }
+};
 
 async function refreshStatus() {
   try {
     const st = await (await fetch("/api/status")).json();
+    App.status = st;
     if (st.pause && !!st.pause.on !== !!App.paused) showPause(st.pause.on);
     const b = st.brain || {};
     const map = { listo: ["cerebro: listo", "ok"], calentando: ["cerebro: calentando…", "warn"], arrancando: ["cerebro: arrancando…", "warn"],
                   respaldo: ["cerebro: RESPALDO", "bad"], "no disponible": ["cerebro: NO DISPONIBLE", "bad"] };
     const [txt, cls] = map[b.brain] || ["cerebro: " + b.brain, ""];
-    chip("#st-brain", txt + (b.last_ms ? ` · ${(b.last_ms / 1000).toFixed(1).replace(".", ",")} s` : ""), cls);
+    chip("#st-brain", txt + (b.last_ms ? ` · ${secs(b.last_ms)}` : ""), cls);
     $("#st-brain").title = b.detail || "";
-    if (b.brain === "no disponible" && !App.warnedBrain) { App.warnedBrain = true; toast("El cerebro no está disponible: " + (b.detail || "") + ". Funciono en modo respaldo.", true, 0); }
+    const ph = st.phone || {}, br = st.browser || {};
+    chip("#st-phone", ph.conectado ? `teléfono: ${ph.bateria ?? "?"} %${ph.bloqueado ? " · bloqueado" : ""}` : (ph.disponible ? "teléfono: sin conectar" : "teléfono: falta adb"), ph.conectado ? "ok" : "warn");
+    $("#st-phone").title = ph.conectado ? `${ph.modelo} · Android ${ph.android}` : (ph.detalle || "");
+    chip("#st-web", br.disponible ? (br.abierto ? "navegador: abierto" : "navegador: listo") : "navegador: no hay", br.disponible ? (br.abierto ? "ok" : "") : "bad");
+    for (const c of ["telefono", "web"]) if (st.screens && st.screens[c].v > App.screens[c]) { App.screens[c] = st.screens[c].v; if (c === App.canal) renderScreen(); }
+    if (!App.screens[App.canal]) renderScreen(); else viewMeta();
+    if (b.brain === "no disponible" && !App.warnedBrain) { App.warnedBrain = true; toast("El cerebro no está disponible: " + (b.detail || "") + ". Funciono en modo respaldo y no puedo actuar.", true, 0); }
     if (b.brain === "listo" && App.warnedBrain) { App.warnedBrain = false; $("#toast").classList.add("hidden"); }
   } catch (e) { chip("#st-brain", "servidor: sin conexión", "bad"); }
 }
@@ -379,6 +523,7 @@ async function onRecorded() {
   $("#q").value = ""; $("#q").placeholder = "«" + text + "»";
   setState("idle");
   await ask(text);
+  if (Mic.conversation && !App.busy && App.state === "idle") startListening();
 }
 
 function finishTurn() {
@@ -401,7 +546,16 @@ function stopConversation() {
 }
 
 // ---------------- voz: hablar ----------------
-const Voice = { audio: null, muted: false, ok: true };
+const Voice = { audio: null, muted: false, ok: true, analyser: null, buf: null, queue: Promise.resolve(),
+  level() {
+    if (!this.audio) return 0;
+    if (this.analyser) {
+      this.analyser.getFloatTimeDomainData(this.buf);
+      let s = 0; for (let i = 0; i < this.buf.length; i++) s += this.buf[i] * this.buf[i];
+      return Math.min(1, Math.sqrt(s / this.buf.length) * 5);
+    }
+    return 0.35 + 0.3 * Math.sin(performance.now() / 90);   // sin analizador: un latido
+  } };
 function markVoice(err) {
   Voice.ok = false;
   chip("#st-voice", "voz: NO DISPONIBLE", "bad"); $("#st-voice").title = err || "";
@@ -427,6 +581,14 @@ async function speak(text) {
   if (Mic.stream) chip("#st-mic", "micrófono: sordo mientras hablo", "warn");
   return new Promise(resolve => {
     const a = Voice.audio = new Audio(url);
+    Voice.analyser = null;
+    if (Mic.ctx && Mic.ctx.state === "running") {   // el orbe late con su voz
+      try {
+        const src = Mic.ctx.createMediaElementSource(a);
+        Voice.analyser = Mic.ctx.createAnalyser(); Voice.analyser.fftSize = 512; Voice.buf = new Float32Array(512);
+        src.connect(Voice.analyser); Voice.analyser.connect(Mic.ctx.destination);
+      } catch (_) { Voice.analyser = null; }
+    }
     a.onended = a.onerror = () => { URL.revokeObjectURL(url); Voice.audio = null; resolve(true); };
     setState("speaking");
     a.play().catch(err => {
@@ -438,12 +600,16 @@ async function speak(text) {
   });
 }
 
-window.onAnswer = async o => {
-  await speak(o.say);
-  if (App.paused) return;
-  setState("idle");                                // siempre vuelve a "en espera"
-  if (Mic.conversation) startListening();           // modo conversación: vuelve a escuchar solo
-};
+// Todo lo que JARVIS dice en voz alta pasa por aquí, de uno en uno; al acabar vuelve a escuchar si estabais hablando.
+function sayAloud(text) {
+  Voice.queue = Voice.queue.then(async () => {
+    await speak(text);
+    if (App.paused) return;
+    if (App.state === "speaking") setState("idle");
+    if (Mic.conversation && !App.busy) startListening();
+  }).catch(() => {});
+  return Voice.queue;
+}
 
 // ---------------- botones y teclas ----------------
 $("#btn-mic").onclick = () => {
@@ -458,6 +624,7 @@ $("#btn-mute").onclick = () => {
 };
 document.addEventListener("keydown", e => {
   if (e.target.tagName === "INPUT" && e.key !== "Escape") return;
+  if (e.target.tagName === "BUTTON" && (e.code === "Space" || e.key === "Enter")) return;   // un botón enfocado se pulsa él
   if (e.key === "p" || e.key === "P") { setPause(!App.paused); return; }
   if (e.key === "Escape") { stopSpeaking(); stopConversation(); if (!App.paused) setState("idle"); }
   else if (e.code === "Space") {
@@ -474,6 +641,7 @@ $("#q").placeholder = EXAMPLES[0];
 
 // ---------------- arranque ----------------
 async function boot() {
+  Orb.init($("#orb"));
   try {
     const st = await (await fetch("/api/status")).json();
     App.status = st;
@@ -481,21 +649,24 @@ async function boot() {
     $("#mode").textContent = st.mode === "demo" ? "DEMO · hoy " + st.today : "DATOS REALES";
     $("#mode").className = "chip " + (st.mode === "demo" ? "demo" : "");
     $("#counts").textContent = `${st.notes} notas · ${st.edges} enlaces`;
-    if (st.skipped.length) toast((st.skipped.length === 1 ? "Se saltó 1 archivo: " : `Se saltaron ${st.skipped.length} archivos: `) + st.skipped.map(s => s[0].split("/").pop() + " (" + s[1] + ")").join(", "), false, 9000);
-    const graph = await (await fetch("/api/graph")).json();
-    Graph.init($("#graph"), graph);
-    Graph.onClick = n => openNote(n.id, false);
-    buildFilters(st.by_type);
-    buildTop();
+    // Lo que pasó antes de abrir esta página: se repinta la última tarea, sin volver a decirla en voz alta.
+    const d = await (await fetch("/api/events?desde=-1")).json();
+    let from = 0; d.eventos.forEach((e, i) => { if (e.tipo === "tarea") from = i; });
+    for (const e of d.eventos.slice(from)) handle(e, true);
+    App.seq = d.ultimo;
+    if (st.task && st.task.estado !== "en curso" && App.task) App.task.estado = st.task.estado;
+    renderPermits((st.approvals || []).filter(a => a.kind === "accion"), true);
   } catch (e) {
     toast("No hay conexión con el servidor de JARVIS. ¿Está arrancado ./jarvis.sh?", true, 0);
   }
-  fetch("/api/reset", { method: "POST", body: JSON.stringify({ conv: App.conv }) }).catch(() => {});
-  refreshStatus();
+  post("/api/reset", { conv: App.conv }).catch(() => {});
+  await refreshStatus();
+  setCanal(App.screens.telefono || !App.screens.web ? "telefono" : "web");
   chip("#st-mic", window.MediaRecorder ? "micrófono: pulsa para hablar" : "micrófono: sin soporte", window.MediaRecorder ? "" : "bad");
   const v = (App.status && App.status.voice) || {};
-  if (!v.configured) { Voice.ok = false; chip("#st-voice", "voz: sin clave", "bad"); toast("La voz no está configurada: falta ELEVENLABS_API_KEY en .env. Funciono por escrito.", true, 9000); }
+  if (!v.configured) { Voice.ok = false; chip("#st-voice", "voz: sin clave", "bad"); }
   else chip("#st-voice", "voz: lista", "");
-  requestAnimationFrame(drawReactor);
+  paint();
+  eventLoop();
 }
 boot();
