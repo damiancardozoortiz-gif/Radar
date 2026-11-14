@@ -1,17 +1,20 @@
 package com.radar.jarvis.nucleo
 
-/** Un video o un audio que JARVIS puede usar: adjuntado por ti, de la galería o montado por él. */
+/** Una narración y cuándo se dice cada frase (texto, segundo inicial, segundo final): para poner rótulos al ritmo de la voz. */
+data class Narracion(val medio: Medio, val frases: List<Triple<String, Double, Double>>)
+
+/** Un video, un audio o una imagen que JARVIS puede usar: adjuntado por ti, de la galería o hecho por él. */
 data class Medio(
     val id: String,
     val nombre: String,
-    val tipo: String,               // video o audio
+    val tipo: String,               // video, audio o imagen
     val duracionMs: Long,
     val ancho: Int = 0,
     val alto: Int = 0,
     val fecha: String = "",
     val origen: String = "adjunto",  // adjunto, galería o montaje
 ) {
-    fun linea(): String = "$id · $tipo · ${Montaje.reloj(duracionMs)}" + (if (tipo == "video") " · ${ancho}×$alto" else "") +
+    fun linea(): String = "$id · $tipo" + (if (tipo != "imagen") " · ${Montaje.reloj(duracionMs)}" else "") + (if (tipo != "audio") " · ${ancho}×$alto" else "") +
         " · $origen" + (if (fecha.isNotEmpty()) " · $fecha" else "") + " · «$nombre»"
 }
 
@@ -40,14 +43,43 @@ interface Estudio {
     fun medios(): List<Medio>
     /** Una hoja de contactos (JPEG): `cuadros` fotogramas repartidos entre desdeMs y hastaMs, cada uno con su minuto y segundo. */
     fun hojaDeContactos(id: String, desdeMs: Long, hastaMs: Long, cuadros: Int): ByteArray
+    /** Una copia ligera (JPEG) de una imagen, para que JARVIS la vea. */
+    fun mirarImagen(id: String): ByteArray
     /** Lo que se dice en el video, con marcas de tiempo. Lanza ErrorManos si no se puede transcribir. */
     suspend fun transcribir(id: String): String
     /** Convierte un guion en una narración hablada y la deja como un audio más. Lanza ErrorManos si no se puede. */
-    suspend fun narrar(texto: String): Medio
+    suspend fun narrar(texto: String): Narracion
+    /** Pinta una escena en un instante y la guarda como imagen. Devuelve la imagen nueva y una copia ligera para que JARVIS la vea. */
+    suspend fun dibujar(guion: Guion, instante: Double, nombre: String): Pair<Medio, ByteArray>
+    /** Pinta el guion fotograma a fotograma y lo guarda como video (sin sonido). `progreso` recibe de 0 a 100. */
+    suspend fun animar(guion: Guion, nombre: String, progreso: (Int) -> Unit): Medio
     /** Abre el menú de compartir del teléfono con ese video, hacia la aplicación indicada si está instalada. */
     fun compartir(id: String, app: String)
     /** Exporta el montaje y devuelve el video nuevo. `progreso` recibe de 0 a 100. */
     suspend fun montar(plan: Plan, progreso: (Int) -> Unit): Medio
+}
+
+/** Agrupa las letras con tiempo que devuelve la voz en frases cortas, para los rótulos. */
+object Frases {
+    fun de(letras: List<String>, inicios: List<Double>, finales: List<Double>, maxPalabras: Int = 7): List<Triple<String, Double, Double>> {
+        val salida = mutableListOf<Triple<String, Double, Double>>()
+        val frase = StringBuilder(); var t0 = -1.0; var t1 = 0.0; var palabras = 0
+        fun cerrar() { if (frase.isNotBlank()) salida += Triple(frase.toString().trim(), t0, t1); frase.clear(); t0 = -1.0; palabras = 0 }
+        for (i in letras.indices) {
+            val c = letras[i]
+            if (c.isBlank()) {
+                if (frase.isNotEmpty() && !frase.endsWith(" ")) { palabras++; frase.append(' ') }
+                if (palabras >= maxPalabras) cerrar()
+                continue
+            }
+            if (t0 < 0) t0 = inicios.getOrElse(i) { t1 }
+            t1 = finales.getOrElse(i) { t1 }
+            frase.append(c)
+            if (c in listOf(".", "!", "?", ";", ":") || (c == "," && palabras >= 4)) cerrar()
+        }
+        cerrar()
+        return salida
+    }
 }
 
 object Montaje {
@@ -77,7 +109,7 @@ object Montaje {
             val c = crudo as? Map<*, *> ?: throw ErrorManos("el trozo ${i + 1} no es válido")
             val id = c["id"]?.toString().orEmpty()
             val m = porId[id] ?: throw ErrorManos("el trozo ${i + 1} usa «$id», que no está entre los medios disponibles")
-            if (m.tipo != "video") throw ErrorManos("«$id» es un audio: como trozo solo valen videos")
+            if (m.tipo != "video") throw ErrorManos("«$id» es ${if (m.tipo == "audio") "un audio" else "una imagen"}: como trozo solo valen videos (una imagen se convierte en video con crear_video)")
             val desde = ((segundos(c["desde"]) ?: 0.0) * 1000).toLong().coerceAtLeast(0)
             val hasta = (segundos(c["hasta"])?.let { (it * 1000).toLong() } ?: m.duracionMs).coerceAtMost(m.duracionMs)
             if (desde >= m.duracionMs) throw ErrorManos("el trozo ${i + 1} empieza en ${reloj(desde)}, pero «$id» dura ${reloj(m.duracionMs)}")

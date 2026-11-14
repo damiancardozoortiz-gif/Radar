@@ -4,6 +4,8 @@ JARVIS entero dentro del teléfono, sin computadora. Le hablas o le escribes y *
 
 Desde la versión 2.0 además **aprende y toma la iniciativa**: recuerda solo lo importante, se evalúa después de cada tarea, aprende habilidades y crea rutinas que ejecuta por su cuenta.
 
+Desde la 2.1 **crea, estudia y se conecta**: dibuja sus propias imágenes y anima sus propios videos escribiendo código, construye una biblioteca de conocimiento que luego consulta y aplica, y usa servicios externos a través de puentes.
+
 - **Autónomo, con freno.** Abrir, buscar, leer, rellenar y preparar lo hace solo. Enviar, pagar, comprar, borrar, publicar, llamar o instalar se para y espera a que toques **Aprobar**. Nunca escribe contraseñas ni datos de tarjeta.
 - **Piensa con Claude** a través de la API de Anthropic, con tu propia clave.
 - **Voz gratis:** usa el dictado y la voz del propio Android.
@@ -77,7 +79,39 @@ Todo lo que aprende se ve, se corrige y se borra en **mente** (arriba, en la pan
 
 **Copia en la nube.** La memoria, las habilidades, las rutinas y las evaluaciones entran en la copia de seguridad de Android, que las sube a tu Google Drive. Requiere tener activada *Ajustes → Google → Copia de seguridad*. Se actualiza más o menos una vez al día, con el teléfono cargando y en Wi-Fi, y se recupera al reinstalar JARVIS o al estrenar teléfono. Las claves de Claude y ElevenLabs no viajan: hay que volver a ponerlas.
 
-## 5. Editar video
+## 5. Lo nuevo de la 2.1
+
+### Imágenes y videos hechos por él
+
+JARVIS no usa ningún generador de imágenes de pago: **dibuja escribiendo código**. Describe la escena con capas (textos, rectángulos, círculos, líneas, trazados libres como los de SVG, imágenes) y la app la pinta en el teléfono. Con movimiento, eso mismo se convierte en video.
+
+- «Hazme una portada para un video sobre agujeros negros.»
+- «Haz un video vertical de 30 segundos que explique cómo funciona una impresora, con voz y rótulos.»
+- «Convierte esta foto en un video con un zoom lento y el título encima.»
+
+Cómo trabaja: dibuja, **mira lo que dibujó** y lo corrige si el texto se corta o la composición queda coja. Para un video prueba antes un fotograma, anima todas las escenas y lo revisa. Con clave de ElevenLabs le pone voz, y los rótulos salen al ritmo de lo que dice. Las imágenes quedan en *Imágenes/JARVIS* y los videos en *Películas/JARVIS*.
+
+Sirve para carteles, portadas, diagramas, infografías, tarjetas y videos explicativos animados. **No hace fotos realistas** ni personas: son ilustraciones con formas, texto e imágenes que ya existan. Límites: 60 escenas, 60 capas por escena y 3 minutos por video.
+
+### Biblioteca
+
+Pídele que estudie un tema: «estudia física cuántica y escríbete un tomo». JARVIS planea el índice, investiga cada capítulo en internet, lo escribe con sus palabras (conceptos, fórmulas, un ejemplo, errores típicos) y guarda las fuentes. Después, cuando un mensaje toca algo que estudió, recibe los pasajes que vienen al caso y los **aplica** al problema concreto en vez de recitarlos.
+
+- Los tomos se leen y se borran en *mente → Biblioteca*.
+- Estudiar un tomo entero son muchas búsquedas: tarda varios minutos y cuesta más que una tarea normal. Los temas enormes conviene dividirlos.
+- Lo escribe un modelo a partir de lo que encuentra: **puede contener errores**. Las fuentes están en cada capítulo para comprobarlo. No sustituye a un libro de texto para algo crítico.
+- Entra en la copia de seguridad de Android.
+
+### Puentes hacia otros servicios
+
+Un puente conecta a JARVIS con un servicio de fuera sin manejar la pantalla: más rápido y más fiable. Usa **MCP**, el estándar con el que muchos servicios ofrecen sus herramientas a los asistentes.
+
+1. Consigue la dirección del servidor MCP del servicio. La forma más sencilla de cubrir mucho con un solo puente es [Zapier MCP](https://zapier.com/mcp): te da una dirección que abre Gmail, Google Drive, Calendar, Notion, Sheets y miles de aplicaciones más, y allí eliges qué acciones permites.
+2. En *ajustes → Puentes*, ponle un nombre, pega la dirección (y la credencial, si la pide) y toca **Probar y añadir**. Te dirá cuántas herramientas ganó.
+
+El freno también vale aquí, y lo aplica la app: las llamadas salen de tu teléfono, no de los servidores de Claude. **Consultar lo hace solo; lo que envía, crea, cambia o borra algo espera tu toque**, con los datos exactos a la vista. Ante la duda sobre una herramienta, pide permiso. Las direcciones de los puentes se guardan cifradas y no entran en la copia de seguridad.
+
+## 6. Editar video
 
 Dale los videos con **+** (o deja que vea tu galería) y pídeselo con tus palabras:
 
@@ -101,7 +135,7 @@ Lo que **todavía no hace**: generar imágenes o video con inteligencia artifici
 
 Límites: 40 trozos y 10 minutos por montaje. Nunca modifica ni borra los originales. Exportar tarda: cuenta con uno o dos minutos por minuto de video, según el teléfono.
 
-## 6. Qué hace solo y qué espera tu sí
+## 7. Qué hace solo y qué espera tu sí
 
 | Lo hace solo | Espera que toques **Aprobar** | No lo hace nunca |
 |---|---|---|
@@ -113,16 +147,17 @@ Límites: 40 trozos y 10 minutos por montaje. Nunca modifica ni borra los origin
 - Todo lo que hace y cada permiso que pide queda en **ajustes → Diario de acciones**.
 - Límites: una tarea cada vez y 80 acciones por tarea.
 
-## 7. Privacidad
+## 8. Privacidad
 
 - La clave se guarda **cifrada** con el almacén seguro de Android y solo se envía a `api.anthropic.com`.
 - Mientras hace una tarea, JARVIS envía a Claude (Anthropic) el texto de lo que hay en pantalla y, si la pide, una captura. Fuera de las tareas no lee ni envía nada.
 - Al editar video envía a Claude **fotogramas** de los videos que usa (no el video entero) y los nombres de los archivos. Si pones clave de ElevenLabs, el **sonido** de los videos que transcriba se envía a ElevenLabs. El montaje se hace en el teléfono.
 - Después de cada conversación, un resumen de lo dicho y hecho se envía a Claude otra vez para la revisión (qué recordar, cómo salió). Se apaga en *Ajustes → Autonomía*.
 - Las fuentes que enciendas (notificaciones, agenda, contactos, ubicación) solo se leen cuando una tarea o una rutina las necesita, y entonces viajan a Claude.
+- Con un puente, lo que JARVIS le pida a ese servicio viaja del teléfono al servicio, y su respuesta viaja a Claude.
 - No hay servidores propios, ni cuentas, ni analítica. La memoria vive en el teléfono y, si tienes activada la copia de seguridad de Android, en tu Google Drive. El diario se queda en el teléfono.
 
-## 8. Cuánto cuesta
+## 9. Cuánto cuesta
 
 La app es gratis; se paga el uso de Claude con tu clave. Precios de lista consultados el 3 de noviembre de 2026, por millón de tokens (compruébalos en [claude.com/pricing](https://claude.com/pricing), porque cambian):
 
@@ -136,11 +171,17 @@ Una tarea son varias llamadas seguidas (una por paso) y cada una reenvía la con
 
 **La autonomía también gasta.** La revisión de después de cada turno es una llamada extra, con el modelo más barato (Haiku 5.5). Cada rutina que salta es una tarea completa; para eso está el fusible. *mente → Cómo le va* enseña una estimación por arriba del gasto.
 
+**Dibujar no cuesta nada aparte**: se hace en el teléfono. Lo que gasta es que JARVIS mira cada imagen que dibuja para corregirla, y eso son imágenes enviadas a Claude. **Estudiar un tomo** son muchas búsquedas web y capítulos largos: es lo más caro que puede hacer de una vez.
+
 **Editar video gasta más que el resto**, porque cada hoja de fotogramas que mira es una imagen que se le manda a Claude, y un montaje cuidado mira muchas. Transcribir consume además créditos de tu cuenta de ElevenLabs.
 
-## 9. Lo que no está comprobado o hay que saber
+## 10. Lo que no está comprobado o hay que saber
 
-- **Probado en un teléfono real (versión 1.1):** conversar, la voz y manejar el teléfono funcionan. Lo demás se construyó en un entorno sin teléfono ni emulador: está comprobado que compila, que la APK está firmada y que pasan las 50 pruebas automáticas del núcleo.
+- **Probado en un teléfono real:** conversar, la voz y manejar el teléfono (1.1); la memoria automática y la pantalla *mente* (2.0). Lo demás se construyó en un entorno sin teléfono ni emulador: está comprobado que compila, que la APK está firmada y que pasan las 67 pruebas automáticas del núcleo.
+- **Lo nuevo de la 2.1 no se ha visto funcionar en un teléfono.**
+  - **Dibujar y animar.** Está probado que el lenguaje se lee bien, que los errores se explican y que el movimiento se calcula como debe. **Pintar de verdad y codificar el video no se han ejecutado nunca**: dependen de Android y del codificador de cada teléfono. Es la parte con más riesgo de esta versión. Si falla, lo más probable es que falle el video y no la imagen.
+  - **Puentes.** El cliente está probado contra un servidor MCP simulado (saludo, lista, llamada, las dos formas de respuesta, credencial rechazada y el freno). **No se ha conectado a ningún servicio real**: no había credenciales. Los servicios que exigen iniciar sesión con una ventana (OAuth) en vez de una dirección o una credencial fija no funcionarán todavía.
+  - **Biblioteca.** Guardar, buscar y citar está probado. La calidad de lo que escriba al estudiar depende del modelo y de lo que encuentre; no se ha estudiado ningún tomo real.
 - **Lo nuevo de la 2.0 no se ha visto funcionar en un teléfono.** Está probada la lógica (qué se recuerda y qué no, cuándo salta cada rutina, los niveles, el fusible, la revisión). Sin estrenar: la pantalla *mente*, las notificaciones en vivo, la agenda, los contactos, la ubicación, el despertador de las rutinas y los avisos. Las partes con más riesgo:
   - **Rutinas con el teléfono dormido.** Dependen de cuánto deje Android trabajar a la app en segundo plano, y eso cambia mucho según la marca.
   - **Rutinas de lugar.** Usan la última posición que conoce el teléfono, sin encender el GPS, y necesitan el permiso de ubicación «todo el tiempo». Pueden tardar en notar que llegaste, o no notarlo.
@@ -156,7 +197,7 @@ Una tarea son varias llamadas seguidas (una por paso) y cada una reenvía la con
 - Algunos fabricantes (Xiaomi, Huawei, Oppo) apagan los servicios de accesibilidad al reiniciar: habrá que volver a activarlo.
 - **La firma** (`firma/jarvis.keystore`) está en el repositorio a propósito, con contraseña pública, para que cada compilación se pueda instalar encima de la anterior. Sirve para uso personal. Para publicar en una tienda hay que crear una clave propia y no subirla.
 
-## 10. Compilar
+## 11. Compilar
 
 Hace falta JDK 17 o superior y el SDK de Android (plataforma 35).
 
@@ -166,14 +207,17 @@ cd jarvis-android
 ./gradlew assembleRelease        # app/build/outputs/apk/release/app-release.apk
 ```
 
-## 11. Estructura
+## 12. Estructura
 
 ```
 jarvis-android/app/src/main/kotlin/com/radar/jarvis/
 ├── nucleo/                    sin nada de Android: se prueba en cualquier computadora
 │   ├── Freno.kt               qué hace solo y qué espera tu sí
 │   ├── Manos.kt               lo que JARVIS puede ver y hacer en un teléfono (interfaz)
-│   ├── Herramientas.kt        las 24 herramientas del agente, pasando por el freno
+│   ├── Herramientas.kt        las 30 herramientas del agente (más las de los puentes), pasando por el freno
+│   ├── Lienzo.kt              el lenguaje con el que dibuja y anima: escenas, capas, movimiento
+│   ├── Biblioteca.kt          los tomos que estudia, y cómo los busca
+│   ├── Puente.kt              cliente MCP: la conexión con servicios externos
 │   ├── Mente.kt               memoria, habilidades, rutinas y evaluaciones
 │   ├── Reflexion.kt           la revisión de después de cada turno: qué recordar, cómo salió, qué aprender
 │   ├── Fuentes.kt             notificaciones, agenda, contactos y ubicación (interfaz)
@@ -181,7 +225,8 @@ jarvis-android/app/src/main/kotlin/com/radar/jarvis/
 │   └── Agente.kt              la conversación con Claude: pide, ejecuta, devuelve, repite
 ├── android/
 │   ├── ServicioAccesibilidad.kt   las manos de verdad: lee la pantalla, toca, escribe, abre
-│   ├── EstudioAndroid.kt      el estudio de verdad: fotogramas, transcripción y montaje con Media3
+│   ├── EstudioAndroid.kt      el estudio de verdad: fotogramas, transcripción, narración y montaje con Media3
+│   ├── Pintor.kt              pinta las escenas del lienzo y las codifica como video
 │   ├── Burbuja.kt             el orbe flotante y la tarjeta de permiso
 │   ├── Sesion.kt              lo que está haciendo ahora; lo observan la pantalla y la burbuja
 │   ├── Voz.kt                 dictado y voz de Android

@@ -34,6 +34,7 @@ class Almacen(ctx: Context) : Caja {
     private val diario = File(ctx.filesDir, "registro.txt")
 
     val mente = Mente(this)
+    val biblioteca = com.radar.jarvis.nucleo.Biblioteca(this)
 
     init {
         // versiones anteriores guardaban las claves junto a los ajustes: se mudan al archivo que no entra en la copia
@@ -96,6 +97,15 @@ class Almacen(ctx: Context) : Caja {
         get() = leerSecreto("clave_voz")
         set(v) = guardarSecreto("clave_voz", v)
     val hayClaveVoz get() = !secretos.getString("clave_voz", "").isNullOrEmpty()
+
+    /** Los puentes hacia otros servicios. Sus direcciones suelen llevar la credencial dentro: se guardan cifradas, como las claves. */
+    var puentes: List<com.radar.jarvis.nucleo.PuenteConfig>
+        get() = try {
+            JSONArray(leerSecreto("puentes").ifBlank { "[]" }).let { a ->
+                (0 until a.length()).map { a.getJSONObject(it).let { o -> com.radar.jarvis.nucleo.PuenteConfig(o.getString("nombre"), o.getString("url"), o.optString("token")) } }
+            }
+        } catch (e: Exception) { emptyList() }
+        set(v) = guardarSecreto("puentes", if (v.isEmpty()) "" else JSONArray(v.map { org.json.JSONObject().put("nombre", it.nombre).put("url", it.url).put("token", it.token) }).toString())
 
     // ---------- ajustes ----------
     private fun texto(k: String, d: String) = prefs.getString(k, d)!!

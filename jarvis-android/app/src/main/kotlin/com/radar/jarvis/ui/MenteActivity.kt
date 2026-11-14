@@ -84,6 +84,12 @@ class MenteActivity : Activity() {
             "${h.cuando.ifEmpty { "sin condición" }} · ${h.origen} · salió bien ${h.exitos}, mal ${h.fallos}") { verHabilidad(h) }
         col.addView(Estilo.boton(this, "Importar habilidades de un archivo") { elegirArchivo() }, LinearLayout.LayoutParams(-1, -2))
 
+        // ---- biblioteca
+        titulo("Biblioteca · lo que ha estudiado")
+        val tomos = Sesion.almacen.biblioteca.tomos()
+        if (tomos.isEmpty()) nota("Todavía no ha estudiado nada. Pídeselo: «estudia física cuántica y escríbete un tomo».")
+        for (t in tomos) ficha(t.titulo, "${t.capitulos.size} capítulos · ${t.capitulos.sumOf { it.letras } / 1000} mil letras · ${t.descripcion}") { verTomo(t) }
+
         // ---- memoria
         val recuerdos = mente.recuerdos()
         for ((capa, nombre) in listOf("perfil" to "Memoria · quién eres", "hecho" to "Memoria · tu mundo", "leccion" to "Memoria · lecciones", "episodio" to "Memoria · lo que ha hecho")) {
@@ -120,6 +126,19 @@ class MenteActivity : Activity() {
         .setPositiveButton(if (r.activa) "Apagar" else "Encender") { _, _ -> mente.activarRutina(r.id, !r.activa); Sesion.programarDespertador(); pintar() }
         .setNeutralButton("Borrar") { _, _ -> mente.borrarRutina(r.id); Sesion.programarDespertador(); pintar() }
         .setNegativeButton("Cerrar", null).show()
+
+    private fun verTomo(t: com.radar.jarvis.nucleo.Tomo) {
+        val b = Sesion.almacen.biblioteca
+        AlertDialog.Builder(this).setTitle(t.titulo)
+            .setItems(t.capitulos.map { "${it.numero}. ${it.titulo}" }.toTypedArray()) { _, i ->
+                val c = t.capitulos[i]
+                AlertDialog.Builder(this).setTitle("${c.numero}. ${c.titulo}")
+                    .setMessage((b.leer(t, c.numero) ?: "(vacío)") + if (c.fuentes.isNotEmpty()) "\n\nFuentes:\n" + c.fuentes.joinToString("\n") { "· $it" } else "\n\n(sin fuentes)")
+                    .setNegativeButton("Cerrar", null).show()
+            }
+            .setNeutralButton("Borrar el tomo") { _, _ -> confirmar("¿Borrar «${t.titulo}» entero?") { b.borrar(t.id); pintar() } }
+            .setNegativeButton("Cerrar", null).show()
+    }
 
     private fun elegirArchivo() {
         try {

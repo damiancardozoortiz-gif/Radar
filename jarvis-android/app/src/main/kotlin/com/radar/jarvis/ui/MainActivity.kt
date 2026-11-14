@@ -95,7 +95,7 @@ class MainActivity : Activity() {
         raiz.addView(tarjeta, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(c, 16), 0, dp(c, 16), dp(c, 8)) })
 
         // ---- los pasos y el detalle
-        btnVer = Estilo.boton(c, "Ver el último video", android.graphics.Color.parseColor("#225EFFC4"), Estilo.MENTA, Estilo.MENTA) { verVideo() }
+        btnVer = Estilo.boton(c, "Ver lo último que creé", android.graphics.Color.parseColor("#225EFFC4"), Estilo.MENTA, Estilo.MENTA) { verVideo() }
         pasos = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
         detalle = Estilo.texto(c, "", 14f, Color.parseColor("#B9CDD9")).apply { setTextIsSelectable(true); setPadding(0, dp(c, 8), 0, dp(c, 8)) }
         deslizador = ScrollView(c).apply {
@@ -129,7 +129,7 @@ class MainActivity : Activity() {
             setOnClickListener { alTocarOrbe() }
         }
         val mas = Estilo.texto(c, "+", 26f, Estilo.CIAN).apply {
-            gravity = Gravity.CENTER; contentDescription = "Adjuntar videos o música"
+            gravity = Gravity.CENTER; contentDescription = "Adjuntar videos, imágenes o música"
             background = Estilo.caja(c, Color.parseColor("#CC08121E"), Estilo.LINEA, 26)
             setOnClickListener { elegirArchivos() }
         }
@@ -160,7 +160,7 @@ class MainActivity : Activity() {
     private fun elegirArchivos() {
         try {
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")
-                .putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("video/*", "audio/*")).putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true), 2)
+                .putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("video/*", "audio/*", "image/*")).putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true), 2)
         } catch (e: Exception) {
             android.widget.Toast.makeText(this, "Este teléfono no tiene selector de archivos.", android.widget.Toast.LENGTH_LONG).show()
         }
@@ -180,9 +180,9 @@ class MainActivity : Activity() {
     private fun verVideo() {
         val uri = Sesion.estudio.ultimoMontaje ?: return
         try {
-            startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "video/mp4").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+            startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, Sesion.estudio.ultimoTipo).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
         } catch (e: Exception) {
-            android.widget.Toast.makeText(this, "Está en la galería, carpeta Películas/JARVIS.", android.widget.Toast.LENGTH_LONG).show()
+            android.widget.Toast.makeText(this, "Está en la galería, en la carpeta JARVIS.", android.widget.Toast.LENGTH_LONG).show()
         }
     }
 

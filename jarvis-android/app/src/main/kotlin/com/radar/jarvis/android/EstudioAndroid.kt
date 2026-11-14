@@ -50,7 +50,10 @@ import androidx.media3.transformer.Transformer
 import com.google.common.collect.ImmutableList
 import com.radar.jarvis.nucleo.ErrorManos
 import com.radar.jarvis.nucleo.Estudio
+import com.radar.jarvis.nucleo.Frases
+import com.radar.jarvis.nucleo.Guion
 import com.radar.jarvis.nucleo.Medio
+import com.radar.jarvis.nucleo.Narracion
 import com.radar.jarvis.nucleo.Montaje
 import com.radar.jarvis.nucleo.Plan
 import kotlinx.coroutines.Dispatchers
@@ -87,8 +90,10 @@ class EstudioAndroid(private val ctx: Context, private val almacen: Almacen) : E
     private var n = 0
     private val principal = Handler(Looper.getMainLooper())
 
-    /** El último video que montó JARVIS, para el botón «ver el video». */
+    /** Lo último que creó JARVIS (un video o una imagen), para el botón de verlo. */
     @Volatile var ultimoMontaje: Uri? = null
+        private set
+    @Volatile var ultimoTipo = "video/mp4"
         private set
 
     // ------------------------------------------------------------ qué hay
@@ -112,6 +117,14 @@ class EstudioAndroid(private val ctx: Context, private val almacen: Almacen) : E
 
     @Synchronized private fun ficha(uri: Uri, origen: String, fecha: String = ""): Ficha? {
         fichas[uri.toString()]?.let { return it }
+        val tipo = runCatching { ctx.contentResolver.getType(uri) }.getOrNull() ?: if (uri.path.orEmpty().endsWith(".png") || uri.path.orEmpty().endsWith(".jpg")) "image/*" else ""
+        if (tipo.startsWith("image/")) {
+            val medidas = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            runCatching { ctx.contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, medidas) } }
+            if (medidas.outWidth <= 0) return null
+            n++
+            return Ficha(Medio("i$n", nombreDe(uri).take(80), "imagen", 0, medidas.outWidth, medidas.outHeight, fecha, origen), uri).also { fichas[uri.toString()] = it }
+        }
         val r = MediaMetadataRetriever()
         return try {
             r.setDataSource(ctx, uri)
@@ -192,6 +205,13 @@ class EstudioAndroid(private val ctx: Context, private val almacen: Almacen) : E
             throw ErrorManos("no pude sacar fotogramas de $id (${e.javaClass.simpleName})")
         } finally { runCatching { r.release() } }
         return ByteArrayOutputStream().also { hoja.compress(Bitmap.CompressFormat.JPEG, 72, it); hoja.recycle() }.toByteArray()
+    }
+
+    override fun mirarImagen(id: String): ByteArray {
+        val bmp = fotograma(id, 0.0) ?: throw ErrorManos("no pude abrir la imagen $id")
+        val e = minOf(1f, 1280f / maxOf(bmp.width, bmp.height))
+        val chica = if (e < 1f) Bitmap.createScaledBitmap(bmp, (bmp.width * e).toInt(), (bmp.height * e).toInt(), true) else bmp
+        return ByteArrayOutputStream().also { chica.compress(Bitmap.CompressFormat.JPEG, 80, it) }.toByteArray()
     }
 
     // ------------------------------------------------------------ oír
@@ -294,7 +314,65 @@ class EstudioAndroid(private val ctx: Context, private val almacen: Almacen) : E
         return codigo to ((if (codigo in 200..299) con.inputStream else con.errorStream)?.readBytes() ?: ByteArray(0))
     }
 
-    override suspend fun narrar(texto: String): Medio = withContext(Dispatchers.IO) {
+    /** La imagen de un medio para pintarla en una escena: un fotograma de un video, o una imagen. Nunca más grande de lo necesario. */
+    private fun fotograma(id: String, segundo: Double): Bitmap? = try {
+        val f = porId(id)
+        if (f.medio.tipo == "imagen") {
+            val muestreo = maxOf(1, maxOf(f.medio.ancho, f.medio.alto) / 2048)
+            ctx.contentResolver.openInputStream(f.uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, android.graphics.BitmapFactory.Options().apply { inSampleSize = muestreo }) }
+        } else {
+            val r = MediaMetadataRetriever()
+            try {
+                r.setDataSource(ctx, f.uri)
+                val t = (segundo * 1_000_000).toLong().coerceIn(0, f.medio.duracionMs * 1000)
+                if (Build.VERSION.SDK_INT >= 27) r.getScaledFrameAtTime(t, MediaMetadataRetriever.OPTION_CLOSEST, 1920, 1920) else r.getFrameAtTime(t, MediaMetadataRetriever.OPTION_CLOSEST)
+            } finally { runCatching { r.release() } }
+        }
+    } catch (e: Exception) { null }
+
+    override suspend fun dibujar(guion: Guion, instante: Double, nombre: String): Pair<Medio, ByteArray> = withContext(Dispatchers.Default) {
+        val lienzo = try { Bitmap.createBitmap(guion.ancho, guion.alto, Bitmap.Config.ARGB_8888) } catch (e: OutOfMemoryError) { throw ErrorManos("no hay memoria para una imagen tan grande") }
+        val pintor = Pintor(guion, ::fotograma)
+        try {
+            pintor.pintar(Canvas(lienzo), instante)
+            val titulo = "$nombre ${SimpleDateFormat("yyyy-MM-dd HH.mm.ss", Locale.US).format(Date())}.png"
+            val uri: Uri = if (Build.VERSION.SDK_INT >= 29) {
+                val datos = ContentValues().apply {
+                    put(MediaStore.Images.Media.DISPLAY_NAME, titulo); put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+                    put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/JARVIS"); put(MediaStore.Images.Media.IS_PENDING, 1)
+                }
+                val res = ctx.contentResolver
+                val u = res.insert(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), datos) ?: throw ErrorManos("el teléfono no dejó guardar la imagen en la galería")
+                res.openOutputStream(u)?.use { lienzo.compress(Bitmap.CompressFormat.PNG, 100, it) } ?: throw ErrorManos("no pude escribir la imagen")
+                res.update(u, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }, null, null)
+                u
+            } else {
+                val carpeta = ctx.getExternalFilesDir(Environment.DIRECTORY_PICTURES) ?: ctx.filesDir
+                Uri.fromFile(File(carpeta, titulo).also { a -> a.outputStream().use { lienzo.compress(Bitmap.CompressFormat.PNG, 100, it) } })
+            }
+            val f = ficha(uri, "creada") ?: throw ErrorManos("la imagen se guardó pero no se puede leer")
+            synchronized(this@EstudioAndroid) { montajes += uri }
+            ultimoMontaje = uri; ultimoTipo = "image/png"
+            // una copia ligera para que JARVIS vea lo que dibujó
+            val e = minOf(1f, 1024f / maxOf(lienzo.width, lienzo.height))
+            val chica = if (e < 1f) Bitmap.createScaledBitmap(lienzo, (lienzo.width * e).toInt(), (lienzo.height * e).toInt(), true) else lienzo
+            f.medio to ByteArrayOutputStream().also { chica.compress(Bitmap.CompressFormat.JPEG, 82, it) }.toByteArray()
+        } finally { pintor.soltar(); lienzo.recycle() }
+    }
+
+    override suspend fun animar(guion: Guion, nombre: String, progreso: (Int) -> Unit): Medio = withContext(Dispatchers.Default) {
+        val temporal = File(ctx.cacheDir, "animacion-${System.currentTimeMillis()}.mp4")
+        val pintor = Pintor(guion, ::fotograma)
+        val trabajo = kotlin.coroutines.coroutineContext[kotlinx.coroutines.Job]
+        try {
+            Codificador.codificar(temporal, guion.ancho, guion.alto, guion.fps, guion.cuadros,
+                cuadro = { c, i -> pintor.pintar(c, i.toDouble() / guion.fps) }, progreso = progreso, sigue = { trabajo?.isActive != false })
+            progreso(100)
+            guardar(temporal, nombre)
+        } finally { pintor.soltar(); temporal.delete() }
+    }
+
+    override suspend fun narrar(texto: String): Narracion = withContext(Dispatchers.IO) {
         val clave = almacen.claveVoz
         if (clave.isBlank()) throw ErrorManos("para narrar hace falta una clave de ElevenLabs, que la persona pone en Ajustes de JARVIS")
         try {
@@ -305,7 +383,21 @@ class EstudioAndroid(private val ctx: Context, private val almacen: Almacen) : E
             val voz = JSONObject(String(voces)).optJSONArray("voices")?.optJSONObject(0)?.optString("voice_id").orEmpty()
             if (voz.isEmpty()) throw ErrorManos("la cuenta de ElevenLabs no tiene ninguna voz")
             val cuerpo = JSONObject().put("text", texto).put("model_id", "eleven_multilingual_v2").toString().toByteArray()
-            val (c2, audio) = pedir("https://api.elevenlabs.io/v1/text-to-speech/$voz?output_format=mp3_44100_128", cuerpo, clave, "audio/mpeg")
+            // primero se pide la voz CON el tiempo de cada letra (para los rótulos); si esa vía falla, la voz sola
+            var frases = emptyList<Triple<String, Double, Double>>()
+            var audio = ByteArray(0)
+            val (c0, conTiempos) = pedir("https://api.elevenlabs.io/v1/text-to-speech/$voz/with-timestamps?output_format=mp3_44100_128", cuerpo, clave, "application/json")
+            if (c0 in 200..299) runCatching {
+                val j = JSONObject(String(conTiempos))
+                audio = android.util.Base64.decode(j.getString("audio_base64"), android.util.Base64.DEFAULT)
+                j.optJSONObject("alignment")?.let { al ->
+                    fun <T> lista(k: String, de: (org.json.JSONArray, Int) -> T) = al.optJSONArray(k)?.let { a -> (0 until a.length()).map { de(a, it) } } ?: emptyList()
+                    frases = Frases.de(lista("characters") { a, i -> a.getString(i) }, lista("character_start_times_seconds") { a, i -> a.getDouble(i) },
+                        lista("character_end_times_seconds") { a, i -> a.getDouble(i) })
+                }
+            }
+            var c2 = c0
+            if (audio.size < 1000) pedir("https://api.elevenlabs.io/v1/text-to-speech/$voz?output_format=mp3_44100_128", cuerpo, clave, "audio/mpeg").let { c2 = it.first; audio = it.second }
             if (c2 !in 200..299 || audio.size < 1000) throw ErrorManos("ElevenLabs no pudo generar la voz (código $c2)" +
                 if (c2 == 401 || c2 == 402) ": revisa la clave o el saldo de la cuenta" else "")
             val carpeta = File(ctx.filesDir, "narraciones").apply { mkdirs() }
@@ -314,7 +406,7 @@ class EstudioAndroid(private val ctx: Context, private val almacen: Almacen) : E
             val uri = Uri.fromFile(archivo)
             val f = ficha(uri, "narración") ?: throw ErrorManos("la narración se generó pero no se puede leer")
             synchronized(this@EstudioAndroid) { adjuntos.add(0, uri) }
-            f.medio
+            Narracion(f.medio, frases)
         } catch (e: ErrorManos) {
             throw e
         } catch (e: Exception) {
@@ -453,7 +545,7 @@ class EstudioAndroid(private val ctx: Context, private val almacen: Almacen) : E
         val f = ficha(uri, "montaje", SimpleDateFormat("d MMM HH:mm", Locale("es")).format(Date()))
             ?: throw ErrorManos("el video se exportó pero no se puede leer; puede haber quedado dañado")
         synchronized(this) { montajes += uri }
-        ultimoMontaje = uri
+        ultimoMontaje = uri; ultimoTipo = "video/mp4"
         return f.medio
     }
 

@@ -100,9 +100,9 @@ object Sesion {
     private fun agente(): Agente = agente ?: run {
         val h = Herramientas(ServicioAccesibilidad.manos, mente, ::pedirPermiso, ::alPaso,
             alCrearRutina = { r -> almacen.apuntar("RUTINA creada: ${r.nombre} (${r.disparador.frase()})"); programarDespertador() },
-            estudio = estudio, fuentes = fuentes)
+            estudio = estudio, fuentes = fuentes, biblioteca = almacen.biblioteca, puentes = com.radar.jarvis.nucleo.Puentes(almacen.puentes))
         herramientas = h
-        Agente(almacen.ajustes(), h, mente) { nota -> pasos += Paso(0, nota, "nota", ""); avisar() }.also { agente = it }
+        Agente(almacen.ajustes(), h, mente, { nota -> pasos += Paso(0, nota, "nota", ""); avisar() }, almacen.biblioteca).also { agente = it }
     }
 
     private fun alPaso(n: Int, texto: String, est: String, det: String) {
@@ -223,8 +223,9 @@ object Sesion {
     fun adjuntar(uris: List<android.net.Uri>) {
         ambito.launch {
             val n = estudio.adjuntar(uris)
-            poner(estado, if (n == 0) "No pude leer esos archivos: tienen que ser videos o audios."
+            poner(estado, if (n == 0) "No pude leer esos archivos: tienen que ser videos, audios o imágenes."
                 else "$n ${if (n == 1) "archivo adjunto" else "archivos adjuntos"}. Dime qué hago con ${if (n == 1) "él" else "ellos"}.")
+            if (n == 0) return@launch
         }
     }
 

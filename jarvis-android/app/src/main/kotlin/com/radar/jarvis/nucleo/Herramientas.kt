@@ -13,6 +13,8 @@ data class Herramienta(
     val descripcion: String,
     val propiedades: Map<String, Map<String, Any>> = emptyMap(),
     val obligatorias: List<String> = emptyList(),
+    /** Solo en las herramientas de los puentes: el esquema tal como lo da el servicio. */
+    val esquemaCrudo: Map<String, Any?>? = null,
 )
 
 private class Rechazo(mensaje: String) : Exception(mensaje)
@@ -33,6 +35,8 @@ class Herramientas(
     private val pausaTrasActuar: Long = 900,
     private val estudio: Estudio? = null,
     private val fuentes: Fuentes? = null,
+    private val biblioteca: Biblioteca? = null,
+    private val puentes: Puentes? = null,
 ) {
     private var vista: Vista? = null
     private var vistaT = 0L
@@ -176,6 +180,7 @@ class Herramientas(
     private fun verVideo(a: Map<String, Any?>): Resultado {
         val id = a["id"]?.toString().orEmpty()
         val m = estudio().medios().firstOrNull { it.id == id } ?: return Resultado("No existe el medio «$id». Usa medios para ver los que hay.", error = true)
+        if (m.tipo == "imagen") return Resultado("Imagen $id «${m.nombre}» (${m.ancho}×${m.alto}), adjunta.", estudio().mirarImagen(id))
         if (m.tipo != "video") return Resultado("«$id» es un audio: no tiene imagen.", error = true)
         val desde = (((a["desde"] as? Number)?.toDouble() ?: 0.0) * 1000).toLong().coerceIn(0, m.duracionMs)
         val hasta = ((a["hasta"] as? Number)?.toDouble()?.let { (it * 1000).toLong() } ?: m.duracionMs).coerceIn(desde, m.duracionMs)
@@ -232,6 +237,78 @@ class Herramientas(
         "La persona está en ${p.nombre.ifEmpty { "un punto sin nombre" }} (latitud ${"%.5f".format(java.util.Locale.US, p.lat)}, longitud ${"%.5f".format(java.util.Locale.US, p.lon)})."
     }
 
+    // ------------------------------------------------------------ dibujar por código
+    private suspend fun crearImagen(a: Map<String, Any?>): Resultado {
+        @Suppress("UNCHECKED_CAST")
+        val escena = (a["escena"] as? Map<String, Any?>) ?: a
+        val (guion, instante) = Lienzo.imagen(escena + mapOf("formato" to (a["formato"] ?: escena["formato"])), estudio().medios())
+        val (medio, vista) = estudio().dibujar(guion, instante, nombre(a, "Imagen"))
+        return Resultado("Imagen creada: ${medio.linea()}. Está guardada en la galería. Mírala (va adjunta): ¿se lee bien, cabe todo, queda equilibrada? " +
+            "Si algo está mal, corrige la escena y vuelve a crearla.", vista)
+    }
+
+    private suspend fun crearVideo(a: Map<String, Any?>): Resultado {
+        val guion = Lienzo.video(a, estudio().medios())
+        var ultimo = -1
+        val n = acciones
+        val etiqueta = etiquetaPaso("crear_video", a)
+        val medio = estudio().animar(guion, nombre(a, "Animación")) { p -> if (p / 10 != ultimo / 10) { ultimo = p; paso(n, "$etiqueta · $p %", "en curso", "") } }
+        return Resultado("Video creado: ${medio.linea()} (${guion.escenas.size} escenas, sin sonido). Míralo con ver_video (id ${medio.id}) para comprobarlo. " +
+            "Para ponerle voz o música, pásalo por montar_video con narracion o musica.")
+    }
+
+    private fun nombre(a: Map<String, Any?>, porDefecto: String) =
+        a["nombre"]?.toString()?.replace(Regex("[^\\p{L}\\p{N} _-]"), "")?.trim()?.take(40).orEmpty().ifEmpty { porDefecto }
+
+    // ------------------------------------------------------------ la biblioteca
+    private fun biblio() = biblioteca ?: throw ErrorManos("la biblioteca no está disponible")
+
+    private fun bibliotecaIndice(): Resultado {
+        val l = biblio().tomos()
+        return Resultado(if (l.isEmpty()) "La biblioteca está vacía. Para estudiar un tema, investígalo y escríbelo capítulo a capítulo con biblioteca_escribir."
+            else "${l.size} tomos:\n" + l.joinToString("\n") { t ->
+                "· «${t.titulo}» — ${t.descripcion.ifEmpty { "sin descripción" }}\n" + t.capitulos.joinToString("\n") { "   ${it.numero}. ${it.titulo} (${it.letras} letras, ${it.fuentes.size} fuentes)" }
+            })
+    }
+
+    private fun bibliotecaConsultar(a: Map<String, Any?>): Resultado {
+        val q = a["pregunta"]?.toString()?.trim().orEmpty()
+        if (q.length < 3) return Resultado("Falta la pregunta.", error = true)
+        val tomo = a["tomo"]?.toString()?.takeIf { it.isNotBlank() }?.let { biblio().tomo(it) ?: return Resultado("No hay ningún tomo parecido a «$it». Mira biblioteca_indice.", error = true) }
+        val l = biblio().consultar(q, 4, tomo?.id)
+        return Resultado(if (l.isEmpty()) "La biblioteca no tiene nada sobre eso. Si hace falta, estúdialo y escríbelo."
+            else l.joinToString("\n\n") { "[${it.cita()}]\n${it.texto}" + if (it.capitulo.fuentes.isNotEmpty()) "\nFuentes: ${it.capitulo.fuentes.joinToString("; ")}" else "" })
+    }
+
+    private fun bibliotecaLeer(a: Map<String, Any?>): Resultado {
+        val t = biblio().tomo(a["tomo"]?.toString().orEmpty()) ?: return Resultado("No hay ningún tomo parecido a «${a["tomo"]}». Mira biblioteca_indice.", error = true)
+        val n = entero(a["capitulo"]) ?: return Resultado("Di qué capítulo (su número).", error = true)
+        val texto = biblio().leer(t, n) ?: return Resultado("«${t.titulo}» no tiene capítulo $n.", error = true)
+        val c = t.capitulos.first { it.numero == n }
+        return Resultado("«${t.titulo}», capítulo $n: ${c.titulo}\n\n$texto" + if (c.fuentes.isNotEmpty()) "\n\nFuentes: ${c.fuentes.joinToString("; ")}" else "")
+    }
+
+    private fun bibliotecaEscribir(a: Map<String, Any?>): Resultado {
+        val fuentes = (a["fuentes"] as? List<*>)?.map { it.toString() } ?: emptyList()
+        val t = biblio().escribir(a["tomo"]?.toString().orEmpty(), a["descripcion"]?.toString().orEmpty(), entero(a["capitulo"]) ?: 0,
+            a["titulo"]?.toString().orEmpty(), a["contenido"]?.toString().orEmpty(), fuentes)
+        return Resultado("Capítulo guardado en «${t.titulo}», que ya tiene ${t.capitulos.size}: ${t.capitulos.joinToString(", ") { "${it.numero}. ${it.titulo}" }}." +
+            if (fuentes.isEmpty()) " AVISO: este capítulo no cita ninguna fuente; si lo investigaste, vuelve a guardarlo con sus fuentes." else "")
+    }
+
+    // ------------------------------------------------------------ los puentes hacia otros servicios
+    private suspend fun puente(h: HerramientaPuente, a: Map<String, Any?>): Resultado {
+        var aprobado = false
+        if (!h.soloLectura) {
+            if (nivel == "avisar") return Resultado("Esta rutina es de nivel «avisar»: no cambies nada en otros servicios. Cuéntale lo que haya y termina.", error = true)
+            val resumen = a.entries.joinToString(" · ") { "${it.key}: ${it.value.toString().take(120)}" }.take(500)
+            pedir(Peticion("Usar «${h.nombre}» de ${h.puente}", h.puente, "esa herramienta cambia o envía algo fuera del teléfono", resumen))
+            aprobado = true
+        }
+        val (texto, error) = puentes!!.llamar(h, a)
+        return Resultado((if (aprobado) "(Aprobado por la persona.)\n" else "") + noConfiable("respuesta de ${h.puente}", texto), error = error)
+    }
+
     // ------------------------------------------------------------ lo que aprende y lo que hace por iniciativa
     private fun habilidadGuardar(a: Map<String, Any?>): Resultado {
         val h = mente.aprender(a["nombre"]?.toString().orEmpty(), a["cuando"]?.toString().orEmpty(), a["pasos"]?.toString().orEmpty(), "enseñada")
@@ -254,6 +331,12 @@ class Herramientas(
     }
 
     private suspend fun uno(nombre: String, a: Map<String, Any?>): Resultado = when (nombre) {
+        "crear_imagen" -> crearImagen(a)
+        "crear_video" -> crearVideo(a)
+        "biblioteca_indice" -> bibliotecaIndice()
+        "biblioteca_consultar" -> bibliotecaConsultar(a)
+        "biblioteca_leer" -> bibliotecaLeer(a)
+        "biblioteca_escribir" -> bibliotecaEscribir(a)
         "notificaciones" -> notificaciones()
         "agenda" -> agenda(a)
         "contactos" -> contactos(a)
@@ -266,7 +349,11 @@ class Herramientas(
             val t = a["texto"]?.toString()?.trim().orEmpty()
             if (t.length < 3) Resultado("Falta el guion.", error = true)
             else if (t.length > 2500) Resultado("El guion es demasiado largo (máximo 2500 letras por narración). Pártelo.", error = true)
-            else estudio().narrar(t).let { Resultado("Narración lista: ${it.linea()}. Úsala en montar_video con narracion=\"${it.id}\".") }
+            else estudio().narrar(t).let { n ->
+                Resultado("Narración lista: ${n.medio.linea()}. Úsala en montar_video con narracion=\"${n.medio.id}\"." +
+                    if (n.frases.isEmpty()) "" else "\nCuándo se dice cada frase (segundos), para los rótulos de crear_video:\n" +
+                        n.frases.joinToString("\n") { "%.2f–%.2f  %s".format(java.util.Locale.US, it.second, it.third, it.first) })
+            }
         }
         "compartir_video" -> {
             val id = a["id"]?.toString().orEmpty()
@@ -314,12 +401,20 @@ class Herramientas(
                 Resultado("Guardado en la memoria: $t. Díselo a la persona en tu respuesta final.")
             else Resultado("No lo guardé: o ya lo sabía, o parece una contraseña, un código o una tarjeta, y eso JARVIS no lo guarda nunca.")
         }
-        else -> Resultado("No existe la herramienta $nombre.", error = true)
+        else -> puentes?.buscar(nombre)?.let { puente(it, a) } ?: Resultado("No existe la herramienta $nombre.", error = true)
     }
+
+    /** Todas las herramientas de este turno: las propias y las de los puentes conectados. */
+    suspend fun catalogo(): List<Herramienta> = CATALOGO + (puentes?.takeIf { it.hay }?.herramientas()?.map {
+        Herramienta(it.alias, "[Puente ${it.puente}] ${it.descripcion}" + if (it.soloLectura) "" else " (Cambia algo fuera: esperará el sí de la persona.)", esquemaCrudo = it.esquema)
+    } ?: emptyList())
+
+    /** Los puentes que no se pudieron conectar, para contárselo a la persona. */
+    fun fallosDePuentes(): List<String> = puentes?.fallos ?: emptyList()
 
     /** Ejecuta una herramienta. Nunca lanza: un fallo vuelve como Resultado con error, para que el agente lo vea. */
     suspend fun ejecutar(nombre: String, args: Map<String, Any?>): Resultado {
-        manos.noDisponible()?.let { if (nombre !in SIN_MANOS) return Resultado("No puedo usar el teléfono: $it. Díselo a la persona y termina.", error = true) }
+        manos.noDisponible()?.let { if (nombre !in SIN_MANOS && !nombre.startsWith("p_")) return Resultado("No puedo usar el teléfono: $it. Díselo a la persona y termina.", error = true) }
         if (nivel == "avisar" && nombre in ACTUAN) return Resultado(
             "Esta rutina es de nivel «avisar»: no toques el teléfono ni gastes en generar nada. Cuéntale lo que haya y termina.", error = true)
         acciones++
@@ -349,7 +444,8 @@ class Herramientas(
         /** Las que cambian algo. Una rutina de nivel «avisar» no puede usarlas. */
         val ACTUAN = setOf("tocar", "escribir", "tecla", "deslizar", "abrir_app", "abrir_url", "compartir_video", "montar_video", "narrar")
         /** Estas no necesitan manejar la pantalla: funcionan aunque la accesibilidad esté apagada. */
-        val SIN_MANOS = setOf("medios", "ver_video", "transcribir_video", "montar_video", "narrar", "compartir_video", "recordar",
+        val SIN_MANOS = setOf("medios", "ver_video", "transcribir_video", "montar_video", "narrar", "compartir_video", "recordar", "crear_imagen", "crear_video",
+            "biblioteca_indice", "biblioteca_consultar", "biblioteca_leer", "biblioteca_escribir",
             "notificaciones", "agenda", "contactos", "ubicacion", "habilidad_guardar", "rutina_crear", "rutinas", "rutina_borrar")
         private val INYECCION = Regex(
             "ignora\\w*\\s+(tus|las|todas|sus)?\\s*(instrucciones|ordenes|órdenes|reglas)|ignore (all |your )?(previous )?instructions" +
@@ -381,7 +477,7 @@ class Herramientas(
                 mapOf("url" to mapOf<String, Any>("type" to "string")) + PROPOSITO, listOf("url")),
             Herramienta("esperar", "Espera unos segundos (máximo 15) a que algo cargue y devuelve la pantalla.", mapOf("segundos" to mapOf("type" to "number"))),
             Herramienta("medios", "Lista los videos y audios con los que puedes trabajar: los que la persona adjuntó, los videos recientes de su galería y los montajes que ya hiciste. Cada uno con su id, duración y tamaño."),
-            Herramienta("ver_video", "Tus ojos sobre un video: devuelve una hoja de contactos con fotogramas repartidos por el tramo que pidas, cada uno con su minuto:segundo. Empieza por el video entero y acércate (desde/hasta en segundos) a los tramos que te interesen para decidir dónde cortar.",
+            Herramienta("ver_video", "Tus ojos sobre un video o una imagen. Con una imagen (id que empieza por i), te la enseña. Con un video: devuelve una hoja de contactos con fotogramas repartidos por el tramo que pidas, cada uno con su minuto:segundo. Empieza por el video entero y acércate (desde/hasta en segundos) a los tramos que te interesen para decidir dónde cortar.",
                 mapOf("id" to mapOf("type" to "string"), "desde" to mapOf("type" to "number", "description" to "segundo inicial"),
                     "hasta" to mapOf("type" to "number", "description" to "segundo final"),
                     "cuadros" to mapOf("type" to "integer", "description" to "cuántos fotogramas, de 1 a 16 (por defecto 9)")), listOf("id")),
@@ -401,6 +497,29 @@ class Herramientas(
                     "volumen_musica" to mapOf("type" to "number", "description" to "de 0 a 1; por defecto 0.25, o 0.12 si hay narración"),
                     "narracion" to mapOf("type" to "string", "description" to "id de un audio hecho con narrar: suena una vez, a volumen completo, desde el principio (opcional)"),
                     "nombre" to mapOf("type" to "string", "description" to "nombre corto del archivo")) + PROPOSITO, listOf("clips")),
+            Herramienta("crear_imagen", "Dibuja una imagen escribiendo la escena como datos (ver «Cómo dibujas»). La guarda en la galería y te la devuelve para que la veas y la corrijas. Úsala también para probar un fotograma antes de hacer un video.",
+                mapOf("formato" to mapOf("type" to "string", "enum" to listOf("vertical", "horizontal", "cuadrado")),
+                    "fondo" to mapOf("type" to "string"), "fondo2" to mapOf("type" to "string"), "angulo" to mapOf("type" to "number"),
+                    "capas" to mapOf("type" to "array", "items" to mapOf("type" to "object"), "description" to "las capas de la escena, de atrás hacia delante"),
+                    "instante" to mapOf("type" to "number", "description" to "segundo que se pinta, si hay animaciones (por defecto, el final)"),
+                    "nombre" to mapOf("type" to "string")) + PROPOSITO, listOf("capas")),
+            Herramienta("crear_video", "Anima un video escribiendo sus escenas como datos (ver «Cómo dibujas»): textos, formas, imágenes y movimiento. Sale sin sonido; ponle voz o música con montar_video. Tarda: cuenta con uno o dos minutos por minuto de video.",
+                mapOf("formato" to mapOf("type" to "string", "enum" to listOf("vertical", "horizontal", "cuadrado")),
+                    "fps" to mapOf("type" to "integer", "enum" to listOf(24, 25, 30)),
+                    "escenas" to mapOf("type" to "array", "items" to mapOf("type" to "object"), "description" to "las escenas, en orden; cada una con dura, fondo y capas"),
+                    "nombre" to mapOf("type" to "string")) + PROPOSITO, listOf("escenas")),
+            Herramienta("biblioteca_indice", "Los tomos de tu biblioteca y sus capítulos."),
+            Herramienta("biblioteca_consultar", "Busca en tu biblioteca los pasajes que responden a una pregunta. Úsala antes de explicar o aplicar un tema que hayas estudiado.",
+                mapOf("pregunta" to mapOf("type" to "string"), "tomo" to mapOf("type" to "string", "description" to "opcional: buscar solo en ese tomo")), listOf("pregunta")),
+            Herramienta("biblioteca_leer", "Lee un capítulo entero de un tomo.",
+                mapOf("tomo" to mapOf("type" to "string"), "capitulo" to mapOf("type" to "integer")), listOf("tomo", "capitulo")),
+            Herramienta("biblioteca_escribir", "Guarda un capítulo en un tomo de tu biblioteca (lo crea si no existe; si el capítulo ya existía, lo sustituye). Así estudias: investiga primero y escribe después.",
+                mapOf("tomo" to mapOf("type" to "string", "description" to "título del tomo, p. ej. «Física cuántica»"),
+                    "descripcion" to mapOf("type" to "string", "description" to "de qué trata el tomo, en una frase (solo hace falta la primera vez)"),
+                    "capitulo" to mapOf("type" to "integer"), "titulo" to mapOf("type" to "string"),
+                    "contenido" to mapOf("type" to "string", "description" to "el capítulo, de 600 a 9000 letras, en texto corrido"),
+                    "fuentes" to mapOf("type" to "array", "items" to mapOf("type" to "string"), "description" to "de dónde salió: título y dirección de cada fuente")) + PROPOSITO,
+                listOf("tomo", "capitulo", "titulo", "contenido")),
             Herramienta("narrar", "Convierte un guion en una narración hablada (voz de ElevenLabs) y la deja como un audio para usarla en montar_video. Necesita la clave de ElevenLabs en Ajustes y gasta créditos de esa cuenta.",
                 mapOf("texto" to mapOf("type" to "string", "description" to "el guion, tal como debe decirse (máximo 2500 letras)")) + PROPOSITO, listOf("texto")),
             Herramienta("compartir_video", "Abre el menú de compartir del teléfono con un video, hacia una aplicación (TikTok, Instagram, WhatsApp…). Después sigue tú en esa aplicación con ver_pantalla y tocar; publicar esperará el sí de la persona.",
@@ -451,6 +570,12 @@ class Herramientas(
                 "transcribir_video" -> "Escuchar el video ${a["id"]}"
                 "montar_video" -> "Montar el video"
                 "narrar" -> "Grabar la narración"
+                "crear_imagen" -> "Dibujar una imagen"
+                "crear_video" -> "Animar el video"
+                "biblioteca_indice" -> "Mirar la biblioteca"
+                "biblioteca_consultar" -> "Consultar la biblioteca: ${a["pregunta"]?.toString().orEmpty().take(50)}"
+                "biblioteca_leer" -> "Leer «${a["tomo"]}», capítulo ${a["capitulo"]}"
+                "biblioteca_escribir" -> "Escribir «${a["tomo"]}» · ${a["capitulo"]}. ${a["titulo"]?.toString().orEmpty().take(50)}"
                 "compartir_video" -> "Compartir el video ${a["id"]}"
                 "notificaciones" -> "Leer las notificaciones"
                 "agenda" -> "Mirar la agenda"
@@ -460,7 +585,7 @@ class Herramientas(
                 "rutina_crear" -> "Crear la rutina «${a["nombre"]}»"
                 "rutinas" -> "Ver las rutinas"
                 "rutina_borrar" -> "Borrar una rutina"
-                else -> nombre
+                else -> if (nombre.startsWith("p_")) "Usar ${nombre.substringAfter("__")} (${nombre.removePrefix("p_").substringBefore("__")})" else nombre
             }
         }
     }

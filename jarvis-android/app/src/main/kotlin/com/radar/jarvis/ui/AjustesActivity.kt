@@ -29,6 +29,7 @@ class AjustesActivity : Activity() {
     private lateinit var estadoClave: TextView
     private lateinit var estadoGaleria: TextView
     private lateinit var estadoVoz: TextView
+    private lateinit var puentes: LinearLayout
     private lateinit var estadoAvisar: TextView
     private lateinit var estadoAvisos: TextView
     private lateinit var estadoFuentes: TextView
@@ -124,6 +125,32 @@ class AjustesActivity : Activity() {
         boton("Permitir que JARVIS me avise") { if (android.os.Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 4) }
         boton("Ver su mente: memoria, habilidades y rutinas") { startActivity(Intent(c, MenteActivity::class.java)) }
 
+        titulo("Puentes · otros servicios")
+        nota("Un puente conecta a JARVIS con un servicio de fuera (correo, documentos, tareas…) sin manejar la pantalla. Usa el estándar MCP: pega aquí la dirección del servidor MCP del servicio. Por ejemplo, Zapier (zapier.com/mcp) te da una sola dirección que abre miles de aplicaciones. Consultar lo hace solo; lo que envía, crea o borra espera tu toque.")
+        puentes = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
+        col.addView(puentes)
+        val pNombre = campo("Nombre (p. ej. Zapier)", "", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_WORDS)
+        val pUrl = campo("https://…", "", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI)
+        val pToken = campo("Credencial (si el servicio la pide)", "", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD)
+        boton("Probar y añadir el puente") {
+            val cfg = com.radar.jarvis.nucleo.PuenteConfig(pNombre.text.toString().trim(), pUrl.text.toString().trim(), pToken.text.toString().trim())
+            if (cfg.nombre.length < 2 || !cfg.url.startsWith("https://")) return@boton Toast.makeText(c, "Pon un nombre y una dirección que empiece por https://", Toast.LENGTH_LONG).show()
+            if (a.puentes.any { it.nombre.equals(cfg.nombre, true) }) return@boton Toast.makeText(c, "Ya hay un puente con ese nombre.", Toast.LENGTH_LONG).show()
+            Toast.makeText(c, "Probando la conexión…", Toast.LENGTH_SHORT).show()
+            Thread {
+                val resultado = try { "ok" to com.radar.jarvis.nucleo.ClienteMcp(cfg).conectar() } catch (e: Exception) { (e.message ?: "no se pudo conectar") to emptyList() }
+                runOnUiThread {
+                    if (resultado.first == "ok") {
+                        a.puentes = a.puentes + cfg; Sesion.reconfigurar()
+                        pNombre.setText(""); pUrl.setText(""); pToken.setText("")
+                        val l = resultado.second
+                        Toast.makeText(c, "Conectado: ${l.size} herramientas (${l.count { it.soloLectura }} solo consultan).", Toast.LENGTH_LONG).show()
+                        pintar()
+                    } else Toast.makeText(c, "No se añadió: ${resultado.first}", Toast.LENGTH_LONG).show()
+                }
+            }.start()
+        }
+
         titulo("Lo que sabe de tu día")
         nota("Todo apagado hasta que lo enciendas. Cada fuente necesita su interruptor Y el permiso de Android. Lo que lea de ellas se envía a Claude solo cuando lo necesite para una tarea.")
         interruptor("Notificaciones en vivo", a.fuenteAvisos) { a.fuenteAvisos = it; pintar() }
@@ -165,6 +192,12 @@ class AjustesActivity : Activity() {
         estadoGaleria.setTextColor(if (galeria) Estilo.MENTA else Estilo.TENUE)
         estadoVoz.text = if (a.hayClaveVoz) "✓ Hay una clave de ElevenLabs guardada." else "Sin clave de ElevenLabs: JARVIS no oye los videos, solo los ve."
         estadoVoz.setTextColor(if (a.hayClaveVoz) Estilo.MENTA else Estilo.TENUE)
+        puentes.removeAllViews()
+        for (p in a.puentes) puentes.addView(Estilo.boton(this, "${p.nombre} · ${runCatching { java.net.URL(p.url).host }.getOrDefault("")}  ✕") {
+            android.app.AlertDialog.Builder(this).setMessage("¿Quitar el puente «${p.nombre}»?")
+                .setPositiveButton("Quitar") { _, _ -> a.puentes = a.puentes.filter { it.nombre != p.nombre }; Sesion.reconfigurar(); pintar() }
+                .setNegativeButton("No", null).show()
+        }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(this@AjustesActivity, 8) })
         val f = Sesion.fuentes
         val puedeAvisar = com.radar.jarvis.android.Avisador.puede(this)
         estadoAvisar.text = if (puedeAvisar) "✓ JARVIS puede avisarte de lo que hace por iniciativa." else "JARVIS no puede ponerte notificaciones: no verás lo que hace por iniciativa si no abres la app."
