@@ -40,7 +40,7 @@ Abre JARVIS y toca **ajustes**:
 | Detener lo que hace | **detener** (arriba) |
 | Pausa de emergencia | **pausa**: corta todo y no acepta nada hasta que la quites |
 | Empezar de cero | **nueva** |
-| Darle videos o música | El botón **+** de abajo. Elige uno o varios archivos |
+| Darle videos, fotos o música | El botón **+** de abajo. Elige uno o varios archivos |
 | Ver el montaje | El botón **Ver el último video**, o en la galería: Películas/JARVIS |
 | Mover la burbuja | Arrástrala arriba o abajo. Mantenla pulsada para abrir JARVIS |
 
@@ -97,7 +97,15 @@ Nuevo en la 2.0:
 - **Narración**: escribe un guion y lo convierte en voz con ElevenLabs. La voz suena por encima y la música, si la hay, queda bajita. Necesita la clave de ElevenLabs y gasta créditos de esa cuenta.
 - **Compartir**: abre TikTok, Instagram o la aplicación que digas con el video listo. El botón de publicar espera tu toque.
 
-Lo que **todavía no hace**: generar imágenes o video con inteligencia artificial, dar movimiento a imágenes fijas, rótulos sincronizados con la voz, bajar la música solo cuando habla la voz, transiciones con fundido (los cortes son directos), cambiar la velocidad, filtros de color, subtítulos sincronizados palabra por palabra, ni usar fotos como trozos. Si se lo pides, te lo dirá.
+Nuevo en la 2.1 (lo que pediste de la lista que propuso el propio JARVIS):
+
+- **Subtítulos sincronizados con la voz**: al narrar se guarda cuándo se dice cada palabra, y el montaje pone rótulos cortos que cambian a ese ritmo.
+- **Fotos como trozos, con movimiento**: una imagen se queda en pantalla los segundos que digas y puede acercarse, alejarse o deslizarse despacio. El botón **+** ya deja elegir imágenes.
+- **Fundidos**: cada trozo puede aparecer desde negro, irse a negro o las dos cosas (medio segundo).
+- **Velocidad**: cámara lenta o rápida por trozo, de 0,25 a 4 veces; el sonido cambia con ella.
+- **Volumen por partes**: cada trozo con su propio volumen, y la música más baja o más alta en los tramos que elijas (por ejemplo, mientras alguien habla).
+
+Lo que **todavía no hace**: generar imágenes o video con inteligencia artificial (ver el apartado 9), fundidos cruzados entre dos trozos, fundir el sonido, filtros de color ni subtítulos de lo que se dice en los videos originales (solo de la narración). Si se lo pides, te lo dirá.
 
 Límites: 40 trozos y 10 minutos por montaje. Nunca modifica ni borra los originales. Exportar tarda: cuenta con uno o dos minutos por minuto de video, según el teléfono.
 
@@ -147,6 +155,11 @@ Una tarea son varias llamadas seguidas (una por paso) y cada una reenvía la con
   - **Copia en Google Drive.** La hace Android cuando quiere; no se ha comprobado una restauración.
   - **Rutinas creadas por él.** Que detecte bien una costumbre depende del modelo; puede crear alguna que no quieras. Se borran en *mente*.
 - **La edición de video sigue sin probarse en un teléfono**, y la narración y el compartir, tampoco.
+- **Lo nuevo de la 2.1 tampoco se ha visto en un teléfono.** Está probado con 14 pruebas qué se monta (duraciones con la velocidad, reparto de los subtítulos por trozos, tramos de música, fundidos y encuadres que nunca dejan ver el borde) y que compila contra Media3. Sin estrenar, de más a menos riesgo:
+  - **Música por tramos.** Lo hace un procesador de sonido propio; si la música se repite en bucle, puede que el tiempo se cuente mal a partir de la segunda vuelta.
+  - **Subtítulos con la voz.** Dependen de que ElevenLabs devuelva los tiempos de cada letra. La forma de esa petición está escrita de memoria: desde aquí no se pudo abrir su documentación ni llamar a su API. Si falla, JARVIS graba la voz igual y te dirá que no puede poner subtítulos.
+  - **Fotos, movimiento, fundidos y velocidad.** Usan funciones de Media3 pensadas para esto, pero ninguna se ha exportado.
+- **Generar imágenes y video con ElevenLabs no está hecho.** No pude leer su documentación desde aquí (el entorno no llega a elevenlabs.io) y no quise escribir llamadas inventadas a una API que no he visto. Queda pendiente.
 - Exportar video depende de los codificadores de cada teléfono, y aquí no se ha podido exportar ni un solo video. Lo probado es la lógica (qué trozos, en qué orden, con qué formato); sacar fotogramas, mezclar la música, los rótulos y la exportación real están sin estrenar. En teléfonos modestos, los videos 4K o los montajes largos pueden fallar o tardar mucho. Tampoco se ha llamado a ElevenLabs desde la app.
 - **Tampoco se ha llamado a la API real de Claude** desde la app: no había clave. Se verificó contra un servidor simulado que la petición lleva lo que la API exige.
 - **El freno por palabras no es perfecto.** Reconoce los botones por su texto en español e inglés. Un botón sin texto en una aplicación rara puede escapársele si el agente tampoco lo marca; por eso los bancos piden permiso para todo. Empieza con tareas de poco riesgo y revisa el diario.

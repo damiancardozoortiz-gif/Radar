@@ -35,6 +35,13 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.audio.ChannelMixingAudioProcessor
 import androidx.media3.common.audio.ChannelMixingMatrix
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.common.audio.AudioProcessor
+import androidx.media3.common.audio.BaseAudioProcessor
+import androidx.media3.common.audio.SonicAudioProcessor
+import androidx.media3.common.C
+import androidx.media3.effect.MatrixTransformation
+import androidx.media3.effect.RgbMatrix
+import androidx.media3.effect.SpeedChangeEffect
 import androidx.media3.effect.OverlayEffect
 import androidx.media3.effect.OverlaySettings
 import androidx.media3.effect.Presentation
@@ -52,7 +59,15 @@ import com.radar.jarvis.nucleo.ErrorManos
 import com.radar.jarvis.nucleo.Estudio
 import com.radar.jarvis.nucleo.Medio
 import com.radar.jarvis.nucleo.Montaje
+import com.radar.jarvis.nucleo.Corte
+import com.radar.jarvis.nucleo.Palabra
 import com.radar.jarvis.nucleo.Plan
+import com.radar.jarvis.nucleo.Rotulo
+import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.util.Base64
+import org.json.JSONArray
+import java.nio.ByteOrder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -85,6 +100,7 @@ class EstudioAndroid(private val ctx: Context, private val almacen: Almacen) : E
     private val adjuntos = mutableListOf<Uri>()
     private val montajes = mutableListOf<Uri>()
     private var n = 0
+    private val tiempos = HashMap<String, List<Palabra>>()   // narración → cuándo se dice cada palabra
     private val principal = Handler(Looper.getMainLooper())
 
     /** El último video que montó JARVIS, para el botón «ver el video». */
@@ -112,6 +128,14 @@ class EstudioAndroid(private val ctx: Context, private val almacen: Almacen) : E
 
     @Synchronized private fun ficha(uri: Uri, origen: String, fecha: String = ""): Ficha? {
         fichas[uri.toString()]?.let { return it }
+        if (ctx.contentResolver.getType(uri)?.startsWith("image/") == true || uri.path?.lowercase()?.let { it.endsWith(".jpg") || it.endsWith(".png") } == true) {
+            // una imagen: solo se leen sus medidas, sin cargarla entera
+            val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            runCatching { ctx.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, o) } }
+            if (o.outWidth <= 0 || o.outHeight <= 0) return null
+            n++
+            return Ficha(Medio("i$n", nombreDe(uri).take(80), "imagen", 0, o.outWidth, o.outHeight, fecha, origen), uri).also { fichas[uri.toString()] = it }
+        }
         val r = MediaMetadataRetriever()
         return try {
             r.setDataSource(ctx, uri)
@@ -159,6 +183,13 @@ class EstudioAndroid(private val ctx: Context, private val almacen: Almacen) : E
     override fun hojaDeContactos(id: String, desdeMs: Long, hastaMs: Long, cuadros: Int): ByteArray {
         val f = porId(id)
         val m = f.medio
+        if (m.tipo == "imagen") {
+            // la imagen entera, reducida para no gastar de más al mirarla
+            val o = BitmapFactory.Options().apply { inSampleSize = (maxOf(m.ancho, m.alto) / 800).coerceAtLeast(1) }
+            val b = runCatching { ctx.contentResolver.openInputStream(f.uri)?.use { BitmapFactory.decodeStream(it, null, o) } }.getOrNull()
+                ?: throw ErrorManos("no pude abrir la imagen $id")
+            return ByteArrayOutputStream().also { b.compress(Bitmap.CompressFormat.JPEG, 75, it); b.recycle() }.toByteArray()
+        }
         val cols = if (cuadros <= 1) 1 else if (cuadros <= 4) 2 else if (cuadros <= 9) 3 else 4
         val filas = (cuadros + cols - 1) / cols
         val vertical = m.alto > m.ancho
@@ -305,7 +336,25 @@ class EstudioAndroid(private val ctx: Context, private val almacen: Almacen) : E
             val voz = JSONObject(String(voces)).optJSONArray("voices")?.optJSONObject(0)?.optString("voice_id").orEmpty()
             if (voz.isEmpty()) throw ErrorManos("la cuenta de ElevenLabs no tiene ninguna voz")
             val cuerpo = JSONObject().put("text", texto).put("model_id", "eleven_multilingual_v2").toString().toByteArray()
-            val (c2, audio) = pedir("https://api.elevenlabs.io/v1/text-to-speech/$voz?output_format=mp3_44100_128", cuerpo, clave, "audio/mpeg")
+            // se pide la voz junto con el momento de cada letra; si esa variante falla, la voz sola (sin subtítulos sincronizados)
+            var palabras: List<Palabra>? = null
+            var (c2, audio) = pedir("https://api.elevenlabs.io/v1/text-to-speech/$voz/with-timestamps?output_format=mp3_44100_128", cuerpo, clave, "application/json")
+            if (c2 in 200..299) runCatching {
+                val j = JSONObject(String(audio))
+                val al = j.optJSONObject("alignment") ?: j.optJSONObject("normalized_alignment")
+                audio = Base64.decode(j.getString("audio_base64"), Base64.DEFAULT)
+                if (al != null) {
+                    fun <T> lista(a: JSONArray?, f: (JSONArray, Int) -> T) = (0 until (a?.length() ?: 0)).map { f(a!!, it) }
+                    palabras = Montaje.palabras(lista(al.optJSONArray("characters")) { a, i -> a.getString(i) },
+                        lista(al.optJSONArray("character_start_times_seconds")) { a, i -> a.getDouble(i) },
+                        lista(al.optJSONArray("character_end_times_seconds")) { a, i -> a.getDouble(i) }).takeIf { it.isNotEmpty() }
+                }
+            }.onFailure { c2 = 0 }
+            if (c2 !in 200..299 || audio.size < 1000) {
+                palabras = null
+                val r = pedir("https://api.elevenlabs.io/v1/text-to-speech/$voz?output_format=mp3_44100_128", cuerpo, clave, "audio/mpeg")
+                c2 = r.first; audio = r.second
+            }
             if (c2 !in 200..299 || audio.size < 1000) throw ErrorManos("ElevenLabs no pudo generar la voz (código $c2)" +
                 if (c2 == 401 || c2 == 402) ": revisa la clave o el saldo de la cuenta" else "")
             val carpeta = File(ctx.filesDir, "narraciones").apply { mkdirs() }
@@ -313,7 +362,7 @@ class EstudioAndroid(private val ctx: Context, private val almacen: Almacen) : E
             val archivo = File(carpeta, "narracion-${System.currentTimeMillis()}.mp3").apply { writeBytes(audio) }
             val uri = Uri.fromFile(archivo)
             val f = ficha(uri, "narración") ?: throw ErrorManos("la narración se generó pero no se puede leer")
-            synchronized(this@EstudioAndroid) { adjuntos.add(0, uri) }
+            synchronized(this@EstudioAndroid) { adjuntos.add(0, uri); palabras?.let { tiempos[f.medio.id] = it } }
             f.medio
         } catch (e: ErrorManos) {
             throw e
@@ -321,6 +370,8 @@ class EstudioAndroid(private val ctx: Context, private val almacen: Almacen) : E
             throw ErrorManos("no hubo conexión con ElevenLabs para narrar (${e.javaClass.simpleName})")
         }
     }
+
+    @Synchronized override fun tiemposDeVoz(id: String): List<Palabra>? = tiempos[id]
 
     override fun compartir(id: String, app: String) {
         val f = porId(id)
@@ -343,7 +394,9 @@ class EstudioAndroid(private val ctx: Context, private val almacen: Almacen) : E
     }
 
     // ------------------------------------------------------------ montar
-    private fun rotulo(texto: String, plan: Plan): TextOverlay {
+    private fun rotulo(texto: String, plan: Plan): TextOverlay = TextOverlay.createStaticTextOverlay(letras(texto, plan), ABAJO)
+
+    private fun letras(texto: String, plan: Plan): SpannableString {
         // líneas de unas 26 letras, cortando entre palabras
         val lineas = mutableListOf(StringBuilder())
         for (palabra in texto.split(Regex("\\s+"))) {
@@ -356,27 +409,112 @@ class EstudioAndroid(private val ctx: Context, private val almacen: Almacen) : E
         t.setSpan(ForegroundColorSpan(Color.WHITE), 0, t.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         t.setSpan(BackgroundColorSpan(Color.argb(150, 0, 0, 0)), 0, t.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         t.setSpan(StyleSpan(Typeface.BOLD), 0, t.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-        // abajo, en el tercio inferior, centrado
-        return TextOverlay.createStaticTextOverlay(t, OverlaySettings.Builder().setBackgroundFrameAnchor(0f, -0.62f).build())
+        return t
+    }
+
+    /**
+     * Lo que lleva de trozo cada fotograma, en milisegundos del video final. Vale tanto si Media3 numera los
+     * fotogramas desde el principio del trozo como desde el principio del montaje: se cuenta desde el primero que llega.
+     */
+    private class Reloj {
+        private var base = Long.MIN_VALUE
+        fun ms(presentationTimeUs: Long): Long {
+            if (base == Long.MIN_VALUE || presentationTimeUs < base) base = presentationTimeUs
+            return (presentationTimeUs - base) / 1000
+        }
+    }
+
+    /** Subtítulos que cambian al ritmo de la voz dentro de un trozo. */
+    private inner class Subtitulos(private val rotulos: List<Rotulo>, private val plan: Plan) : TextOverlay() {
+        private val reloj = Reloj()
+        private val vacio = SpannableString(" ")
+        private val hechos = HashMap<String, SpannableString>()
+        override fun getText(presentationTimeUs: Long): SpannableString {
+            val ms = reloj.ms(presentationTimeUs)
+            val r = rotulos.firstOrNull { ms >= it.desdeMs && ms < it.hastaMs } ?: return vacio
+            return hechos.getOrPut(r.texto) { letras(r.texto, plan) }
+        }
+        override fun getOverlaySettings(presentationTimeUs: Long): OverlaySettings = ABAJO
+    }
+
+    private fun efectosDe(c: Corte, i: Int, plan: Plan, encaje: Int): List<Effect> {
+        val efectos = mutableListOf<Effect>()
+        if (c.velocidad != 1f) efectos += SpeedChangeEffect(c.velocidad)
+        efectos += Presentation.createForWidthAndHeight(plan.ancho, plan.alto, encaje)
+        val dura = c.duracionMs
+        if (c.movimiento.isNotEmpty()) {
+            val reloj = Reloj()
+            efectos += MatrixTransformation { us ->
+                val (escala, dx) = Montaje.encuadre(c.movimiento, reloj.ms(us), dura)
+                Matrix().apply { postScale(escala, escala); postTranslate(dx, 0f) }
+            }
+        }
+        if (c.fundido.isNotEmpty()) {
+            val reloj = Reloj()
+            efectos += RgbMatrix { us, _ ->
+                val b = Montaje.brillo(c.fundido, reloj.ms(us), dura)
+                floatArrayOf(b, 0f, 0f, 0f, 0f, b, 0f, 0f, 0f, 0f, b, 0f, 0f, 0f, 0f, 1f)
+            }
+        }
+        val subs = plan.subtitulosDe(i)
+        if (c.texto.isNotEmpty()) efectos += OverlayEffect(ImmutableList.of<androidx.media3.effect.TextureOverlay>(rotulo(c.texto, plan)))
+        else if (subs.isNotEmpty()) efectos += OverlayEffect(ImmutableList.of<androidx.media3.effect.TextureOverlay>(Subtitulos(subs, plan)))
+        return efectos
+    }
+
+    private fun volumenFijo(v: Float) = ChannelMixingAudioProcessor().apply {
+        putChannelMixingMatrix(ChannelMixingMatrix.create(1, 2).scaleBy(v))
+        putChannelMixingMatrix(ChannelMixingMatrix.create(2, 2).scaleBy(v))
+    }
+
+    /** Baja o sube la música en los tramos pedidos, contando el tiempo por las muestras que pasan. */
+    private class VolumenPorTramos(private val plan: Plan) : BaseAudioProcessor() {
+        private var cuadros = 0L
+        override fun onConfigure(f: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
+            if (f.encoding != C.ENCODING_PCM_16BIT) throw AudioProcessor.UnhandledAudioFormatException(f)
+            return f
+        }
+        override fun queueInput(entrada: ByteBuffer) {
+            val canales = inputAudioFormat.channelCount
+            val salida = replaceOutputBuffer(entrada.remaining()).order(ByteOrder.nativeOrder())
+            entrada.order(ByteOrder.nativeOrder())
+            var v = 1f
+            var i = 0
+            while (entrada.remaining() >= 2) {
+                if (i % canales == 0) {
+                    if (cuadros % 441 == 0L || i == 0) v = plan.volumenMusicaEn(cuadros * 1000 / inputAudioFormat.sampleRate) / plan.volumenMusica.coerceAtLeast(0.001f)
+                    cuadros++
+                }
+                salida.putShort((entrada.short * v).toInt().coerceIn(-32768, 32767).toShort())
+                i++
+            }
+            salida.flip()
+        }
+        override fun onReset() { cuadros = 0 }
     }
 
     private fun composicion(plan: Plan): Composition {
         val encaje = if (plan.recortar) Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP else Presentation.LAYOUT_SCALE_TO_FIT
-        val trozos = plan.cortes.map { c ->
-            val item = MediaItem.Builder().setUri(porId(c.id).uri).setClippingConfiguration(
-                MediaItem.ClippingConfiguration.Builder().setStartPositionMs(c.desdeMs).setEndPositionMs(c.hastaMs).build()).build()
-            val efectos = mutableListOf<Effect>(Presentation.createForWidthAndHeight(plan.ancho, plan.alto, encaje))
-            if (c.texto.isNotEmpty()) efectos += OverlayEffect(ImmutableList.of<androidx.media3.effect.TextureOverlay>(rotulo(c.texto, plan)))
-            EditedMediaItem.Builder(item).setRemoveAudio(c.sinSonido).setEffects(Effects(emptyList(), efectos)).build()
+        val trozos = plan.cortes.mapIndexed { i, c ->
+            val sonido = mutableListOf<AudioProcessor>()
+            val b = if (c.imagen) {
+                EditedMediaItem.Builder(MediaItem.Builder().setUri(porId(c.id).uri).setImageDurationMs(c.hastaMs).build())
+                    .setDurationUs(c.hastaMs * 1000).setFrameRate(30)
+            } else {
+                if (c.velocidad != 1f) sonido += SonicAudioProcessor().apply { setSpeed(c.velocidad) }
+                if (c.volumen != 1f && !c.sinSonido) sonido += volumenFijo(c.volumen)
+                EditedMediaItem.Builder(MediaItem.Builder().setUri(porId(c.id).uri).setClippingConfiguration(
+                    MediaItem.ClippingConfiguration.Builder().setStartPositionMs(c.desdeMs).setEndPositionMs(c.hastaMs).build()).build())
+                    .setRemoveAudio(c.sinSonido)
+            }
+            b.setEffects(Effects(sonido, efectosDe(c, i, plan, encaje))).build()
         }
         val secuencias = mutableListOf(EditedMediaItemSequence(trozos))
         plan.musicaId?.let { id ->
-            val volumen = ChannelMixingAudioProcessor().apply {
-                putChannelMixingMatrix(ChannelMixingMatrix.create(1, 2).scaleBy(plan.volumenMusica))
-                putChannelMixingMatrix(ChannelMixingMatrix.create(2, 2).scaleBy(plan.volumenMusica))
-            }
+            val sonido = mutableListOf<AudioProcessor>(volumenFijo(plan.volumenMusica))
+            if (plan.tramosMusica.isNotEmpty() && plan.volumenMusica > 0f) sonido += VolumenPorTramos(plan)
             val musica = EditedMediaItem.Builder(MediaItem.fromUri(porId(id).uri)).setRemoveVideo(true)
-                .setEffects(Effects(listOf(volumen), emptyList())).build()
+                .setEffects(Effects(sonido, emptyList())).build()
             secuencias += EditedMediaItemSequence(listOf(musica), /* isLooping = */ true)     // se repite hasta que acaba el video
         }
         plan.narracionId?.let { id ->
@@ -384,7 +522,7 @@ class EstudioAndroid(private val ctx: Context, private val almacen: Almacen) : E
             secuencias += EditedMediaItemSequence(listOf(EditedMediaItem.Builder(MediaItem.fromUri(porId(id).uri)).setRemoveVideo(true).build()))
         }
         val b = Composition.Builder(secuencias)
-        // sin música, si algún trozo va sin sonido se fuerza una pista de audio para que el resto no se quede mudo
+        // sin música ni voz, si algún trozo va sin sonido se fuerza una pista de audio para que el resto no se quede mudo
         if (plan.musicaId == null && plan.narracionId == null && plan.cortes.any { it.sinSonido } && !plan.cortes.all { it.sinSonido }) b.experimentalSetForceAudioTrack(true)
         return b.build()
     }
@@ -459,6 +597,8 @@ class EstudioAndroid(private val ctx: Context, private val almacen: Almacen) : E
 
     companion object {
         private const val MAX_GALERIA = 25
+        /** Los rótulos van abajo, en el tercio inferior, centrados. */
+        private val ABAJO: OverlaySettings = OverlaySettings.Builder().setBackgroundFrameAnchor(0f, -0.62f).build()
         val PERMISO_GALERIA: String =
             if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_VIDEO else Manifest.permission.READ_EXTERNAL_STORAGE
     }
