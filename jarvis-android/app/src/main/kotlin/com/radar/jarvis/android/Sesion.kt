@@ -39,6 +39,8 @@ object Sesion {
         private set
     lateinit var voz: Voz
         private set
+    lateinit var estudio: EstudioAndroid
+        private set
 
     @Volatile var estado = Estado.ESPERA; private set
     @Volatile var subtitulo = ""; private set
@@ -53,6 +55,7 @@ object Sesion {
     fun iniciar(ctx: Context) {
         almacen = Almacen(ctx.applicationContext)
         voz = Voz(ctx.applicationContext)
+        estudio = EstudioAndroid(ctx.applicationContext, almacen)
     }
 
     fun observar(o: () -> Unit) { oyentes += o }
@@ -76,7 +79,7 @@ object Sesion {
 
     private fun agente(): Agente = agente ?: Agente(
         almacen.ajustes(),
-        Herramientas(ServicioAccesibilidad.manos, almacen, ::pedirPermiso, ::alPaso),
+        Herramientas(ServicioAccesibilidad.manos, almacen, ::pedirPermiso, ::alPaso, estudio = estudio),
         almacen,
     ) { nota -> pasos += Paso(0, nota, "nota", ""); avisar() }.also { agente = it }
 
@@ -131,6 +134,15 @@ object Sesion {
                 poner(Estado.HABLANDO, decir)
                 principal.post { voz.decir(limpiar(decir)) { if (estado == Estado.HABLANDO) poner(Estado.ESPERA) } }
             } else poner(Estado.ESPERA, decir)
+        }
+    }
+
+    /** Los videos o audios que eliges con el botón de adjuntar. */
+    fun adjuntar(uris: List<android.net.Uri>) {
+        ambito.launch {
+            val n = estudio.adjuntar(uris)
+            poner(estado, if (n == 0) "No pude leer esos archivos: tienen que ser videos o audios."
+                else "$n ${if (n == 1) "archivo adjunto" else "archivos adjuntos"}. Dime qué hago con ${if (n == 1) "él" else "ellos"}.")
         }
     }
 

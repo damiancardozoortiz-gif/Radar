@@ -11,8 +11,8 @@ android {
         applicationId = "com.radar.jarvis"
         minSdk = 26          // Android 8.0
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
     }
 
     signingConfigs {
@@ -60,6 +60,10 @@ android {
 dependencies {
     implementation("com.anthropic:anthropic-java:3.3.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    // Media3 (Google): el motor que corta, une y exporta los videos
+    implementation("androidx.media3:media3-transformer:1.5.1")
+    implementation("androidx.media3:media3-effect:1.5.1")
+    implementation("androidx.media3:media3-common:1.5.1")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")   // en las pruebas de escritorio no hay org.json de Android
 }

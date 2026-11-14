@@ -27,6 +27,8 @@ class AjustesActivity : Activity() {
     private lateinit var estadoAcc: TextView
     private lateinit var estadoMic: TextView
     private lateinit var estadoClave: TextView
+    private lateinit var estadoGaleria: TextView
+    private lateinit var estadoVoz: TextView
     private lateinit var memoria: TextView
     private lateinit var diario: TextView
     private val a get() = Sesion.almacen
@@ -79,6 +81,20 @@ class AjustesActivity : Activity() {
         estadoMic = nota("")
         boton("Permitir micrófono") { requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 1) }
 
+        titulo("Video")
+        estadoGaleria = nota("")
+        nota("Con este permiso JARVIS encuentra solo tus videos recientes («monta los tres últimos»). Sin él, adjúntalos con el botón + de la pantalla principal.")
+        boton("Permitir ver mis videos") { requestPermissions(arrayOf(com.radar.jarvis.android.EstudioAndroid.PERMISO_GALERIA), 2) }
+        nota("Oídos (opcional). Para que entienda lo que se DICE en los videos, pon una clave de ElevenLabs (elevenlabs.io → API keys). Sin ella decide solo por la imagen. Al transcribir, el sonido del video se envía a ElevenLabs.")
+        val claveVoz = campo("Clave de ElevenLabs", "", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD)
+        estadoVoz = nota("")
+        boton("Guardar clave de ElevenLabs") {
+            val t = claveVoz.text.toString().trim()
+            if (t.isEmpty()) return@boton Toast.makeText(c, "Escribe la clave primero.", Toast.LENGTH_SHORT).show()
+            a.claveVoz = t; claveVoz.setText(""); pintar()
+        }
+        boton("Borrar clave de ElevenLabs") { a.claveVoz = ""; pintar() }
+
         titulo("Cerebro")
         nota("Modelo. Los más capaces cuestan más por tarea; puedes cambiarlo cuando quieras.")
         lista(Ajustes.MODELOS, a.modelo) { a.modelo = it; Sesion.reconfigurar() }
@@ -117,6 +133,11 @@ class AjustesActivity : Activity() {
         val mic = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         estadoMic.text = if (mic) "✓ Micrófono permitido." else "Micrófono sin permiso: solo podrás escribirle."
         estadoMic.setTextColor(if (mic) Estilo.MENTA else Estilo.AMBAR)
+        val galeria = Sesion.estudio.puedeVerGaleria()
+        estadoGaleria.text = if (galeria) "✓ JARVIS puede ver tus videos de la galería." else "JARVIS no ve tu galería: solo los videos que le adjuntes."
+        estadoGaleria.setTextColor(if (galeria) Estilo.MENTA else Estilo.TENUE)
+        estadoVoz.text = if (a.hayClaveVoz) "✓ Hay una clave de ElevenLabs guardada." else "Sin clave de ElevenLabs: JARVIS no oye los videos, solo los ve."
+        estadoVoz.setTextColor(if (a.hayClaveVoz) Estilo.MENTA else Estilo.TENUE)
         memoria.text = a.todo().joinToString("\n") { "· $it" }.ifEmpty { "Todavía no le has pedido que recuerde nada." }
         diario.text = a.diario().ifEmpty { "Todavía no ha hecho nada." }
     }

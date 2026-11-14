@@ -37,6 +37,7 @@ class MainActivity : Activity() {
     private lateinit var campo: EditText
     private lateinit var btnPausa: TextView
     private lateinit var btnDetener: TextView
+    private lateinit var btnVer: android.widget.Button
     private val alCambiar: () -> Unit = { pintar() }
 
     override fun onCreate(guardado: Bundle?) {
@@ -92,12 +93,14 @@ class MainActivity : Activity() {
         raiz.addView(tarjeta, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(c, 16), 0, dp(c, 16), dp(c, 8)) })
 
         // ---- los pasos y el detalle
+        btnVer = Estilo.boton(c, "Ver el último video", android.graphics.Color.parseColor("#225EFFC4"), Estilo.MENTA, Estilo.MENTA) { verVideo() }
         pasos = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
         detalle = Estilo.texto(c, "", 14f, Color.parseColor("#B9CDD9")).apply { setTextIsSelectable(true); setPadding(0, dp(c, 8), 0, dp(c, 8)) }
         deslizador = ScrollView(c).apply {
             addView(LinearLayout(c).apply {
                 orientation = LinearLayout.VERTICAL; setPadding(dp(c, 20), 0, dp(c, 20), 0)
                 addView(pasos); addView(detalle)
+                addView(btnVer, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(c, 6); bottomMargin = dp(c, 12) })
             })
         }
         raiz.addView(deslizador, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -116,10 +119,16 @@ class MainActivity : Activity() {
             background = Estilo.caja(c, Color.parseColor("#CC08121E"), Estilo.LINEA, 26)
             setOnClickListener { alTocarOrbe() }
         }
+        val mas = Estilo.texto(c, "+", 26f, Estilo.CIAN).apply {
+            gravity = Gravity.CENTER; contentDescription = "Adjuntar videos o música"
+            background = Estilo.caja(c, Color.parseColor("#CC08121E"), Estilo.LINEA, 26)
+            setOnClickListener { elegirArchivos() }
+        }
         raiz.addView(LinearLayout(c).apply {
             gravity = Gravity.CENTER_VERTICAL; setPadding(dp(c, 14), dp(c, 8), dp(c, 14), dp(c, 12))
-            addView(mic, LinearLayout.LayoutParams(dp(c, 52), dp(c, 52)).apply { marginEnd = dp(c, 10) })
-            addView(campo, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(c, 10) })
+            addView(mas, LinearLayout.LayoutParams(dp(c, 48), dp(c, 48)).apply { marginEnd = dp(c, 8) })
+            addView(mic, LinearLayout.LayoutParams(dp(c, 48), dp(c, 48)).apply { marginEnd = dp(c, 8) })
+            addView(campo, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(c, 8) })
             addView(Estilo.boton(c, "Mandar", Color.parseColor("#225EE4FF"), Estilo.CIAN, Estilo.CIAN) { mandar() })
         })
         setContentView(raiz)
@@ -136,6 +145,36 @@ class MainActivity : Activity() {
         campo.setText("")
         getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(campo.windowToken, 0)
         Sesion.enviar(t)
+    }
+
+    /** Abre el selector de archivos del teléfono para elegir videos y música. No hace falta ningún permiso. */
+    private fun elegirArchivos() {
+        try {
+            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")
+                .putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("video/*", "audio/*")).putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true), 2)
+        } catch (e: Exception) {
+            android.widget.Toast.makeText(this, "Este teléfono no tiene selector de archivos.", android.widget.Toast.LENGTH_LONG).show()
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(codigo: Int, resultado: Int, datos: Intent?) {
+        super.onActivityResult(codigo, resultado, datos)
+        if (codigo != 2 || resultado != RESULT_OK || datos == null) return
+        val uris = buildList {
+            datos.clipData?.let { cd -> for (i in 0 until cd.itemCount) add(cd.getItemAt(i).uri) }
+            datos.data?.let { if (it !in this) add(it) }
+        }
+        if (uris.isNotEmpty()) Sesion.adjuntar(uris)
+    }
+
+    private fun verVideo() {
+        val uri = Sesion.estudio.ultimoMontaje ?: return
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "video/mp4").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+        } catch (e: Exception) {
+            android.widget.Toast.makeText(this, "Está en la galería, carpeta Películas/JARVIS.", android.widget.Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun alTocarOrbe() {
@@ -203,6 +242,8 @@ class MainActivity : Activity() {
                     LinearLayout.LayoutParams(0, -2, 1f))
             })
         }
+        val hayVideo = Sesion.estudio.ultimoMontaje?.scheme == "content"
+        btnVer.visibility = if (hayVideo && !Sesion.ocupado) View.VISIBLE else View.GONE
         detalle.text = Sesion.detalle
         detalle.visibility = if (Sesion.detalle.isEmpty()) View.GONE else View.VISIBLE
         if (Sesion.ocupado) deslizador.post { deslizador.fullScroll(View.FOCUS_DOWN) }

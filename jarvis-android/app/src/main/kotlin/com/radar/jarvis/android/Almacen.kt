@@ -38,23 +38,33 @@ class Almacen(ctx: Context) : Memoria {
         }
     }
 
-    var clave: String
-        get() = try {
-            val crudo = Base64.decode(prefs.getString("clave", "") ?: "", Base64.NO_WRAP)
+    private fun leerSecreto(nombre: String): String = try {
+            val crudo = Base64.decode(prefs.getString(nombre, "") ?: "", Base64.NO_WRAP)
             if (crudo.size < 13) "" else {
                 val c = Cipher.getInstance("AES/GCM/NoPadding")
                 c.init(Cipher.DECRYPT_MODE, llave(), GCMParameterSpec(128, crudo, 0, 12))
                 String(c.doFinal(crudo, 12, crudo.size - 12), Charsets.UTF_8)
             }
         } catch (e: Exception) { "" }
-        set(v) {
-            if (v.isBlank()) { prefs.edit().remove("clave").apply(); return }
-            val c = Cipher.getInstance("AES/GCM/NoPadding")
-            c.init(Cipher.ENCRYPT_MODE, llave())
-            prefs.edit().putString("clave", Base64.encodeToString(c.iv + c.doFinal(v.trim().toByteArray()), Base64.NO_WRAP)).apply()
-        }
 
+    private fun guardarSecreto(nombre: String, v: String) {
+        if (v.isBlank()) { prefs.edit().remove(nombre).apply(); return }
+        val c = Cipher.getInstance("AES/GCM/NoPadding")
+        c.init(Cipher.ENCRYPT_MODE, llave())
+        prefs.edit().putString(nombre, Base64.encodeToString(c.iv + c.doFinal(v.trim().toByteArray()), Base64.NO_WRAP)).apply()
+    }
+
+    /** La clave de la API de Claude. */
+    var clave: String
+        get() = leerSecreto("clave")
+        set(v) = guardarSecreto("clave", v)
     val hayClave get() = !prefs.getString("clave", "").isNullOrEmpty()
+
+    /** La clave de ElevenLabs, opcional: solo para transcribir lo que se dice en los videos. */
+    var claveVoz: String
+        get() = leerSecreto("clave_voz")
+        set(v) = guardarSecreto("clave_voz", v)
+    val hayClaveVoz get() = !prefs.getString("clave_voz", "").isNullOrEmpty()
 
     // ---------- ajustes ----------
     var modelo: String

@@ -93,7 +93,10 @@ class AgenteTest {
         assertFalse(p.toString().contains("sk-ant-api03-prueba"))
         val tools = p.getJSONArray("tools")
         val nombres = (0 until tools.length()).map { tools.getJSONObject(it).getString("name") }
-        assertTrue(nombres.containsAll(listOf("ver_pantalla", "tocar", "escribir", "abrir_app", "web_search")))
+        assertTrue(nombres.containsAll(listOf("ver_pantalla", "tocar", "escribir", "abrir_app", "web_search", "medios", "ver_video", "montar_video")))
+        val montar = tools.getJSONObject(nombres.indexOf("montar_video")).getJSONObject("input_schema")
+        assertEquals("array", montar.getJSONObject("properties").getJSONObject("clips").getString("type"))
+        assertEquals("id", montar.getJSONObject("properties").getJSONObject("clips").getJSONObject("items").getJSONArray("required").getString(0))
         assertEquals("web_search_20260209", tools.getJSONObject(nombres.indexOf("web_search")).getString("type"))
         assertTrue(p.getString("system").contains("JARVIS"))
 

@@ -30,6 +30,7 @@ class Herramientas(
     private val permiso: suspend (Peticion) -> Boolean,
     private val paso: (Int, String, String, String) -> Unit = { _, _, _, _ -> },
     private val pausaTrasActuar: Long = 900,
+    private val estudio: Estudio? = null,
 ) {
     private var vista: Vista? = null
     private var vistaT = 0L
@@ -153,7 +154,45 @@ class Herramientas(
         return Resultado("Abierta en el navegador del teléfono.\n" + textoVista())
     }
 
+    // ------------------------------------------------------------ video
+    private fun estudio() = estudio ?: throw ErrorManos("el estudio de video no está disponible")
+
+    private fun medios(): Resultado {
+        val l = estudio().medios()
+        if (l.isEmpty()) return Resultado("No hay ningún video ni audio disponible. Pide a la persona que adjunte los videos con el botón «adjuntar» " +
+            "o que dé permiso para ver su galería en Ajustes.")
+        return Resultado("${l.size} medios disponibles (los más recientes primero):\n" +
+            noConfiable("nombres de archivo", l.joinToString("\n") { it.linea() }))
+    }
+
+    private fun verVideo(a: Map<String, Any?>): Resultado {
+        val id = a["id"]?.toString().orEmpty()
+        val m = estudio().medios().firstOrNull { it.id == id } ?: return Resultado("No existe el medio «$id». Usa medios para ver los que hay.", error = true)
+        if (m.tipo != "video") return Resultado("«$id» es un audio: no tiene imagen.", error = true)
+        val desde = (((a["desde"] as? Number)?.toDouble() ?: 0.0) * 1000).toLong().coerceIn(0, m.duracionMs)
+        val hasta = ((a["hasta"] as? Number)?.toDouble()?.let { (it * 1000).toLong() } ?: m.duracionMs).coerceIn(desde, m.duracionMs)
+        val cuadros = (entero(a["cuadros"]) ?: 9).coerceIn(1, 16)
+        val img = estudio().hojaDeContactos(id, desde, hasta, cuadros)
+        return Resultado("Hoja de contactos de $id «${m.nombre}» (${Montaje.reloj(m.duracionMs)}, ${m.ancho}×${m.alto}): $cuadros fotogramas entre " +
+            "${Montaje.reloj(desde)} y ${Montaje.reloj(hasta)}, en orden de izquierda a derecha y de arriba abajo, cada uno con su minuto:segundo. " +
+            "Para ver un tramo con más detalle, repite con desde y hasta más juntos.", img)
+    }
+
+    private suspend fun montar(a: Map<String, Any?>): Resultado {
+        val plan = Montaje.plan(a, estudio().medios())
+        var ultimo = -1
+        val n = acciones
+        val etiqueta = etiquetaPaso("montar_video", a)
+        val nuevo = estudio().montar(plan) { p -> if (p / 10 != ultimo / 10) { ultimo = p; paso(n, "$etiqueta · $p %", "en curso", "") } }
+        return Resultado("Montaje exportado: ${nuevo.linea()}. Está guardado en la galería del teléfono. " +
+            "Míralo con ver_video (id ${nuevo.id}) para comprobar que quedó como se pidió antes de decir que está listo.")
+    }
+
     private suspend fun uno(nombre: String, a: Map<String, Any?>): Resultado = when (nombre) {
+        "medios" -> medios()
+        "ver_video" -> verVideo(a)
+        "transcribir_video" -> Resultado(noConfiable("lo que se dice en el video", estudio().transcribir(a["id"]?.toString().orEmpty())))
+        "montar_video" -> montar(a)
         "ver_pantalla" -> {
             val texto = textoVista()
             if (a["captura"] == true) {
@@ -192,7 +231,7 @@ class Herramientas(
 
     /** Ejecuta una herramienta. Nunca lanza: un fallo vuelve como Resultado con error, para que el agente lo vea. */
     suspend fun ejecutar(nombre: String, args: Map<String, Any?>): Resultado {
-        manos.noDisponible()?.let { if (nombre != "recordar") return Resultado("No puedo usar el teléfono: $it. Díselo a la persona y termina.", error = true) }
+        manos.noDisponible()?.let { if (nombre != "recordar" && nombre !in DE_VIDEO) return Resultado("No puedo usar el teléfono: $it. Díselo a la persona y termina.", error = true) }
         acciones++
         if (acciones > MAX_ACCIONES) return Resultado("Límite de $MAX_ACCIONES acciones por tarea alcanzado. Termina y cuenta hasta dónde llegaste.", error = true)
         val n = acciones
@@ -217,6 +256,8 @@ class Herramientas(
 
     companion object {
         const val MAX_ACCIONES = 80
+        /** Estas no necesitan manejar la pantalla: funcionan aunque la accesibilidad esté apagada. */
+        val DE_VIDEO = setOf("medios", "ver_video", "transcribir_video", "montar_video")
         private val INYECCION = Regex(
             "ignora\\w*\\s+(tus|las|todas|sus)?\\s*(instrucciones|ordenes|órdenes|reglas)|ignore (all |your )?(previous )?instructions" +
                 "|olvida tus instrucciones|system prompt|eres ahora|you are now|nuevas instrucciones", RegexOption.IGNORE_CASE
@@ -246,6 +287,26 @@ class Herramientas(
             Herramienta("abrir_url", "Abre una dirección web en el navegador del teléfono. Úsala cuando haya que HACER algo en una web; para informarte, la búsqueda web es más rápida.",
                 mapOf("url" to mapOf<String, Any>("type" to "string")) + PROPOSITO, listOf("url")),
             Herramienta("esperar", "Espera unos segundos (máximo 15) a que algo cargue y devuelve la pantalla.", mapOf("segundos" to mapOf("type" to "number"))),
+            Herramienta("medios", "Lista los videos y audios con los que puedes trabajar: los que la persona adjuntó, los videos recientes de su galería y los montajes que ya hiciste. Cada uno con su id, duración y tamaño."),
+            Herramienta("ver_video", "Tus ojos sobre un video: devuelve una hoja de contactos con fotogramas repartidos por el tramo que pidas, cada uno con su minuto:segundo. Empieza por el video entero y acércate (desde/hasta en segundos) a los tramos que te interesen para decidir dónde cortar.",
+                mapOf("id" to mapOf("type" to "string"), "desde" to mapOf("type" to "number", "description" to "segundo inicial"),
+                    "hasta" to mapOf("type" to "number", "description" to "segundo final"),
+                    "cuadros" to mapOf("type" to "integer", "description" to "cuántos fotogramas, de 1 a 16 (por defecto 9)")), listOf("id")),
+            Herramienta("transcribir_video", "Tus oídos sobre un video: devuelve lo que se dice, con marcas de tiempo. Úsala cuando el contenido hablado importe para decidir los cortes. Necesita la clave de ElevenLabs en Ajustes.",
+                mapOf("id" to mapOf("type" to "string")), listOf("id")),
+            Herramienta("montar_video", "Exporta un video nuevo uniendo trozos de uno o varios videos, en el orden dado, con cortes directos. Puede poner un texto sobre cada trozo, música de fondo y cambiar el formato. No modifica los originales. Tarda: un minuto de video puede llevar uno o dos minutos.",
+                mapOf("clips" to mapOf("type" to "array", "description" to "Los trozos, en orden.", "items" to mapOf("type" to "object",
+                        "properties" to mapOf("id" to mapOf("type" to "string", "description" to "id del video"),
+                            "desde" to mapOf("type" to "number", "description" to "segundo donde empieza el trozo (por defecto 0)"),
+                            "hasta" to mapOf("type" to "number", "description" to "segundo donde termina (por defecto, el final)"),
+                            "texto" to mapOf("type" to "string", "description" to "título o rótulo que se ve sobre este trozo (opcional)"),
+                            "sin_sonido" to mapOf("type" to "boolean", "description" to "quitar el sonido original de este trozo")),
+                        "required" to listOf("id"))),
+                    "formato" to mapOf("type" to "string", "enum" to listOf("original", "vertical", "horizontal", "cuadrado"), "description" to "vertical 1080×1920 (TikTok, Reels, Shorts), horizontal 1920×1080, cuadrado 1080×1080"),
+                    "encuadre" to mapOf("type" to "string", "enum" to listOf("recortar", "encajar"), "description" to "al cambiar de formato: recortar llena el cuadro (por defecto); encajar deja el video entero con bandas"),
+                    "musica" to mapOf("type" to "string", "description" to "id de un audio para ponerlo de fondo, repetido si hace falta (opcional)"),
+                    "volumen_musica" to mapOf("type" to "number", "description" to "de 0 a 1; por defecto 0.25"),
+                    "nombre" to mapOf("type" to "string", "description" to "nombre corto del archivo")) + PROPOSITO, listOf("clips")),
             Herramienta("recordar", "Guarda UNA cosa en la memoria de JARVIS (una frase autocontenida). Solo si la persona lo pidió o seguirá importando dentro de meses.",
                 mapOf("texto" to mapOf("type" to "string")), listOf("texto")),
         )
@@ -263,6 +324,10 @@ class Herramientas(
                 "abrir_url" -> "Abrir ${a["url"]?.toString().orEmpty().take(60)}"
                 "esperar" -> "Esperar"
                 "recordar" -> "Guardar en la memoria"
+                "medios" -> "Ver qué videos hay"
+                "ver_video" -> "Mirar el video ${a["id"]}"
+                "transcribir_video" -> "Escuchar el video ${a["id"]}"
+                "montar_video" -> "Montar el video"
                 else -> nombre
             }
         }
