@@ -499,6 +499,14 @@ nav button.on{
 .s3big{font-size:42px;font-weight:850;line-height:1.1;color:var(--g)}
 .s3v{display:block;width:100%;margin:5px 0;text-align:left;background:var(--s2);border:1px solid var(--b);font-weight:600;font-size:13px;color:#dffcf0}
 
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.chips:empty{display:none}
+.chip{display:inline-flex;align-items:center;border:1px solid var(--b);border-radius:999px;background:var(--s2);overflow:hidden}
+.chip button{padding:7px 10px;border-radius:0;background:transparent;border:0;font-size:12px;font-weight:600;color:#dffcf0;min-height:0;width:auto;margin:0}
+.chip button[data-delradar]{color:var(--m);border-left:1px solid var(--b)}
+.spark{display:inline-block;vertical-align:middle;margin-right:6px}
+.spark polyline{fill:none;stroke:var(--g);stroke-width:1.6;stroke-linejoin:round;stroke-linecap:round}
+.badge-out{display:inline-block;padding:1px 7px;border-radius:999px;border:1px solid var(--g);color:var(--g);font-weight:700;font-size:11px}
 @media(max-width:370px){
   .cockpit-hero{grid-template-columns:minmax(0,1fr) 82px;padding:15px 12px}
   .radar-orb{width:78px;height:78px}
@@ -559,6 +567,8 @@ nav button.on{
    <select id="sort">
     <option value="speed">Velocidad estimada</option>
     <option value="growth">Crecimiento medido</option>
+    <option value="outlier">Supera a su canal</option>
+    <option value="engage">Más "me gusta" por vista</option>
     <option value="views">Más vistas</option>
     <option value="new">Más recientes</option>
    </select>
@@ -567,9 +577,16 @@ nav button.on{
    <label for="threshold">Umbral de despegue: <span id="thresholdText">1000</span> vistas/hora</label>
    <input id="threshold" type="range" min="100" max="10000" step="100" value="1000">
    <label><input id="onlyHot" type="checkbox" style="width:auto"> Mostrar solo videos despegando</label>
+   <label for="auto">Reescanear solo mientras la app está abierta</label>
+   <select id="auto">
+    <option value="0">No</option><option value="15">Cada 15 minutos</option>
+    <option value="30">Cada 30 minutos</option><option value="60">Cada hora</option>
+   </select>
    <button id="search" class="btn">🔎 Buscar videos</button>
+   <button id="saveRadar" class="btn sec">📌 Guardar este radar</button>
+   <div id="savedRadars" class="chips"></div>
    <button id="export" class="btn sec">📄 Exportar ranking CSV</button>
-   <div class="notice">*Todas las regiones utiliza una búsqueda global aproximada. La velocidad estimada no equivale al crecimiento real.</div>
+   <div class="notice">*Todas las regiones utiliza una búsqueda global aproximada. La velocidad estimada no equivale al crecimiento real. Cada búsqueda gasta unas 102 unidades de las 10.000 diarias de tu cuota de YouTube: reescanear cada 15 minutos durante todo un día la agota.</div>
   </div>
 
   <div class="stats">
@@ -723,7 +740,8 @@ const state={
  favs:get("radar_favs",[]),
  snaps:get("radar_snaps",{}),
  token:null,
- quota:get("radar_quota",{day:"",units:0})
+ quota:get("radar_quota",{day:"",units:0}),
+ radars:get("radar_saved",[])
 };
 let activeView="radar",tokenClient=null,oauthReady=false;
 const fmt=n=>new Intl.NumberFormat("es-AR").format(Math.round(Number(n)||0));
@@ -731,6 +749,18 @@ const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&
 const hours=v=>Math.max(1,(Date.now()-v.published)/3600000);
 const speed=v=>Math.round(v.views/hours(v));
 const isHot=v=>hours(v)<=48&&speed(v)>=+$("threshold").value;
+/* Cuántas veces supera el video a los suscriptores de su canal: la señal de que salió de su público habitual. */
+const outlier=v=>v.subs>0?v.views/v.subs:null;
+const engage=v=>v.views>0?v.likes/v.views*100:0;
+const short=n=>{n=Number(n)||0;return n>=1e6?(n/1e6).toFixed(n>=1e7?0:1).replace(".",",")+" M":n>=1e3?(n/1e3).toFixed(n>=1e4?0:1).replace(".",",")+" mil":String(n)};
+/* Mini gráfico con las vistas de cada consulta guardada. */
+function spark(id){
+ const h=state.snaps[id]?.h;if(!h||h.length<3)return "";
+ const t0=h[0][0],t1=h[h.length-1][0],v0=h[0][1],v1=Math.max(...h.map(p=>p[1]));
+ if(t1<=t0||v1<=v0)return "";
+ const pts=h.map(p=>((p[0]-t0)/(t1-t0)*58+1).toFixed(1)+","+(17-(p[1]-v0)/(v1-v0)*16).toFixed(1)).join(" ");
+ return `<svg class="spark" width="60" height="18" viewBox="0 0 60 18" role="img" aria-label="Evolución de vistas en ${h.length} consultas"><polyline points="${pts}"/></svg>`;
+}
 const duration=s=>{let m=String(s||"").match(/^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/);return m?(+m[1]||0)*3600+(+m[2]||0)*60+(+m[3]||0):0};
 const timeAgo=d=>{let h=Math.max(0,(Date.now()-d)/3600000);return h<1?"hace menos de 1 h":h<24?"hace "+Math.floor(h)+" h":"hace "+Math.floor(h/24)+" d"};
 function status(id,msg,error=false){$(id).textContent=msg;$(id).className="status "+(error?"err":"")}
@@ -750,7 +780,10 @@ function saveSnapshots(list){
    v.growth=Math.round((v.views-old.views)/((now-old.t)/3600000));
    v.interval=now-old.t;
   }else if(old){v.growth=null;v.interval=now-old.t}
-  state.snaps[v.id]={t:now,views:v.views};
+  /* h guarda hasta 12 consultas (cada una al menos 5 minutos después de la anterior) para dibujar la evolución */
+  const h=(old?.h||(old?[[old.t,old.views]]:[])).slice();
+  if(!h.length||now-h[h.length-1][0]>=300000)h.push([now,v.views]);else h[h.length-1]=[h[h.length-1][0],v.views];
+  state.snaps[v.id]={t:now,views:v.views,h:h.slice(-12)};
  }
  const keys=Object.keys(state.snaps);
  if(keys.length>600)keys.sort((a,b)=>state.snaps[a].t-state.snaps[b].t).slice(0,keys.length-600).forEach(k=>delete state.snaps[k]);
@@ -762,6 +795,8 @@ function ordered(list){
   if(mode==="growth")return (b.growth??-1)-(a.growth??-1);
   if(mode==="views")return b.views-a.views;
   if(mode==="new")return b.published-a.published;
+  if(mode==="outlier")return (outlier(b)??-1)-(outlier(a)??-1);
+  if(mode==="engage")return engage(b)-engage(a);
   return speed(b)-speed(a);
  });
 }
@@ -775,7 +810,8 @@ function renderCard(v,i){
  <div class="meta">${esc(v.channel)} · ${timeAgo(v.published)}</div>
  <div class="meta">👁 ${fmt(v.views)} vistas · ⏱ ${Math.floor(v.duration/60)} min ${v.duration%60} s</div>
  <div class="speed">⚡ ${fmt(speed(v))} vistas/h estimadas ${hot?" · 🔥 DESPEGANDO":""}</div>
- <div class="meta">${v.growth!=null?"📈 Cambio medido: "+(v.growth>=0?"+":"")+fmt(v.growth)+" vistas/h":"📊 Volvé a consultar después de unos minutos para medir el crecimiento"}</div>
+ ${v.subs!=null||v.likes?`<div class="meta">${v.subs>0?"📣 "+short(v.subs)+" suscriptores"+(outlier(v)>=1?` · <span class="badge-out">${outlier(v)>=10?Math.round(outlier(v)):outlier(v).toFixed(1).replace(".",",")}× su canal</span>`:""):v.subs===0?"📣 Suscriptores ocultos":""}${v.likes?(v.subs!=null?" · ":"")+"👍 "+engage(v).toFixed(1).replace(".",",")+"% de las vistas":""}</div>`:""}
+ <div class="meta">${spark(v.id)}${v.growth!=null?"📈 Cambio medido: "+(v.growth>=0?"+":"")+fmt(v.growth)+" vistas/h":"📊 Volvé a consultar después de unos minutos para medir el crecimiento"}</div>
  <div class="actions"><button data-fav="${esc(v.id)}">${fav?"★ Guardado":"☆ Favorito"}</button>
  <button data-share="${esc(v.id)}">Compartir</button></div></article>`;
 }
@@ -792,6 +828,24 @@ function render(){
  $("maxSpeed").textContent=fmt(list.length?Math.max(...list.map(speed)):0);
  const favs=ordered(state.favs);
  $("favResults").innerHTML=favs.length?favs.map(renderCard).join(""):"<div class='card notice'>Todavía no guardaste favoritos.</div>";
+}
+let auto=false,autoTimer=null;
+/* Aviso cuando un reescaneo automático encuentra videos que antes no estaban despegando. */
+function announce(list){
+ const top=ordered(list)[0],msg=list.length===1?"Nuevo despegue: "+top.title:list.length+" nuevos despegues. El más rápido: "+top.title;
+ $("radarLiveStatus").textContent="🔥 "+msg;
+ try{if("Notification" in window&&Notification.permission==="granted"&&document.hidden)new Notification("Radar YouTube",{body:msg,icon:"./icon-192.png",tag:"radar-despegue"})}catch{}
+}
+function schedule(){
+ clearInterval(autoTimer);autoTimer=null;
+ const m=+$("auto").value;localStorage.setItem("radar_auto",String(m));
+ if(!m)return;
+ autoTimer=setInterval(async()=>{if($("search").disabled||!state.key)return;auto=true;try{await search()}finally{auto=false}},m*60000);
+ try{if("Notification" in window&&Notification.permission==="default")Notification.requestPermission()}catch{}
+}
+/* Radares guardados: tema, región y ventana con un toque. */
+function renderRadars(){
+ $("savedRadars").innerHTML=state.radars.map((r,i)=>`<span class="chip"><button data-radar="${i}">${esc(r.topic||"Tendencias")} · ${esc(r.region)} · ${r.window>=168?r.window/24+" d":r.window+" h"}</button><button data-delradar="${i}" aria-label="Quitar ${esc(r.topic||"Tendencias")}">✕</button></span>`).join("");
 }
 async function search(){
  $("search").disabled=true;$("search").textContent="Buscando…";
@@ -816,12 +870,24 @@ async function search(){
    all.push(...(d.items||[]));
   }
   const now=Date.now();
-  state.videos=all.map(x=>({id:x.id,title:x.snippet.title,channel:x.snippet.channelTitle,
+  const before=new Set(state.videos.filter(isHot).map(v=>v.id));
+  state.videos=all.map(x=>({id:x.id,title:x.snippet.title,channel:x.snippet.channelTitle,channelId:x.snippet.channelId,subs:null,
    published:Date.parse(x.snippet.publishedAt),views:+x.statistics?.viewCount||0,
    duration:duration(x.contentDetails?.duration),likes:+x.statistics?.likeCount||0,growth:null}));
+  /* suscriptores de cada canal (1 unidad de cuota por cada 50 canales); si falla, el ranking sale igual */
+  try{
+   const chans=[...new Set(state.videos.map(v=>v.channelId).filter(Boolean))],subs={};
+   for(let i=0;i<chans.length;i+=50){
+    const d=await api("channels",{part:"statistics",id:chans.slice(i,i+50).join(","),maxResults:"50"});
+    (d.items||[]).forEach(c=>subs[c.id]=c.statistics?.hiddenSubscriberCount?0:+c.statistics?.subscriberCount||0);
+   }
+   state.videos.forEach(v=>{if(v.channelId in subs)v.subs=subs[v.channelId]});
+  }catch{}
   saveSnapshots(state.videos);
   put("radar_videos",state.videos);
   render();
+  const nuevos=state.videos.filter(v=>isHot(v)&&!before.has(v.id));
+  if(auto&&nuevos.length)announce(nuevos);
   status("radarStatus","Búsqueda completada: "+state.videos.length+" videos. Repetí la consulta más tarde para comparar el crecimiento.");
   $("radarLiveStatus").textContent="Sistema listo y sincronizado";
  }catch(e){status("radarStatus",e.message,true);$("radarLiveStatus").textContent="Error de escaneo"}
@@ -911,6 +977,19 @@ $("threshold").addEventListener("input",()=>{$("thresholdText").textContent=fmt(
 $("search").addEventListener("click",search);
 $("refresh").addEventListener("click",search);
 $("sort").addEventListener("change",render);
+$("auto").addEventListener("change",schedule);
+$("saveRadar").addEventListener("click",()=>{
+ const r={topic:$("topic").value.trim(),region:$("region").value,window:+$("window").value};
+ if(state.radars.some(x=>x.topic.toLowerCase()===r.topic.toLowerCase()&&x.region===r.region&&x.window===r.window)){status("radarStatus","Ese radar ya estaba guardado.");return}
+ state.radars=[r,...state.radars].slice(0,12);put("radar_saved",state.radars);renderRadars();status("radarStatus","Radar guardado. Tocalo para repetir la búsqueda.");
+});
+$("savedRadars").addEventListener("click",e=>{
+ const d=e.target.closest("[data-delradar]");
+ if(d){state.radars.splice(+d.dataset.delradar,1);put("radar_saved",state.radars);renderRadars();return}
+ const b=e.target.closest("[data-radar]");if(!b)return;
+ const r=state.radars[+b.dataset.radar];if(!r)return;
+ $("topic").value=r.topic;$("region").value=r.region;$("window").value=String(r.window);search();
+});
 $("limit").addEventListener("change",render);
 $("format").addEventListener("change",render);
 $("onlyHot").addEventListener("change",render);
@@ -967,8 +1046,8 @@ $("analytics").addEventListener("click",analytics);
 $("export").addEventListener("click",()=>{
  const list=ordered(state.videos);
  if(!list.length){alert("Primero buscá videos.");return}
- const rows=[["Título","Canal","URL","Vistas","Vistas estimadas/hora","Crecimiento medido/hora","Publicado"]];
- list.forEach(v=>rows.push([v.title,v.channel,"https://www.youtube.com/watch?v="+v.id,v.views,speed(v),v.growth??"",new Date(v.published).toISOString()]));
+ const rows=[["Título","Canal","URL","Vistas","Vistas estimadas/hora","Crecimiento medido/hora","Suscriptores del canal","Veces su canal","Me gusta","Publicado"]];
+ list.forEach(v=>rows.push([v.title,v.channel,"https://www.youtube.com/watch?v="+v.id,v.views,speed(v),v.growth??"",v.subs||"",outlier(v)!=null?outlier(v).toFixed(2):"",v.likes??"",new Date(v.published).toISOString()]));
  const csv=rows.map(row=>row.map(x=>'"'+String(x).replace(/"/g,'""')+'"').join(",")).join("\r\n");
  const blob=new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8"});
  const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="radar-youtube-ranking.csv";a.click();URL.revokeObjectURL(a.href);
@@ -977,14 +1056,18 @@ $("clearResults").addEventListener("click",()=>{state.videos=[];put("radar_video
 $("clearSnapshots").addEventListener("click",()=>{state.snaps={};put("radar_snaps",{});alert("Historial reiniciado.")});
 $("clearAll").addEventListener("click",()=>{
  if(!confirm("¿Borrar todos los datos locales de Radar en este dispositivo?"))return;
- ["radar_api_key","radar_client_id","radar_videos","radar_favs","radar_snaps","radar_quota","radar_creator_ideas"].forEach(k=>localStorage.removeItem(k));
+ ["radar_api_key","radar_client_id","radar_videos","radar_favs","radar_snaps","radar_quota","radar_creator_ideas","radar_saved","radar_auto","radar_studio_draft","radar_claude_key","radar_claude_model"].forEach(k=>localStorage.removeItem(k));
  location.reload();
 });
 $("apiKey").value=state.key;
 $("clientId").value=state.client;
 $("thresholdText").textContent=fmt($("threshold").value);
 $("quota").textContent=fmt(state.quota.units||0)+" unidades estimadas registradas hoy.";
-render();
+render();renderRadars();
+$("auto").value=["0","15","30","60"].includes(localStorage.getItem("radar_auto"))?localStorage.getItem("radar_auto"):"0";schedule();
+/* accesos directos del icono de la app: ?view=radar, ?view=favorites (o saved) */
+{const w=new URLSearchParams(location.search).get("view"),id=w==="saved"?"favorites":w;
+ if(id&&id!=="radar")document.querySelector(`nav [data-view="${CSS.escape(id)}"]`)?.click();}
 setTimeout(()=>{if(!state.client)status("oauthStatus","Ingresá tu Client ID OAuth para conectar el canal.");},1500);
 </script>
 <script>
