@@ -8,7 +8,7 @@ En este repositorio viven también `jarvis/` y `jarvis-android/`, que son otro p
 
 | Pestaña | Para qué |
 |---|---|
-| Radar | Busca videos recientes por tema y región y los ordena por velocidad, crecimiento medido, cuánto superan a su canal o "me gusta" por vista. Guarda radares, reescanea solo y exporta CSV. |
+| Radar | Busca videos recientes por tema y región y los ordena por velocidad, crecimiento medido, cuánto superan a su canal o "me gusta" por vista. Guarda radares, reescanea solo y exporta CSV. También sigue canales y trae sus últimos videos por 1 unidad de cuota cada uno. |
 | Favoritos | Los videos que guardaste. |
 | Creator | Genera títulos, guion, descripción y etiquetas sin conexión. |
 | Studio | Recorta y exporta video en el navegador, puntúa título y descripción, y sube el video a tu canal. |
@@ -34,10 +34,11 @@ npm i playwright && npx playwright install chromium
 node tests/radar.test.js
 ```
 
-Recorre la app con la API de YouTube simulada: búsqueda, órdenes, crecimiento, radares guardados, accesos directos y Studio.
+Recorre la app con la API de YouTube simulada: búsqueda, órdenes, crecimiento, radares guardados, canales seguidos, accesos directos y Studio, donde exporta un recorte vertical y una miniatura de un video generado en el momento.
 
 ## Lo que no está comprobado
 
 - Las llamadas reales a YouTube, Google y Anthropic: las pruebas usan respuestas simuladas.
-- Exportar y subir video desde Studio con un archivo de verdad.
+- Exportar en Studio con un video grabado por un teléfono, con sonido, y en navegadores que no sean Chrome. La prueba usa un video de 2 segundos sin sonido.
+- Subir un video a YouTube desde Studio.
 - El aviso de despegues con la app en segundo plano: depende de que el navegador dé permiso de notificaciones y no suspenda la pestaña.

@@ -589,6 +589,16 @@ nav button.on{
    <div class="notice">*Todas las regiones utiliza una búsqueda global aproximada. La velocidad estimada no equivale al crecimiento real. Cada búsqueda gasta unas 102 unidades de las 10.000 diarias de tu cuota de YouTube: reescanear cada 15 minutos durante todo un día la agota.</div>
   </div>
 
+  <div class="card">
+   <h3>🎯 Canales que sigo</h3>
+   <label for="chanInput">Enlace del canal, @usuario o ID</label>
+   <input id="chanInput" placeholder="Ej.: @nombredelcanal o youtube.com/channel/UC…" autocomplete="off">
+   <button id="chanAdd" class="btn sec">➕ Seguir canal</button>
+   <div id="chanList" class="chips"></div>
+   <button id="chanScan" class="btn">🎯 Ver sus últimos videos</button>
+   <div class="notice">Trae los 5 videos más recientes de cada canal. Gasta 1 unidad de cuota por canal, mucho menos que una búsqueda. También podés seguir un canal desde cualquier tarjeta del ranking.</div>
+  </div>
+
   <div class="stats">
    <div class="card"><div class="info">Videos</div><div class="num" id="total">0</div></div>
    <div class="card"><div class="info">Despegando</div><div class="num green" id="hot">0</div></div>
@@ -741,7 +751,8 @@ const state={
  snaps:get("radar_snaps",{}),
  token:null,
  quota:get("radar_quota",{day:"",units:0}),
- radars:get("radar_saved",[])
+ radars:get("radar_saved",[]),
+ chans:get("radar_channels",[])
 };
 let activeView="radar",tokenClient=null,oauthReady=false;
 const fmt=n=>new Intl.NumberFormat("es-AR").format(Math.round(Number(n)||0));
@@ -813,6 +824,7 @@ function renderCard(v,i){
  ${v.subs!=null||v.likes?`<div class="meta">${v.subs>0?"📣 "+short(v.subs)+" suscriptores"+(outlier(v)>=1?` · <span class="badge-out">${outlier(v)>=10?Math.round(outlier(v)):outlier(v).toFixed(1).replace(".",",")}× su canal</span>`:""):v.subs===0?"📣 Suscriptores ocultos":""}${v.likes?(v.subs!=null?" · ":"")+"👍 "+engage(v).toFixed(1).replace(".",",")+"% de las vistas":""}</div>`:""}
  <div class="meta">${spark(v.id)}${v.growth!=null?"📈 Cambio medido: "+(v.growth>=0?"+":"")+fmt(v.growth)+" vistas/h":"📊 Volvé a consultar después de unos minutos para medir el crecimiento"}</div>
  <div class="actions"><button data-fav="${esc(v.id)}">${fav?"★ Guardado":"☆ Favorito"}</button>
+ ${v.channelId?`<button data-follow="${esc(v.channelId)}" data-name="${esc(v.channel)}">${state.chans.some(c=>c.id===v.channelId)?"🎯 Siguiendo":"🎯 Seguir canal"}</button>`:""}
  <button data-share="${esc(v.id)}">Compartir</button></div></article>`;
 }
 function render(){
@@ -828,6 +840,73 @@ function render(){
  $("maxSpeed").textContent=fmt(list.length?Math.max(...list.map(speed)):0);
  const favs=ordered(state.favs);
  $("favResults").innerHTML=favs.length?favs.map(renderCard).join(""):"<div class='card notice'>Todavía no guardaste favoritos.</div>";
+}
+const toVideo=x=>({id:x.id,title:x.snippet.title,channel:x.snippet.channelTitle,channelId:x.snippet.channelId,subs:null,
+ published:Date.parse(x.snippet.publishedAt),views:+x.statistics?.viewCount||0,
+ duration:duration(x.contentDetails?.duration),likes:+x.statistics?.likeCount||0,growth:null});
+/* ---- Canales que sigo: sus últimos videos, sin gastar una búsqueda ---- */
+const MAX_CHANS=30;
+/* Acepta un enlace de canal, un @usuario o un ID (UC…). Devuelve qué pedirle a la API, o null. */
+function parseChannel(t){
+ t=String(t||"").trim();
+ let m=t.match(/(?:^|\/channel\/)(UC[\w-]{22})(?:[/?#]|$)/);if(m)return {id:m[1]};
+ m=t.match(/(?:^|youtube\.com\/)@([\w.\-]{3,30})(?:[/?#]|$)/);if(m)return {forHandle:"@"+m[1]};
+ return null;
+}
+function renderChans(){
+ $("chanList").innerHTML=state.chans.map((c,i)=>`<span class="chip"><button data-chan="${i}">${esc(c.title)}</button><button data-delchan="${i}" aria-label="Dejar de seguir ${esc(c.title)}">✕</button></span>`).join("");
+ $("chanScan").disabled=!state.chans.length;
+}
+function followChannel(c){
+ if(state.chans.some(x=>x.id===c.id))return false;
+ if(state.chans.length>=MAX_CHANS)throw Error("Ya seguís "+MAX_CHANS+" canales, que es el máximo. Quitá alguno primero.");
+ state.chans=[...state.chans,c];put("radar_channels",state.chans);renderChans();return true;
+}
+async function addChannel(){
+ const q=parseChannel($("chanInput").value);
+ if(!q){status("radarStatus","No reconozco ese canal. Pegá su enlace, su @usuario o su ID (empieza con UC).",true);return}
+ $("chanAdd").disabled=true;
+ try{
+  const d=await api("channels",{part:"snippet",...q});
+  const c=d.items?.[0];
+  if(!c)throw Error("YouTube no encontró ese canal.");
+  status("radarStatus",followChannel({id:c.id,title:c.snippet.title})?"Ahora seguís a "+c.snippet.title+".":"Ya seguías a "+c.snippet.title+".");
+  $("chanInput").value="";
+ }catch(e){status("radarStatus",e.message,true)}
+ finally{$("chanAdd").disabled=false}
+}
+async function scanChannels(only){
+ const list=only?[only]:state.chans;
+ if(!list.length)return;
+ $("chanScan").disabled=true;$("radarOrb").classList.add("scanning");
+ status("radarStatus","Trayendo los últimos videos de "+(only?only.title:list.length+" canales")+"…");
+ try{
+  const ids=[];let sinVideos=0;
+  for(const c of list){
+   /* la lista de subidas de un canal es su ID con UU en vez de UC */
+   try{
+    const d=await api("playlistItems",{part:"contentDetails",playlistId:"UU"+c.id.slice(2),maxResults:"5"});
+    (d.items||[]).forEach(x=>{if(x.contentDetails?.videoId)ids.push(x.contentDetails.videoId)});
+   }catch{sinVideos++}
+  }
+  if(!ids.length)throw Error("No pude leer videos de esos canales.");
+  const all=[];
+  for(let i=0;i<ids.length;i+=50){
+   const d=await api("videos",{part:"snippet,statistics,contentDetails",id:ids.slice(i,i+50).join(",")});
+   all.push(...(d.items||[]));
+  }
+  state.videos=all.map(toVideo);
+  try{
+   const d=await api("channels",{part:"statistics",id:list.map(c=>c.id).join(","),maxResults:"50"});
+   const subs={};(d.items||[]).forEach(c=>subs[c.id]=c.statistics?.hiddenSubscriberCount?0:+c.statistics?.subscriberCount||0);
+   state.videos.forEach(v=>{if(v.channelId in subs)v.subs=subs[v.channelId]});
+  }catch{}
+  saveSnapshots(state.videos);put("radar_videos",state.videos);
+  $("format").value="all";$("onlyHot").checked=false;render();
+  status("radarStatus","Últimos "+state.videos.length+" videos de "+(only?only.title:list.length+" canales")+(sinVideos?". "+sinVideos+" no se pudieron leer.":"."));
+  $("radarLiveStatus").textContent="Canales sincronizados";
+ }catch(e){status("radarStatus",e.message,true)}
+ finally{renderChans();$("radarOrb").classList.remove("scanning")}
 }
 let auto=false,autoTimer=null;
 /* Aviso cuando un reescaneo automático encuentra videos que antes no estaban despegando. */
@@ -871,9 +950,7 @@ async function search(){
   }
   const now=Date.now();
   const before=new Set(state.videos.filter(isHot).map(v=>v.id));
-  state.videos=all.map(x=>({id:x.id,title:x.snippet.title,channel:x.snippet.channelTitle,channelId:x.snippet.channelId,subs:null,
-   published:Date.parse(x.snippet.publishedAt),views:+x.statistics?.viewCount||0,
-   duration:duration(x.contentDetails?.duration),likes:+x.statistics?.likeCount||0,growth:null}));
+  state.videos=all.map(toVideo);
   /* suscriptores de cada canal (1 unidad de cuota por cada 50 canales); si falla, el ranking sale igual */
   try{
    const chans=[...new Set(state.videos.map(v=>v.channelId).filter(Boolean))],subs={};
@@ -978,6 +1055,14 @@ $("search").addEventListener("click",search);
 $("refresh").addEventListener("click",search);
 $("sort").addEventListener("change",render);
 $("auto").addEventListener("change",schedule);
+$("chanAdd").addEventListener("click",addChannel);
+$("chanInput").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();addChannel()}});
+$("chanScan").addEventListener("click",()=>scanChannels());
+$("chanList").addEventListener("click",e=>{
+ const d=e.target.closest("[data-delchan]");
+ if(d){state.chans.splice(+d.dataset.delchan,1);put("radar_channels",state.chans);renderChans();render();return}
+ const b=e.target.closest("[data-chan]");if(b&&state.chans[+b.dataset.chan])scanChannels(state.chans[+b.dataset.chan]);
+});
 $("saveRadar").addEventListener("click",()=>{
  const r={topic:$("topic").value.trim(),region:$("region").value,window:+$("window").value};
  if(state.radars.some(x=>x.topic.toLowerCase()===r.topic.toLowerCase()&&x.region===r.region&&x.window===r.window)){status("radarStatus","Ese radar ya estaba guardado.");return}
@@ -1006,6 +1091,13 @@ document.addEventListener("click",async e=>{
   if(!v)return;
   state.favs=state.favs.some(x=>x.id===v.id)?state.favs.filter(x=>x.id!==v.id):[...state.favs,v];
   put("radar_favs",state.favs);render();
+ }
+ const fo=e.target.closest("[data-follow]");
+ if(fo){
+  try{
+   if(!followChannel({id:fo.dataset.follow,title:fo.dataset.name||"Canal"})){state.chans=state.chans.filter(c=>c.id!==fo.dataset.follow);put("radar_channels",state.chans);renderChans()}
+   render();
+  }catch(err){status("radarStatus",err.message,true)}
  }
  const sh=e.target.closest("[data-share]");
  if(sh){
@@ -1056,14 +1148,14 @@ $("clearResults").addEventListener("click",()=>{state.videos=[];put("radar_video
 $("clearSnapshots").addEventListener("click",()=>{state.snaps={};put("radar_snaps",{});alert("Historial reiniciado.")});
 $("clearAll").addEventListener("click",()=>{
  if(!confirm("¿Borrar todos los datos locales de Radar en este dispositivo?"))return;
- ["radar_api_key","radar_client_id","radar_videos","radar_favs","radar_snaps","radar_quota","radar_creator_ideas","radar_saved","radar_auto","radar_studio_draft","radar_claude_key","radar_claude_model"].forEach(k=>localStorage.removeItem(k));
+ ["radar_api_key","radar_client_id","radar_videos","radar_favs","radar_snaps","radar_quota","radar_creator_ideas","radar_saved","radar_channels","radar_auto","radar_studio_draft","radar_claude_key","radar_claude_model"].forEach(k=>localStorage.removeItem(k));
  location.reload();
 });
 $("apiKey").value=state.key;
 $("clientId").value=state.client;
 $("thresholdText").textContent=fmt($("threshold").value);
 $("quota").textContent=fmt(state.quota.units||0)+" unidades estimadas registradas hoy.";
-render();renderRadars();
+render();renderRadars();renderChans();
 $("auto").value=["0","15","30","60"].includes(localStorage.getItem("radar_auto"))?localStorage.getItem("radar_auto"):"0";schedule();
 /* accesos directos del icono de la app: ?view=radar, ?view=favorites (o saved) */
 {const w=new URLSearchParams(location.search).get("view"),id=w==="saved"?"favorites":w;
@@ -1090,22 +1182,30 @@ $("s3sg").onclick=()=>{if(outT>inT){segs.push([inT,outT]);sl();tm()}};
 $("s3sl").onclick=e=>{const i=e.target.dataset.i;if(i!=null){e.preventDefault();segs.splice(i,1);sl();tm()}};
 ["s3br","s3co","s3sa"].forEach(i=>$(i).oninput=()=>v.style.filter=flt());$("s3tx").oninput=()=>$("s3ov").textContent=$("s3tx").value;
 $("s3ex").onclick=async()=>{
- if(!v.src||!window.MediaRecorder)return say("s3st","Cargá un video primero.",1);
+ if(!v.src||!v.videoWidth)return say("s3st","Cargá un video primero.",1);
+ if(!window.MediaRecorder)return say("s3st","Este navegador no puede exportar video. Probá con Chrome o Edge.",1);
+ if(!segs.length&&!(outT>inT))return say("s3st","El fin tiene que estar después del inicio. Marcá de nuevo el tramo.",1);
+ $("s3ex").disabled=true;
  const vw=v.videoWidth,vh=v.videoHeight,fm=$("s3fm").value,ar=fm=="v"?9/16:fm=="s"?1:vw/vh;let sw=vw,sh=vh;if(vw/vh>ar)sw=vh*ar;else sh=vw/ar;
  const sx=(vw-sw)*$("s3px").value/100,sy=(vh-sh)/2,c=document.createElement("canvas");c.width=fm=="o"?vw:2*Math.round(Math.min(sw,1080)/2);c.height=fm=="o"?vh:2*Math.round(c.width/ar/2);
  const x=c.getContext("2d"),cs=c.captureStream(30);
- try{v.captureStream().getAudioTracks().forEach(t=>cs.addTrack(t))}catch{}
+ let conSonido=false;
+ try{(v.captureStream||v.mozCaptureStream).call(v).getAudioTracks().forEach(t=>{cs.addTrack(t);conSonido=true})}catch{}
  const ch=[],rec=new MediaRecorder(cs);rec.ondataavailable=e=>ch.push(e.data);
- rec.onstop=()=>{const ty=rec.mimeType||"video/webm";exp=new Blob(ch,{type:ty});save(exp,"radar-recorte."+(ty.includes("mp4")?"mp4":"webm"));say("s3st","Listo: recorte guardado.")};
+ rec.onstop=()=>{const ty=rec.mimeType||"video/webm";exp=new Blob(ch,{type:ty});save(exp,"radar-recorte."+(ty.includes("mp4")?"mp4":"webm"));$("s3ex").disabled=false;say("s3st","Listo: recorte guardado"+(conSonido?".":", sin sonido: este navegador no deja grabar el audio del video."))};
+ rec.onerror=()=>{$("s3ex").disabled=false;v.pause();say("s3st","El navegador no pudo grabar el video.",1)};
  const o0=inT,o1=outT,sg=segs.length?segs.slice():[[inT,outT]];let si=0;
  const go=async()=>{inT=sg[si][0];outT=sg[si][1];v.pause();if(Math.abs(v.currentTime-inT)>.05){v.currentTime=inT;await new Promise(r=>v.onseeked=r)}v.playbackRate=+$("s3sp").value;await v.play()};
- await go();rec.start();
+ try{await go();rec.start()}catch(e){$("s3ex").disabled=false;return say("s3st","No se pudo empezar a exportar: "+e.message,1)}
  (function d(){x.filter=flt();x.drawImage(v,sx,sy,sw,sh,0,0,c.width,c.height);x.filter="none";const t=$("s3tx").value;
   if(t){x.font=`bold ${c.height/12}px sans-serif`;x.textAlign="center";x.lineWidth=c.height/60;x.strokeStyle="#000";x.fillStyle="#fff";x.strokeText(t,c.width/2,c.height*.9);x.fillText(t,c.width/2,c.height*.9)}
   say("s3st","Exportando, corte "+(si+1)+" de "+sg.length+", van "+fmt(v.currentTime));
   if(v.currentTime>=outT||v.ended){if(++si<sg.length){go().then(()=>requestAnimationFrame(d));return}v.pause();rec.stop();v.playbackRate=1;inT=o0;outT=o1;tm();return}
   requestAnimationFrame(d)})()};
-$("s3th").onclick=()=>{if(!v.videoWidth)return say("s3st","Cargá un video primero.",1);const c=document.createElement("canvas");c.width=1280;c.height=720;const x=c.getContext("2d");x.filter=flt();x.drawImage(v,0,0,1280,720);x.filter="none";
+$("s3th").onclick=()=>{if(!v.videoWidth)return say("s3st","Cargá un video primero.",1);const c=document.createElement("canvas");c.width=1280;c.height=720;const x=c.getContext("2d");x.filter=flt();
+ /* recorta al centro para llenar 16:9 sin deformar (un video vertical ya no sale aplastado) */
+ {const vw=v.videoWidth,vh=v.videoHeight,ar=16/9;let sw=vw,sh=vh;if(vw/vh>ar)sw=vh*ar;else sh=vw/ar;x.drawImage(v,(vw-sw)/2,(vh-sh)/2,sw,sh,0,0,1280,720)}
+ x.filter="none";
  const t=($("s3tx").value||$("s3t").value).slice(0,22);if(t){x.font="bold 90px sans-serif";x.lineWidth=14;x.strokeStyle="#000";x.fillStyle="#ffe600";x.strokeText(t,50,650);x.fillText(t,50,650)}
  c.toBlob(b=>{thumb=b;save(b,"miniatura.png");say("s3st","Miniatura guardada.")})};
 
@@ -1114,7 +1214,7 @@ $("s3sil").onclick=async()=>{
  try{const AC=window.AudioContext||window.webkitAudioContext,ac=new AC(),buf=await ac.decodeAudioData(await src.arrayBuffer());ac.close();
   const d=buf.getChannelData(0),win=Math.round(buf.sampleRate*.05),n=Math.floor(d.length/win),lv=[];
   for(let i=0;i<n;i++){let s=0;for(let j=i*win;j<(i+1)*win;j++)s+=d[j]*d[j];lv.push(Math.sqrt(s/win))}
-  const th=Math.max(Math.max(...lv)*.06,.004),out=[];let st=null,q=0;
+  const th=Math.max(lv.reduce((a,b)=>b>a?b:a,0)*.06,.004),out=[];let st=null,q=0;
   lv.forEach((l,i)=>{if(l>=th){if(st===null)st=i;q=0}else if(st!==null&&++q>=8){out.push([st,i-q+1]);st=null;q=0}});
   if(st!==null)out.push([st,n]);
   const r=out.map(a=>[Math.max(0,a[0]*.05-.1),Math.min(buf.duration,a[1]*.05+.1)]).filter(a=>a[1]-a[0]>.3);
