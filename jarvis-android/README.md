@@ -111,6 +111,20 @@ Un puente conecta a JARVIS con un servicio de fuera sin manejar la pantalla: má
 
 El freno también vale aquí, y lo aplica la app: las llamadas salen de tu teléfono, no de los servidores de Claude. **Consultar lo hace solo; lo que envía, crea, cambia o borra algo espera tu toque**, con los datos exactos a la vista. Ante la duda sobre una herramienta, pide permiso. Las direcciones de los puentes se guardan cifradas y no entran en la copia de seguridad.
 
+### Lo nuevo de la 2.2: estudiar en serio
+
+Sale del informe que dejó el propio JARVIS al probar la 2.1.
+
+- **Cupo de internet llevado por la app.** Cada conversación tiene 12 búsquedas y 6 lecturas de página; al estudiar, **cada capítulo tiene las suyas** (4 búsquedas y 3 lecturas) y empiezan de cero en cada uno. JARVIS ve cuánto le queda al empezar y después de cada paso, y cuando se acaba, la búsqueda deja de ofrecérsele en vez de bloquearse a medias.
+- **Búsqueda directa.** Antes las búsquedas se lanzaban desde Python en un contenedor de Anthropic: ahí el tope saltaba de golpe y la respuesta llegaba como texto que había que convertir. Ahora JARVIS pide cada búsqueda directamente y recibe el resultado tal cual.
+- **Leer páginas enteras** (`web_fetch`): el texto de una dirección que haya salido en una búsqueda o que tú le des, para contrastar en la fuente original.
+- **Estudio en segundo plano.** JARVIS planea el índice y el tomo se escribe solo, capítulo a capítulo. Guarda el progreso, sigue por donde iba si se cierra la app o se pierde la conexión, y avisa al terminar. Mientras tanto puedes seguir usándolo. Se ve y se detiene en *mente → Biblioteca*. Un capítulo que falla tres veces se da por imposible y el tomo continúa.
+- **Datos por contrastar.** Lo que no pudo comprobar lo apunta como pendiente. Pídele «repasa los datos pendientes» y los contrasta, corrige y cierra. También se ven en *mente*.
+- **Consultas limpias.** Cada pasaje dice su tomo, capítulo y sección, y las fuentes aparecen una sola vez al final.
+- **Corregir sin reescribir.** Cambia un fragmento de un capítulo y deja el resto intacto.
+
+Estudiar un tomo de 9 capítulos son 9 tareas seguidas, cada una con sus búsquedas y lecturas: es lo más caro que hace JARVIS. El coste de cada capítulo queda en el diario y en *mente → Cómo le va*.
+
 ## 6. Editar video
 
 Dale los videos con **+** (o deja que vea tu galería) y pídeselo con tus palabras:
@@ -177,7 +191,9 @@ Una tarea son varias llamadas seguidas (una por paso) y cada una reenvía la con
 
 ## 10. Lo que no está comprobado o hay que saber
 
-- **Probado en un teléfono real:** conversar, la voz y manejar el teléfono (1.1); la memoria automática y la pantalla *mente* (2.0). Lo demás se construyó en un entorno sin teléfono ni emulador: está comprobado que compila, que la APK está firmada y que pasan las 67 pruebas automáticas del núcleo.
+- **Probado en un teléfono real:** conversar, la voz y manejar el teléfono (1.1); la memoria automática y la pantalla *mente* (2.0); estudiar un tomo y consultar la biblioteca (2.1, con los fallos que arregla la 2.2). Lo demás se construyó en un entorno sin teléfono ni emulador: está comprobado que compila, que la APK está firmada y que pasan las 78 pruebas automáticas del núcleo.
+- **Lo nuevo de la 2.2 no se ha visto funcionar con la API real.** Está probado contra una API de Claude simulada que el cupo se descuenta, que el modelo ve lo que le queda y que la búsqueda deja de ofrecerse al agotarse; y con un escritor simulado, que un tomo de 9 capítulos se completa y que un corte en el capítulo 4 se reanuda en el 5. **No se ha estudiado ningún tomo real con esta versión**: la búsqueda directa y la lectura de páginas son herramientas de Anthropic que aquí no se pudieron llamar. Si la lectura de páginas no estuviera disponible para tu cuenta o tu modelo, la API lo dirá con un error al primer mensaje; dímelo y la desactivo.
+- **El estudio en segundo plano depende de que Android deje viva la app.** Con la accesibilidad activada suele seguir; si el teléfono la cierra, se retoma al abrir JARVIS.
 - **Lo nuevo de la 2.1 no se ha visto funcionar en un teléfono.**
   - **Dibujar y animar.** Está probado que el lenguaje se lee bien, que los errores se explican y que el movimiento se calcula como debe. **Pintar de verdad y codificar el video no se han ejecutado nunca**: dependen de Android y del codificador de cada teléfono. Es la parte con más riesgo de esta versión. Si falla, lo más probable es que falle el video y no la imagen.
   - **Puentes.** El cliente está probado contra un servidor MCP simulado (saludo, lista, llamada, las dos formas de respuesta, credencial rechazada y el freno). **No se ha conectado a ningún servicio real**: no había credenciales. Los servicios que exigen iniciar sesión con una ventana (OAuth) en vez de una dirección o una credencial fija no funcionarán todavía.
@@ -214,7 +230,8 @@ jarvis-android/app/src/main/kotlin/com/radar/jarvis/
 ├── nucleo/                    sin nada de Android: se prueba en cualquier computadora
 │   ├── Freno.kt               qué hace solo y qué espera tu sí
 │   ├── Manos.kt               lo que JARVIS puede ver y hacer en un teléfono (interfaz)
-│   ├── Herramientas.kt        las 30 herramientas del agente (más las de los puentes), pasando por el freno
+│   ├── Herramientas.kt        las 37 herramientas del agente (más las de los puentes), pasando por el freno
+│   ├── Estudios.kt            el estudio de un tomo como tarea larga que se reanuda
 │   ├── Lienzo.kt              el lenguaje con el que dibuja y anima: escenas, capas, movimiento
 │   ├── Biblioteca.kt          los tomos que estudia, y cómo los busca
 │   ├── Puente.kt              cliente MCP: la conexión con servicios externos

@@ -76,6 +76,49 @@ object Sesion {
         estudio = EstudioAndroid(ctx, almacen)
         fuentes = FuentesAndroid(ctx, almacen)
         principal.postDelayed(pulso, 20_000)
+        principal.postDelayed({ estudiar() }, 6_000)        // si un estudio quedó a medias al cerrarse la app, sigue por donde iba
+    }
+
+    // ------------------------------------------------------------ estudiar un tomo en segundo plano
+    private var trabajoEstudio: Job? = null
+    val estudiando get() = trabajoEstudio?.isActive == true
+
+    /** Lo llama el agente al empezar o detener un estudio. */
+    private fun alCambiarEstudio() {
+        if (almacen.estudios.actual()?.estado == "en_curso") estudiar() else { trabajoEstudio?.cancel(); avisar() }
+    }
+
+    /**
+     * Arranca o continúa el estudio que haya en marcha. Va aparte de la conversación: puedes seguir usando a JARVIS
+     * mientras escribe. No toca el teléfono: solo busca, lee y escribe en la biblioteca.
+     */
+    fun estudiar() {
+        if (estudiando || pausa || !almacen.hayClave || !almacen.estudios.toca()) return
+        trabajoEstudio = ambito.launch {
+            val fin = com.radar.jarvis.nucleo.Estudiante(almacen.estudios, ::escribirCapitulo) { p ->
+                almacen.apuntar("ESTUDIO ${p.resumen()}"); avisar()
+            }.correr() ?: return@launch
+            avisar()
+            if (fin.estado == "terminado") {
+                almacen.apuntar("ESTUDIO terminado: ${fin.resumen()}")
+                val pendientes = almacen.biblioteca.pendientes(fin.tomo).size
+                Avisador.avisar(ctx, "JARVIS terminó de estudiar", fin.resumen() + if (pendientes > 0) ". Quedaron $pendientes datos por contrastar." else "")
+            }
+        }
+    }
+
+    /** Un capítulo lo escribe un agente nuevo, con la cabeza limpia y su propio cupo de búsquedas. Devuelve si quedó guardado. */
+    private suspend fun escribirCapitulo(p: com.radar.jarvis.nucleo.PlanEstudio, c: com.radar.jarvis.nucleo.CapituloPlan): Boolean {
+        val fecha = System.currentTimeMillis()
+        val manos = Herramientas(ServicioAccesibilidad.manos, mente, { false }, { _, texto, est, det -> if (est != "en curso") almacen.apuntar("ESTUDIO cap. ${c.numero}: $texto $det".take(200)) },
+            biblioteca = almacen.biblioteca, soloEstas = com.radar.jarvis.nucleo.Estudios.HERRAMIENTAS)
+        val escritor = Agente(almacen.ajustes().copy(busquedas = BUSQUEDAS_POR_CAPITULO, lecturas = LECTURAS_POR_CAPITULO, quien = ""), manos, mente,
+            extraSistema = com.radar.jarvis.nucleo.Estudios.OFICIO)
+        val r = escritor.correr(almacen.estudios.encargo(p, c))
+        val escrito = almacen.biblioteca.tomo(p.tomo)?.capitulos?.any { it.numero == c.numero } == true
+        mente.evaluar(Evaluacion(fecha, "Estudiar «${p.tomo}», capítulo ${c.numero}: ${c.titulo}", escrito, 3, r.pasos, System.currentTimeMillis() - fecha, r.coste))
+        almacen.apuntar("ESTUDIO cap. ${c.numero} ${if (escrito) "escrito" else "NO escrito (${r.texto.take(80)})"} · ${r.busquedas} búsquedas, ${r.lecturas} lecturas, ~${"%.3f".format(java.util.Locale.US, r.coste)} $")
+        return escrito
     }
 
     fun observar(o: () -> Unit) { oyentes += o }
@@ -100,7 +143,8 @@ object Sesion {
     private fun agente(): Agente = agente ?: run {
         val h = Herramientas(ServicioAccesibilidad.manos, mente, ::pedirPermiso, ::alPaso,
             alCrearRutina = { r -> almacen.apuntar("RUTINA creada: ${r.nombre} (${r.disparador.frase()})"); programarDespertador() },
-            estudio = estudio, fuentes = fuentes, biblioteca = almacen.biblioteca, puentes = com.radar.jarvis.nucleo.Puentes(almacen.puentes))
+            estudio = estudio, fuentes = fuentes, biblioteca = almacen.biblioteca, puentes = com.radar.jarvis.nucleo.Puentes(almacen.puentes),
+            estudios = almacen.estudios, alEstudiar = { alCambiarEstudio() })
         herramientas = h
         Agente(almacen.ajustes(), h, mente, { nota -> pasos += Paso(0, nota, "nota", ""); avisar() }, almacen.biblioteca).also { agente = it }
     }
@@ -157,7 +201,7 @@ object Sesion {
             } catch (e: Exception) {
                 Respuesta("Algo falló dentro de JARVIS: ${e.javaClass.simpleName}. ${e.message.orEmpty().take(120)}", "fallo", 0)
             } finally { herramientas?.nivel = "hacer" }
-            almacen.apuntar("FIN (${r.estado}, ${r.pasos} pasos, ~${"%.3f".format(java.util.Locale.US, r.coste)} $): ${r.texto.take(160)}")
+            almacen.apuntar("FIN (${r.estado}, ${r.pasos} pasos, ${r.busquedas} búsquedas, ${r.lecturas} lecturas, ~${"%.3f".format(java.util.Locale.US, r.coste)} $): ${r.texto.take(160)}")
             val partes = r.texto.trim().split(Regex("\n\\s*\n"), limit = 2)
             detalle = partes.getOrElse(1) { "" }.trim()
             val decir = partes[0].trim()
@@ -215,8 +259,8 @@ object Sesion {
     /** Pausa de emergencia: corta todo, tampoco saltan las rutinas, y no acepta nada hasta que la quites. */
     fun ponerPausa(on: Boolean) {
         pausa = on
-        if (on) { detener("En pausa. No hago nada hasta que la quites."); almacen.apuntar("PAUSA activada") }
-        else { estado = Estado.ESPERA; subtitulo = "Listo."; avisar() }
+        if (on) { trabajoEstudio?.cancel(); detener("En pausa. No hago nada hasta que la quites."); almacen.apuntar("PAUSA activada") }
+        else { estado = Estado.ESPERA; subtitulo = "Listo."; avisar(); estudiar() }
     }
 
     /** Los videos o audios que eliges con el botón de adjuntar. */
@@ -253,6 +297,7 @@ object Sesion {
 
     /** El pulso de la iniciativa: ¿toca alguna rutina? Se llama cada minuto, al llegar una notificación y al sonar el despertador. */
     fun latido() {
+        estudiar()                                           // si un estudio se cortó (sin red, app cerrada), aquí se retoma
         ambito.launch {
             try {
                 val rutinas = mente.rutinas().filter { it.activa }
@@ -299,4 +344,7 @@ object Sesion {
 
     private const val ESPERA_MAX = 10 * 60 * 1000L
     private const val COLA_MAX = 30 * 60 * 1000L
+    /** El cupo de internet de CADA capítulo al estudiar: empieza de cero en cada uno. */
+    private const val BUSQUEDAS_POR_CAPITULO = 4
+    private const val LECTURAS_POR_CAPITULO = 3
 }

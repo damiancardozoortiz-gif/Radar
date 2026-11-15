@@ -98,7 +98,9 @@ class AgenteTest {
         val montar = tools.getJSONObject(nombres.indexOf("montar_video")).getJSONObject("input_schema")
         assertEquals("array", montar.getJSONObject("properties").getJSONObject("clips").getString("type"))
         assertEquals("id", montar.getJSONObject("properties").getJSONObject("clips").getJSONObject("items").getJSONArray("required").getString(0))
-        assertEquals("web_search_20260209", tools.getJSONObject(nombres.indexOf("web_search")).getString("type"))
+        assertEquals("la búsqueda directa, sin Python de por medio", "web_search_20250305", tools.getJSONObject(nombres.indexOf("web_search")).getString("type"))
+        assertEquals("web_fetch_20250910", tools.getJSONObject(nombres.indexOf("web_fetch")).getString("type"))
+        assertFalse("no se ofrece ejecución de código: no hay nada que parsear con json.loads", nombres.any { it.contains("code") })
         assertTrue(p.getString("system").contains("JARVIS"))
 
         // el resultado de la herramienta vuelve en UN mensaje de usuario, tras el mensaje entero del asistente
@@ -132,13 +134,53 @@ class AgenteTest {
         assertEquals("image/jpeg", bloques.getJSONObject(1).getJSONObject("source").getString("media_type"))
     }
 
-    @Test fun haikuUsaLaBusquedaBasicaYSinRespaldo() = runBlocking {
+    @Test fun haikuVaSinRespaldo() = runBlocking {
         respuestas += mensaje(dice("Hola."), "end_turn")
         agente(TelefonoFalso(), mutableListOf(), true, "claude-haiku-5-5").correr("Hola")
         val p = peticiones[0]
         assertFalse(p.has("fallbacks"))
-        val tools = p.getJSONArray("tools")
-        assertEquals("web_search_20250305", tools.getJSONObject(tools.length() - 1).getString("type"))
+    }
+
+    private fun conUso(contenido: String, fin: String, busquedas: Int, lecturas: Int = 0) =
+        """{"id":"msg_1","type":"message","role":"assistant","model":"claude-opus-5-5","content":[$contenido],"stop_reason":"$fin","stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":5,"server_tool_use":{"web_search_requests":$busquedas,"web_fetch_requests":$lecturas}}}"""
+    private fun herramienta(p: JSONObject, nombre: String): JSONObject? =
+        p.getJSONArray("tools").let { t -> (0 until t.length()).map { t.getJSONObject(it) }.firstOrNull { it.getString("name") == nombre } }
+
+    @Test fun elCupoDeBusquedasLoLlevaLaAppYElModeloLoVe() = runBlocking {
+        // capítulo con cupo de 4 búsquedas y 3 lecturas: gasta 3 búsquedas y 1 lectura, luego 1 búsqueda más, y se queda sin búsquedas
+        respuestas += conUso(usa("t1", "biblioteca_indice", "{}"), "tool_use", 3, 1)
+        respuestas += conUso(usa("t2", "biblioteca_indice", "{}"), "tool_use", 1, 0)
+        respuestas += conUso(dice("hecho"), "end_turn", 0, 0)
+        val mente = Mente(CajaFalsa()); val b = com.radar.jarvis.nucleo.Biblioteca(CajaFalsa())
+        val a = Agente(Ajustes("sk-ant-api03-prueba", baseUrl = "http://127.0.0.1:$puerto", busquedas = 4, lecturas = 3),
+            Herramientas(TelefonoFalso(), mente, { true }, pausaTrasActuar = 0, biblioteca = b, soloEstas = com.radar.jarvis.nucleo.Estudios.HERRAMIENTAS), mente,
+            extraSistema = com.radar.jarvis.nucleo.Estudios.OFICIO)
+        val r = a.correr("Escribe el capítulo 1")
+        assertEquals(4, r.busquedas); assertEquals(1, r.lecturas)
+
+        assertEquals("empieza con el cupo entero", 4, herramienta(peticiones[0], "web_search")!!.getInt("max_uses"))
+        assertEquals(3, herramienta(peticiones[0], "web_fetch")!!.getInt("max_uses"))
+        assertTrue(peticiones[0].getJSONArray("messages").getJSONObject(0).get("content").toString().contains("te quedan 4 búsquedas y 3 lecturas"))
+        assertEquals("tras gastar 3, la siguiente petición solo admite 1", 1, herramienta(peticiones[1], "web_search")!!.getInt("max_uses"))
+        assertEquals(2, herramienta(peticiones[1], "web_fetch")!!.getInt("max_uses"))
+        val m1 = peticiones[1].getJSONArray("messages"); val ultimo1 = m1.getJSONObject(m1.length() - 1).getJSONArray("content")
+        assertEquals("tool_result", ultimo1.getJSONObject(0).getString("type"))
+        assertTrue("el modelo ve cuánto le queda después de cada paso", ultimo1.getJSONObject(1).getString("text").contains("te quedan 1 búsquedas y 2 lecturas"))
+        assertEquals("con el cupo a cero la búsqueda ni se ofrece: no puede bloquearse a mitad", null, herramienta(peticiones[2], "web_search"))
+        assertEquals(2, herramienta(peticiones[2], "web_fetch")!!.getInt("max_uses"))
+
+        // el que escribe un capítulo solo tiene la biblioteca y la web: nada del teléfono
+        val nombres = peticiones[0].getJSONArray("tools").let { t -> (0 until t.length()).map { t.getJSONObject(it).getString("name") } }
+        assertEquals(com.radar.jarvis.nucleo.Estudios.HERRAMIENTAS + setOf("web_search", "web_fetch"), nombres.toSet())
+        assertTrue(peticiones[0].getString("system").contains("escribe UN capítulo"))
+    }
+
+    @Test fun sinBusquedaEnAjustesNoHayWebNiCupo() = runBlocking {
+        respuestas += mensaje(dice("Hola."), "end_turn")
+        Agente(Ajustes("sk-ant-api03-prueba", buscarEnWeb = false, baseUrl = "http://127.0.0.1:$puerto"),
+            Herramientas(TelefonoFalso(), Mente(CajaFalsa()), { true }, pausaTrasActuar = 0), Mente(CajaFalsa())).correr("Hola")
+        assertEquals(null, herramienta(peticiones[0], "web_search")); assertEquals(null, herramienta(peticiones[0], "web_fetch"))
+        assertFalse(peticiones[0].getJSONArray("messages").getJSONObject(0).get("content").toString().contains("Cupo"))
     }
 
     @Test fun laMemoriaViajaEnElMensajeYNoEnElSistema() = runBlocking {

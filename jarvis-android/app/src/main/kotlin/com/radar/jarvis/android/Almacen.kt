@@ -35,6 +35,7 @@ class Almacen(ctx: Context) : Caja {
 
     val mente = Mente(this)
     val biblioteca = com.radar.jarvis.nucleo.Biblioteca(this)
+    val estudios = com.radar.jarvis.nucleo.Estudios(this, biblioteca)
 
     init {
         // versiones anteriores guardaban las claves junto a los ajustes: se mudan al archivo que no entra en la copia

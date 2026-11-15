@@ -86,9 +86,30 @@ class MenteActivity : Activity() {
 
         // ---- biblioteca
         titulo("Biblioteca · lo que ha estudiado")
+        Sesion.almacen.estudios.actual()?.let { p ->
+            val falta = p.capitulos.firstOrNull { it.estado == "pendiente" }
+            nota(when (p.estado) {
+                "en_curso" -> "Estudiando " + p.resumen() + (if (falta != null) ". Ahora: ${falta.numero}. ${falta.titulo}" else "") +
+                    if (Sesion.estudiando) "." else ". En espera: sigue solo cuando haya conexión."
+                else -> "Último estudio: ${p.resumen()}."
+            }, if (p.estado == "en_curso") Estilo.MENTA else Estilo.TENUE)
+            if (p.estado == "en_curso") col.addView(Estilo.boton(this, "Detener el estudio", tinta = Estilo.AMBAR, borde = Estilo.AMBAR) {
+                confirmar("¿Detener el estudio de «${p.tomo}»? Lo ya escrito se queda.") { Sesion.almacen.estudios.detener(); Sesion.latido(); pintar() }
+            }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(this@MenteActivity, 8) })
+        }
         val tomos = Sesion.almacen.biblioteca.tomos()
         if (tomos.isEmpty()) nota("Todavía no ha estudiado nada. Pídeselo: «estudia física cuántica y escríbete un tomo».")
         for (t in tomos) ficha(t.titulo, "${t.capitulos.size} capítulos · ${t.capitulos.sumOf { it.letras } / 1000} mil letras · ${t.descripcion}") { verTomo(t) }
+
+        val dudas = Sesion.almacen.biblioteca.pendientes()
+        if (dudas.isNotEmpty()) {
+            titulo("Biblioteca · datos por contrastar (${dudas.size})")
+            nota("Datos que JARVIS escribió sin poder comprobarlos del todo. Pídele: «repasa los datos pendientes».")
+            val titulos = tomos.associate { it.id to it.titulo }
+            for (d in dudas.take(60)) ficha(d.dato, "«${titulos[d.tomo] ?: d.tomo}», capítulo ${d.capitulo}" + if (d.motivo.isNotEmpty()) " · ${d.motivo}" else "") {
+                confirmar("¿Quitar este dato de la lista de pendientes?") { Sesion.almacen.biblioteca.verificar(d.id); pintar() }
+            }
+        }
 
         // ---- memoria
         val recuerdos = mente.recuerdos()

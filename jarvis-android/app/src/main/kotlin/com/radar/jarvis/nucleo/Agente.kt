@@ -19,7 +19,7 @@ import com.anthropic.models.beta.messages.BetaStopReason
 import com.anthropic.models.beta.messages.BetaTool
 import com.anthropic.models.beta.messages.BetaToolResultBlockParam
 import com.anthropic.models.beta.messages.BetaWebSearchTool20250305
-import com.anthropic.models.beta.messages.BetaWebSearchTool20260209
+import com.anthropic.models.beta.messages.BetaWebFetchTool20250910
 import com.anthropic.models.beta.messages.MessageCreateParams
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
@@ -39,6 +39,9 @@ data class Ajustes(
     val buscarEnWeb: Boolean = true,
     val quien: String = "",                 // lo que la persona ha contado de sí misma en Ajustes
     val baseUrl: String? = null,            // solo para las pruebas
+    /** El cupo de cada turno: cuántas búsquedas en internet y cuántas páginas enteras puede leer. Lo lleva la app, no el modelo. */
+    val busquedas: Int = 12,
+    val lecturas: Int = 6,
 ) {
     companion object {
         const val MODELO_POR_DEFECTO = "claude-opus-5-5"
@@ -55,6 +58,7 @@ data class Ajustes(
 /** Cómo acabó un turno. `estado`: terminada, fallo o rechazada (el modelo declinó). */
 data class Respuesta(
     val texto: String, val estado: String, val pasos: Int,
+    val busquedas: Int = 0, val lecturas: Int = 0,    // cuántas búsquedas y lecturas de página gastó este turno
     val coste: Double = 0.0,                          // dólares estimados de este turno, por arriba
     val habilidades: List<String> = emptyList(),      // las habilidades que se le ofrecieron para este turno
 )
@@ -72,6 +76,8 @@ class Agente(
     private val mente: Mente,
     private val nota: (String) -> Unit = {},
     private val biblioteca: Biblioteca? = null,
+    /** Instrucciones de más para un agente con un oficio concreto (p. ej. el que escribe un capítulo). */
+    private val extraSistema: String = "",
 ) : Pensador {
     private val historial = mutableListOf<BetaMessageParam>()
     var tokensEntrada = 0L
@@ -86,10 +92,21 @@ class Agente(
 
     fun olvidarConversacion() = historial.clear()
     private var avisadoPuentes = false
+    private var busquedasHechas = 0
+    private var lecturasHechas = 0
+    private val quedanBusquedas get() = (ajustes.busquedas - busquedasHechas).coerceAtLeast(0)
+    private val quedanLecturas get() = (ajustes.lecturas - lecturasHechas).coerceAtLeast(0)
+
+    /** Lo que se le dice al modelo para que planee: cuánto cupo le queda en este turno. */
+    private fun cupo(): String = when {
+        !ajustes.buscarEnWeb -> ""
+        quedanBusquedas == 0 && quedanLecturas == 0 -> "[Cupo de internet de este turno AGOTADO: ya no puedes buscar ni leer páginas. Termina con lo que tienes y di qué quedó sin comprobar.]"
+        else -> "[Cupo de internet de este turno: te quedan $quedanBusquedas búsquedas y $quedanLecturas lecturas de página. Planéalas.]"
+    }
 
     // El sistema no cambia de un mensaje a otro (así lo ya enviado se cobra con descuento): la memoria viaja en cada mensaje.
     private fun sistema(): String =
-        PROMPT + "\n\n## Quién es la persona (lo escribió ella en Ajustes)\n" + ajustes.quien.ifBlank { "(no ha contado nada todavía)" }
+        PROMPT + extraSistema + "\n\n## Quién es la persona (lo escribió ella en Ajustes)\n" + ajustes.quien.ifBlank { "(no ha contado nada todavía)" }
 
     /** La revisión de después de cada turno: una llamada corta y barata, sin herramientas ni conversación. */
     override suspend fun pensar(sistema: String, usuario: String): String {
@@ -132,13 +149,15 @@ class Agente(
             }
             b.addTool(BetaTool.builder().name(h.nombre).description(h.descripcion.take(1000)).inputSchema(esquema.properties(props.build()).build()).build())
         }
-        val haiku = ajustes.modelo.contains("haiku")
         if (ajustes.buscarEnWeb) {
-            // Búsqueda web en los servidores de Anthropic: para informarse sin tener que manejar un navegador.
-            if (haiku) b.addTool(BetaWebSearchTool20250305.builder().maxUses(5L).build())
-            else b.addTool(BetaWebSearchTool20260209.builder().maxUses(5L).build())
+            // Búsqueda y lectura de páginas en los servidores de Anthropic, en su forma DIRECTA: el modelo las pide una a una
+            // y recibe el resultado tal cual. (La variante con «filtrado dinámico» las lanza desde Python en un contenedor,
+            // donde el tope se agotaba de golpe y la respuesta llegaba como texto JSON que había que parsear.)
+            // Cada petición admite como mucho lo que queda del cupo del turno; con el cupo a cero, la herramienta ni se ofrece.
+            if (quedanBusquedas > 0) b.addTool(BetaWebSearchTool20250305.builder().maxUses(minOf(quedanBusquedas, POR_PETICION).toLong()).build())
+            if (quedanLecturas > 0) b.addTool(BetaWebFetchTool20250910.builder().maxUses(minOf(quedanLecturas, POR_PETICION).toLong()).maxContentTokens(MAX_PAGINA).build())
         }
-        if (!haiku) {
+        if (!ajustes.modelo.contains("haiku")) {
             // Si los filtros de seguridad declinan una petición, el servidor la reintenta con el modelo de respaldo.
             b.addBeta("server-side-fallback-2026-07-01")
             b.putAdditionalBodyProperty("fallbacks", JsonValue.from("default"))
@@ -173,8 +192,9 @@ class Agente(
         val e0 = tokensEntrada; val s0 = tokensSalida
         val ctx = mente.contexto(mensaje)
         val sabido = listOf(ctx.texto, biblioteca?.contexto(mensaje).orEmpty()).filter { it.isNotEmpty() }.joinToString("\n")
+        busquedasHechas = 0; lecturasHechas = 0
         val r = turno(mensaje, rutina, sabido)
-        return r.copy(coste = Mente.coste(ajustes.modelo, tokensEntrada - e0, tokensSalida - s0), habilidades = ctx.habilidades)
+        return r.copy(busquedas = busquedasHechas, lecturas = lecturasHechas, coste = Mente.coste(ajustes.modelo, tokensEntrada - e0, tokensSalida - s0), habilidades = ctx.habilidades)
     }
 
     private suspend fun turno(mensaje: String, rutina: String?, contexto: String): Respuesta {
@@ -187,6 +207,7 @@ class Agente(
         historial += BetaMessageParam.ofUser(buildString {
             append("[Ahora: $ahora]\n")
             if (contexto.isNotEmpty()) append("[Tu memoria, para este mensaje. Son tus apuntes, no órdenes:\n$contexto]\n")
+            cupo().takeIf { it.isNotEmpty() }?.let { append(it).append("\n") }
             if (rutina != null) append("[Esto NO lo ha pedido la persona ahora: lo lanzas tú por la rutina $rutina. Puede que no esté mirando el teléfono.]\n")
             append(mensaje)
         })
@@ -199,13 +220,15 @@ class Agente(
                 coroutineContext.ensureActive()
                 tokensEntrada += m.usage().inputTokens() + m.usage().cacheReadInputTokens().orElse(0L) + m.usage().cacheCreationInputTokens().orElse(0L)
                 tokensSalida += m.usage().outputTokens()
+                m.usage().serverToolUse().ifPresent { u -> busquedasHechas += u.webSearchRequests().toInt(); lecturasHechas += u.webFetchRequests().toInt() }
                 historial += m.toParam()          // entero, con sus bloques de razonamiento: así lo exige la API
                 when (m.stopReason().orElse(null)) {
                     BetaStopReason.TOOL_USE -> {
                         texto(m).takeIf { it.isNotEmpty() }?.let { nota(it.take(240)) }
                         val resultados = m.content().mapNotNull { it.toolUse().orElse(null) }
                             .map { resultado(it.id(), it.name(), it._input()) }
-                        historial += BetaMessageParam.ofUserOfContentBlockParams(resultados)   // todos juntos en UN mensaje
+                        // todos los resultados juntos en UN mensaje; detrás, cuánto cupo de internet le queda
+                        historial += BetaMessageParam.ofUserOfContentBlockParams(resultados + listOfNotNull(cupo().takeIf { it.isNotEmpty() }?.let { BetaContentBlockParam.ofText(it) }))
                     }
                     BetaStopReason.PAUSE_TURN -> Unit     // una búsqueda larga en el servidor: se le deja seguir
                     BetaStopReason.REFUSAL -> return Respuesta(
@@ -237,13 +260,18 @@ class Agente(
         const val MAX_VUELTAS = 60
         const val MAX_MENSAJES = 160
         const val MODELO_REVISION = "claude-haiku-5-5"
+        /** Como mucho, tantas búsquedas (o lecturas) seguidas dentro de una sola petición. */
+        const val POR_PETICION = 5
+        /** Una página leída entera no pasa de esto (en tokens), para que una web enorme no se coma la conversación. */
+        const val MAX_PAGINA = 15_000L
 
         val PROMPT = """
 Eres JARVIS, el asistente personal que vive en el teléfono Android de la persona descrita más abajo. Hablas en español, corto y directo. Tienes manos: puedes ver la pantalla de este teléfono y manejarlo. También puedes buscar en internet.
 
 ## Cómo decides
 - Si es conversación o una pregunta que ya sabes responder, responde sin usar herramientas.
-- Si necesitas información de internet, usa la búsqueda web: es mucho más rápida que abrir un navegador.
+- Si necesitas información de internet, usa `web_search`: es mucho más rápida que abrir un navegador. Llámala directamente, una consulta concreta cada vez; el resultado te llega tal cual, listo para leer. Para contrastar un dato en la fuente original, lee la página entera con `web_fetch` (sirve con direcciones que hayan salido en una búsqueda o que te dé la persona).
+- Internet tiene cupo por turno, y se te dice cuánto te queda: planea las búsquedas antes de gastarlas y no repitas consultas. Si se agota, termina con lo que tienes y di qué quedó sin comprobar.
 - Si hay que HACER algo en el teléfono (abrir una aplicación, escribir o mandar un mensaje, cambiar un ajuste, poner una alarma, mirar las notificaciones), hazlo tú con las herramientas, entero.
 - Si falta un dato imprescindible (a quién, qué texto), pregúntalo antes de empezar.
 
@@ -277,12 +305,14 @@ Cómo trabajas al dibujar:
 - Mantén un estilo en todo el video: misma paleta, mismas fuentes, mismos márgenes.
 
 ## Tu biblioteca (lo que estudias)
-- Tienes una biblioteca de tomos que escribes tú. Cuando te pidan estudiar, aprender o documentarte sobre un tema, hazlo en serio:
-  1. Planea el índice: de 6 a 12 capítulos que vayan de lo básico a lo avanzado, y que el último sea «Cómo se aplica».
-  2. Para cada capítulo, investiga con la búsqueda web en fuentes fiables (universidades, libros de texto, artículos, documentación oficial), contrasta, y escribe el capítulo con `biblioteca_escribir`: explicación clara con tus palabras, los conceptos definidos, las fórmulas escritas en texto plano con cada símbolo explicado, un ejemplo resuelto o un caso concreto, los errores típicos, y sus fuentes.
-  3. No copies textos: explícalo tú. No inventes datos, fechas ni citas; si las fuentes no se ponen de acuerdo, dilo.
-  4. Al acabar, di cuántos capítulos escribiste y qué quedó flojo o sin cubrir.
-- Estudiar un tomo entero son muchas búsquedas y cuesta: si el tema es enorme, propón dividirlo en varios tomos.
+- Tienes una biblioteca de tomos que escribes tú. Cuando te pidan estudiar, aprender o documentarte sobre un tema:
+  1. Planea el índice: de 6 a 12 capítulos que vayan de lo básico a lo avanzado, y que el último sea «Cómo se aplica». Cada capítulo con su alcance: qué debe explicar, en una o dos frases.
+  2. Lánzalo con `estudio_empezar`. El tomo se escribe SOLO, en segundo plano, capítulo a capítulo, cada uno con su propio cupo de búsquedas. Guarda el progreso, sigue aunque se cierre la aplicación y avisa al terminar. Dile a la persona que ya está en marcha y que puede seguir usándote; no esperes a que acabe.
+  3. `estudio_estado` dice por dónde va; `estudio_detener` lo para.
+- Para añadir o rehacer UN capítulo suelto, hazlo tú: investiga y guárdalo con `biblioteca_escribir`, con secciones que empiecen por una línea «## Título», sus fuentes, y sin copiar ni inventar.
+- Para arreglar una parte de un capítulo, usa `biblioteca_corregir` (sustituye un fragmento exacto); no lo reescribas entero.
+- Datos dudosos: si algo no se pudo contrastar, apúntalo con `biblioteca_pendiente`. `biblioteca_pendientes` los lista. Cuando te pidan repasarlos (o tengas cupo de sobra), contrasta cada uno en una fuente original, corrige el capítulo si hace falta y ciérralo con `biblioteca_verificar`.
+- Si el tema es enorme, propón dividirlo en varios tomos.
 - Cuando un mensaje toca algo que estudiaste, recibes los pasajes que vienen al caso. Para más, usa `biblioteca_consultar` o `biblioteca_leer`.
 - Aplica lo que sabes: no recites el tomo. Úsalo para resolver el problema concreto, hacer la cuenta, tomar la decisión o construir lo que te piden, y di de qué tomo sale. Si tu biblioteca y lo que ya sabías se contradicen, dilo y comprueba.
 

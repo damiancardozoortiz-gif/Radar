@@ -4,7 +4,11 @@ Decidido con el dueño del proyecto el 14 de noviembre de 2026. Estado: **constr
 
 La versión 2.1 (ver README) añadió lo que el dueño pidió después: imágenes y videos dibujados por código (que cubre los rótulos
 sincronizados con la voz, el movimiento en imágenes y los fundidos), una biblioteca que JARVIS construye investigando, y puentes
-MCP hacia servicios externos. Sigue pendiente: cambio de velocidad y volumen por partes en los montajes de video real.
+MCP hacia servicios externos. La versión 2.2 arregló lo que el propio JARVIS encontró al probar la 2.1: el cupo de búsquedas pasa a llevarlo la app (por turno y por
+capítulo), búsqueda directa y lectura de páginas, estudio de tomos en segundo plano y reanudable, datos pendientes de contrastar,
+consultas con las fuentes una sola vez y corrección de capítulos por fragmentos.
+
+Sigue pendiente: cambio de velocidad y volumen por partes en los montajes de video real.
 
 ## Punto de partida
 

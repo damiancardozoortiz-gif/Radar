@@ -37,6 +37,11 @@ class Herramientas(
     private val fuentes: Fuentes? = null,
     private val biblioteca: Biblioteca? = null,
     private val puentes: Puentes? = null,
+    private val estudios: Estudios? = null,
+    /** Avisa de que hay un estudio que arrancar (o seguir) en segundo plano. */
+    private val alEstudiar: () -> Unit = {},
+    /** Si no es null, este agente solo puede usar estas herramientas (p. ej. el que escribe un capítulo). */
+    private val soloEstas: Set<String>? = null,
 ) {
     private var vista: Vista? = null
     private var vistaT = 0L
@@ -276,8 +281,53 @@ class Herramientas(
         if (q.length < 3) return Resultado("Falta la pregunta.", error = true)
         val tomo = a["tomo"]?.toString()?.takeIf { it.isNotBlank() }?.let { biblio().tomo(it) ?: return Resultado("No hay ningún tomo parecido a «$it». Mira biblioteca_indice.", error = true) }
         val l = biblio().consultar(q, 4, tomo?.id)
-        return Resultado(if (l.isEmpty()) "La biblioteca no tiene nada sobre eso. Si hace falta, estúdialo y escríbelo."
-            else l.joinToString("\n\n") { "[${it.cita()}]\n${it.texto}" + if (it.capitulo.fuentes.isNotEmpty()) "\nFuentes: ${it.capitulo.fuentes.joinToString("; ")}" else "" })
+        return Resultado(if (l.isEmpty()) "La biblioteca no tiene nada sobre eso. Si hace falta, estúdialo y escríbelo." else biblio().respuesta(l))
+    }
+
+    private fun bibliotecaCorregir(a: Map<String, Any?>): Resultado {
+        val t = biblio().corregir(a["tomo"]?.toString().orEmpty(), entero(a["capitulo"]) ?: 0, a["buscar"]?.toString().orEmpty(),
+            a["reemplazar"]?.toString().orEmpty(), (a["fuentes"] as? List<*>)?.map { it.toString() } ?: emptyList())
+        val c = t.capitulos.first { it.numero == entero(a["capitulo"]) }
+        return Resultado("Corregido «${t.titulo}», capítulo ${c.numero}: ${c.titulo} (ahora ${c.letras} letras, ${c.fuentes.size} fuentes). El resto del capítulo no se tocó.")
+    }
+
+    private fun bibliotecaPendiente(a: Map<String, Any?>): Resultado {
+        val p = biblio().marcarPendiente(a["tomo"]?.toString().orEmpty(), entero(a["capitulo"]) ?: 0, a["dato"]?.toString().orEmpty(), a["motivo"]?.toString().orEmpty())
+        return Resultado("Apuntado como pendiente de contrastar (${p.id}): ${p.dato}")
+    }
+
+    private fun bibliotecaPendientes(a: Map<String, Any?>): Resultado {
+        val l = biblio().pendientes(a["tomo"]?.toString())
+        if (l.isEmpty()) return Resultado("No hay ningún dato pendiente de contrastar.")
+        val tomos = biblio().tomos().associateBy { it.id }
+        return Resultado("${l.size} datos pendientes de contrastar:\n" + l.joinToString("\n") {
+            "${it.id} · «${tomos[it.tomo]?.titulo ?: it.tomo}», capítulo ${it.capitulo} · ${it.dato}" + if (it.motivo.isNotEmpty()) " (${it.motivo})" else ""
+        })
+    }
+
+    private fun bibliotecaVerificar(a: Map<String, Any?>): Resultado {
+        val resultado = Freno.norm(a["resultado"]?.toString())
+        if (resultado !in setOf("confirmado", "corregido", "descartado")) return Resultado("«resultado» es confirmado, corregido o descartado.", error = true)
+        val p = biblio().verificar(a["id"]?.toString().orEmpty()) ?: return Resultado("No hay ningún dato pendiente con ese id. Mira biblioteca_pendientes.", error = true)
+        return Resultado("Dato ${p.id} cerrado como $resultado: ${p.dato}. Quedan ${biblio().pendientes().size} pendientes." +
+            if (resultado == "corregido") " Si aún no cambiaste el capítulo, hazlo ahora con biblioteca_corregir." else "")
+    }
+
+    // ------------------------------------------------------------ estudiar un tomo en segundo plano
+    private fun estud() = estudios ?: throw ErrorManos("el estudio en segundo plano no está disponible")
+
+    private fun estudioEmpezar(a: Map<String, Any?>): Resultado {
+        val caps = (a["capitulos"] as? List<*>)?.map { c -> (c as? Map<*, *>)?.let { it["titulo"]?.toString().orEmpty() to it["alcance"]?.toString().orEmpty() } ?: ("" to "") }
+            ?: throw ErrorManos("faltan los «capitulos»: el índice, cada uno con titulo y alcance")
+        val p = estud().empezar(a["tomo"]?.toString().orEmpty(), a["descripcion"]?.toString().orEmpty(), caps)
+        alEstudiar()
+        return Resultado("Estudio en marcha: «${p.tomo}», ${p.capitulos.size} capítulos. Se escribe solo, en segundo plano, y avisará al terminar. " +
+            "No esperes: dile a la persona que ya está en marcha, que tardará varios minutos por capítulo y que mientras puede seguir usándote.")
+    }
+
+    private fun estudioEstado(): Resultado {
+        val p = estud().actual() ?: return Resultado("No hay ningún estudio, ni en marcha ni reciente.")
+        return Resultado(p.resumen() + "\n" + p.capitulos.joinToString("\n") { "${it.numero}. ${it.titulo} — ${it.estado}" })
     }
 
     private fun bibliotecaLeer(a: Map<String, Any?>): Resultado {
@@ -337,6 +387,13 @@ class Herramientas(
         "biblioteca_consultar" -> bibliotecaConsultar(a)
         "biblioteca_leer" -> bibliotecaLeer(a)
         "biblioteca_escribir" -> bibliotecaEscribir(a)
+        "biblioteca_corregir" -> bibliotecaCorregir(a)
+        "biblioteca_pendiente" -> bibliotecaPendiente(a)
+        "biblioteca_pendientes" -> bibliotecaPendientes(a)
+        "biblioteca_verificar" -> bibliotecaVerificar(a)
+        "estudio_empezar" -> estudioEmpezar(a)
+        "estudio_estado" -> estudioEstado()
+        "estudio_detener" -> estud().detener()?.let { alEstudiar(); Resultado("Estudio detenido. ${it.resumen()}. Lo ya escrito se queda en la biblioteca.") } ?: Resultado("No había ningún estudio en marcha.")
         "notificaciones" -> notificaciones()
         "agenda" -> agenda(a)
         "contactos" -> contactos(a)
@@ -405,7 +462,7 @@ class Herramientas(
     }
 
     /** Todas las herramientas de este turno: las propias y las de los puentes conectados. */
-    suspend fun catalogo(): List<Herramienta> = CATALOGO + (puentes?.takeIf { it.hay }?.herramientas()?.map {
+    suspend fun catalogo(): List<Herramienta> = if (soloEstas != null) CATALOGO.filter { it.nombre in soloEstas } else CATALOGO + (puentes?.takeIf { it.hay }?.herramientas()?.map {
         Herramienta(it.alias, "[Puente ${it.puente}] ${it.descripcion}" + if (it.soloLectura) "" else " (Cambia algo fuera: esperará el sí de la persona.)", esquemaCrudo = it.esquema)
     } ?: emptyList())
 
@@ -414,6 +471,7 @@ class Herramientas(
 
     /** Ejecuta una herramienta. Nunca lanza: un fallo vuelve como Resultado con error, para que el agente lo vea. */
     suspend fun ejecutar(nombre: String, args: Map<String, Any?>): Resultado {
+        if (soloEstas != null && nombre !in soloEstas) return Resultado("Esa herramienta no está disponible para este trabajo. Usa solo: ${soloEstas.joinToString()}.", error = true)
         manos.noDisponible()?.let { if (nombre !in SIN_MANOS && !nombre.startsWith("p_")) return Resultado("No puedo usar el teléfono: $it. Díselo a la persona y termina.", error = true) }
         if (nivel == "avisar" && nombre in ACTUAN) return Resultado(
             "Esta rutina es de nivel «avisar»: no toques el teléfono ni gastes en generar nada. Cuéntale lo que haya y termina.", error = true)
@@ -445,7 +503,8 @@ class Herramientas(
         val ACTUAN = setOf("tocar", "escribir", "tecla", "deslizar", "abrir_app", "abrir_url", "compartir_video", "montar_video", "narrar")
         /** Estas no necesitan manejar la pantalla: funcionan aunque la accesibilidad esté apagada. */
         val SIN_MANOS = setOf("medios", "ver_video", "transcribir_video", "montar_video", "narrar", "compartir_video", "recordar", "crear_imagen", "crear_video",
-            "biblioteca_indice", "biblioteca_consultar", "biblioteca_leer", "biblioteca_escribir",
+            "biblioteca_indice", "biblioteca_consultar", "biblioteca_leer", "biblioteca_escribir", "biblioteca_corregir", "biblioteca_pendiente",
+            "biblioteca_pendientes", "biblioteca_verificar", "estudio_empezar", "estudio_estado", "estudio_detener",
             "notificaciones", "agenda", "contactos", "ubicacion", "habilidad_guardar", "rutina_crear", "rutinas", "rutina_borrar")
         private val INYECCION = Regex(
             "ignora\\w*\\s+(tus|las|todas|sus)?\\s*(instrucciones|ordenes|órdenes|reglas)|ignore (all |your )?(previous )?instructions" +
@@ -509,7 +568,28 @@ class Herramientas(
                     "escenas" to mapOf("type" to "array", "items" to mapOf("type" to "object"), "description" to "las escenas, en orden; cada una con dura, fondo y capas"),
                     "nombre" to mapOf("type" to "string")) + PROPOSITO, listOf("escenas")),
             Herramienta("biblioteca_indice", "Los tomos de tu biblioteca y sus capítulos."),
-            Herramienta("biblioteca_consultar", "Busca en tu biblioteca los pasajes que responden a una pregunta. Úsala antes de explicar o aplicar un tema que hayas estudiado.",
+            Herramienta("biblioteca_corregir", "Corrige una parte de un capítulo sin reescribirlo: sustituye un fragmento exacto por otro. Para arreglar un dato, afinar una explicación o añadir un párrafo (pon en «reemplazar» el fragmento original seguido de lo nuevo).",
+                mapOf("tomo" to mapOf("type" to "string"), "capitulo" to mapOf("type" to "integer"),
+                    "buscar" to mapOf("type" to "string", "description" to "el fragmento tal cual está en el capítulo (al menos 8 letras, y que solo aparezca una vez)"),
+                    "reemplazar" to mapOf("type" to "string", "description" to "el texto que lo sustituye"),
+                    "fuentes" to mapOf("type" to "array", "items" to mapOf("type" to "string"), "description" to "fuentes nuevas que respaldan el cambio (se añaden a las que había)")) + PROPOSITO,
+                listOf("tomo", "capitulo", "buscar", "reemplazar")),
+            Herramienta("biblioteca_pendiente", "Apunta un dato de un capítulo que no pudiste contrastar o en el que las fuentes no coinciden, para volver a él.",
+                mapOf("tomo" to mapOf("type" to "string"), "capitulo" to mapOf("type" to "integer"),
+                    "dato" to mapOf("type" to "string", "description" to "el dato dudoso, tal como está en el capítulo"),
+                    "motivo" to mapOf("type" to "string", "description" to "por qué es dudoso")), listOf("tomo", "capitulo", "dato")),
+            Herramienta("biblioteca_pendientes", "Lista los datos pendientes de contrastar, con su id.", mapOf("tomo" to mapOf("type" to "string", "description" to "opcional: solo los de ese tomo"))),
+            Herramienta("biblioteca_verificar", "Cierra un dato pendiente después de contrastarlo en una fuente original. Si estaba mal, corrige antes el capítulo con biblioteca_corregir.",
+                mapOf("id" to mapOf("type" to "string"), "resultado" to mapOf("type" to "string", "enum" to listOf("confirmado", "corregido", "descartado"))), listOf("id", "resultado")),
+            Herramienta("estudio_empezar", "Pone a estudiar un tomo entero en segundo plano: se escribe solo, capítulo a capítulo, cada uno con su propio cupo de búsquedas; guarda el progreso, se reanuda si se corta y avisa al terminar. Tú solo das el índice.",
+                mapOf("tomo" to mapOf("type" to "string", "description" to "título del tomo"),
+                    "descripcion" to mapOf("type" to "string", "description" to "de qué trata, en una frase"),
+                    "capitulos" to mapOf("type" to "array", "description" to "el índice, en orden, de 2 a 20 capítulos", "items" to mapOf("type" to "object",
+                        "properties" to mapOf("titulo" to mapOf("type" to "string"), "alcance" to mapOf("type" to "string", "description" to "qué debe explicar este capítulo, en una o dos frases")),
+                        "required" to listOf("titulo", "alcance")))) + PROPOSITO, listOf("tomo", "capitulos")),
+            Herramienta("estudio_estado", "Por dónde va el estudio en segundo plano: qué capítulos están escritos, cuáles faltan y cuáles fallaron."),
+            Herramienta("estudio_detener", "Detiene el estudio en segundo plano. Lo ya escrito se queda en la biblioteca."),
+            Herramienta("biblioteca_consultar", "Busca en tu biblioteca los pasajes que responden a una pregunta: cada uno con su tomo, capítulo y sección, y las fuentes una sola vez al final. Úsala antes de explicar o aplicar un tema que hayas estudiado.",
                 mapOf("pregunta" to mapOf("type" to "string"), "tomo" to mapOf("type" to "string", "description" to "opcional: buscar solo en ese tomo")), listOf("pregunta")),
             Herramienta("biblioteca_leer", "Lee un capítulo entero de un tomo.",
                 mapOf("tomo" to mapOf("type" to "string"), "capitulo" to mapOf("type" to "integer")), listOf("tomo", "capitulo")),
@@ -576,6 +656,13 @@ class Herramientas(
                 "biblioteca_consultar" -> "Consultar la biblioteca: ${a["pregunta"]?.toString().orEmpty().take(50)}"
                 "biblioteca_leer" -> "Leer «${a["tomo"]}», capítulo ${a["capitulo"]}"
                 "biblioteca_escribir" -> "Escribir «${a["tomo"]}» · ${a["capitulo"]}. ${a["titulo"]?.toString().orEmpty().take(50)}"
+                "biblioteca_corregir" -> "Corregir «${a["tomo"]}», capítulo ${a["capitulo"]}"
+                "biblioteca_pendiente" -> "Apuntar un dato por contrastar"
+                "biblioteca_pendientes" -> "Ver los datos por contrastar"
+                "biblioteca_verificar" -> "Cerrar el dato ${a["id"]}"
+                "estudio_empezar" -> "Empezar a estudiar «${a["tomo"]}»"
+                "estudio_estado" -> "Ver cómo va el estudio"
+                "estudio_detener" -> "Detener el estudio"
                 "compartir_video" -> "Compartir el video ${a["id"]}"
                 "notificaciones" -> "Leer las notificaciones"
                 "agenda" -> "Mirar la agenda"
