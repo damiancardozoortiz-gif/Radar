@@ -11,9 +11,15 @@ data class Capitulo(val numero: Int, val titulo: String, val fuentes: List<Strin
 data class Tomo(val id: String, val titulo: String, val descripcion: String, val capitulos: List<Capitulo>, val fecha: Long)
 
 /** Un trozo de la biblioteca que responde a una pregunta. */
-data class Pasaje(val tomo: Tomo, val capitulo: Capitulo, val texto: String, val puntos: Double, val coinciden: Int = 0, val preguntadas: Int = 0) {
-    fun cita() = "«${tomo.titulo}», capítulo ${capitulo.numero}: ${capitulo.titulo}"
+data class Pasaje(
+    val tomo: Tomo, val capitulo: Capitulo, val texto: String, val puntos: Double, val coinciden: Int = 0, val preguntadas: Int = 0,
+    val seccion: String = "",
+) {
+    fun cita() = "«${tomo.titulo}», capítulo ${capitulo.numero}: ${capitulo.titulo}" + if (seccion.isNotEmpty()) " · sección «$seccion»" else ""
 }
+
+/** Un dato de un capítulo que JARVIS no pudo contrastar y tiene que volver a mirar. */
+data class Pendiente(val id: String, val tomo: String, val capitulo: Int, val dato: String, val motivo: String, val fecha: Long)
 
 /**
  * La biblioteca de JARVIS: tomos que él mismo investiga y escribe, capítulo a capítulo, con sus fuentes.
@@ -21,7 +27,8 @@ data class Pasaje(val tomo: Tomo, val capitulo: Capitulo, val texto: String, val
  * lo que encuentra. Todo vive en archivos de texto; nada de Android aquí.
  */
 class Biblioteca(private val caja: Caja) {
-    private var indice: Map<String, List<Triple<String, Int, List<String>>>>? = null      // tomo -> (texto del trozo, capítulo, palabras)
+    private class Trozo(val texto: String, val capitulo: Int, val seccion: String, val palabras: List<String>)
+    private var indice: Map<String, List<Trozo>>? = null      // tomo -> sus trozos
 
     @Synchronized fun tomos(): List<Tomo> = try {
         JSONArray(caja.leer("biblioteca").ifBlank { "[]" }).let { a ->
@@ -83,24 +90,93 @@ class Biblioteca(private val caja: Caja) {
         val t = tomos().firstOrNull { it.id == id } ?: return
         t.capitulos.forEach { caja.escribir(archivo(id, it.numero), "") }
         guardar(tomos().filter { it.id != id })
+        guardarPendientes(pendientes().filter { it.tomo != id })
+    }
+
+    /**
+     * Corrige una parte de un capítulo sin reescribirlo: sustituye `buscar` (que debe aparecer exactamente una vez) por `reemplazar`.
+     * Las fuentes nuevas se añaden a las que ya tenía.
+     */
+    @Synchronized fun corregir(tomoNombre: String, numero: Int, buscar: String, reemplazar: String, fuentes: List<String> = emptyList()): Tomo {
+        val t = tomo(tomoNombre) ?: throw ErrorManos("no hay ningún tomo parecido a «$tomoNombre»")
+        val cap = t.capitulos.firstOrNull { it.numero == numero } ?: throw ErrorManos("«${t.titulo}» no tiene capítulo $numero")
+        val texto = caja.leer(archivo(t.id, numero))
+        if (buscar.trim().length < 8) throw ErrorManos("«buscar» es demasiado corto: copia un fragmento de al menos 8 letras, tal cual está en el capítulo")
+        val veces = texto.windowed(buscar.length, 1).count { it == buscar }
+        if (veces == 0) throw ErrorManos("ese fragmento no está en el capítulo tal cual (mayúsculas, acentos y espacios cuentan). Léelo con biblioteca_leer y cópialo exacto")
+        if (veces > 1) throw ErrorManos("ese fragmento aparece $veces veces en el capítulo: copia un trozo más largo para que solo haya uno")
+        val nuevo = texto.replace(buscar, reemplazar).trim()
+        if (nuevo.length < MIN_CAPITULO) throw ErrorManos("tras el cambio el capítulo quedaría demasiado corto")
+        if (nuevo.length > MAX_CAPITULO) throw ErrorManos("tras el cambio el capítulo quedaría demasiado largo (máximo $MAX_CAPITULO letras)")
+        caja.escribir(archivo(t.id, numero), nuevo)
+        val juntas = (cap.fuentes + fuentes.map { it.trim().take(300) }.filter { it.isNotEmpty() }).distinct().take(16)
+        val mejor = t.copy(capitulos = t.capitulos.map { if (it.numero == numero) it.copy(fuentes = juntas, letras = nuevo.length) else it })
+        guardar(tomos().filter { it.id != t.id } + mejor)
+        return mejor
+    }
+
+    // ------------------------------------------------------------ datos pendientes de contrastar
+    @Synchronized fun pendientes(tomoNombre: String? = null): List<Pendiente> {
+        val solo = tomoNombre?.takeIf { it.isNotBlank() }?.let { tomo(it)?.id ?: return emptyList() }
+        return try {
+            JSONArray(caja.leer("biblioteca_pendientes").ifBlank { "[]" }).let { a ->
+                (0 until a.length()).mapNotNull { i -> runCatching { a.getJSONObject(i).let { o ->
+                    Pendiente(o.getString("id"), o.getString("tomo"), o.getInt("capitulo"), o.getString("dato"), o.optString("motivo"), o.optLong("fecha")) } }.getOrNull() }
+            }.filter { solo == null || it.tomo == solo }
+        } catch (e: Exception) { emptyList() }
+    }
+
+    private fun guardarPendientes(l: List<Pendiente>) = caja.escribir("biblioteca_pendientes", JSONArray(l.map {
+        JSONObject().put("id", it.id).put("tomo", it.tomo).put("capitulo", it.capitulo).put("dato", it.dato).put("motivo", it.motivo).put("fecha", it.fecha)
+    }).toString())
+
+    /** Apunta un dato dudoso de un capítulo para volver a él. Si ya estaba apuntado, devuelve el que había. */
+    @Synchronized fun marcarPendiente(tomoNombre: String, numero: Int, dato: String, motivo: String, ahora: Long = System.currentTimeMillis()): Pendiente {
+        val t = tomo(tomoNombre) ?: throw ErrorManos("no hay ningún tomo parecido a «$tomoNombre»")
+        if (t.capitulos.none { it.numero == numero }) throw ErrorManos("«${t.titulo}» no tiene capítulo $numero")
+        val d = dato.trim().replace(Regex("\\s+"), " ").take(400)
+        if (d.length < 5) throw ErrorManos("di qué dato es el dudoso, tal como está en el capítulo")
+        val todos = pendientes()
+        todos.firstOrNull { it.tomo == t.id && it.capitulo == numero && Freno.norm(it.dato) == Freno.norm(d) }?.let { return it }
+        if (todos.size >= MAX_PENDIENTES) throw ErrorManos("ya hay $MAX_PENDIENTES datos pendientes: verifica algunos antes de apuntar más")
+        val n = (todos.mapNotNull { it.id.removePrefix("d").toIntOrNull() }.maxOrNull() ?: 0) + 1
+        return Pendiente("d$n", t.id, numero, d, motivo.trim().take(300), ahora).also { guardarPendientes(todos + it) }
+    }
+
+    /** Da por resuelto un dato pendiente (confirmado, corregido o descartado) y lo quita de la lista. */
+    @Synchronized fun verificar(id: String): Pendiente? {
+        val todos = pendientes()
+        val p = todos.firstOrNull { it.id == id.trim() } ?: return null
+        guardarPendientes(todos.filter { it.id != p.id })
+        return p
     }
 
     // ------------------------------------------------------------ consulta
-    /** Parte un capítulo en trozos de unas 1200 letras, cortando entre párrafos. */
-    private fun trozos(texto: String): List<String> {
-        val salida = mutableListOf<String>(); val actual = StringBuilder()
+    /**
+     * Parte un capítulo en trozos de unas 1200 letras, cortando entre párrafos y sin mezclar secciones.
+     * Una sección empieza en una línea que comienza por «## ». Devuelve (texto del trozo, título de su sección).
+     */
+    private fun trozos(texto: String): List<Pair<String, String>> {
+        val salida = mutableListOf<Pair<String, String>>(); val actual = StringBuilder(); var seccion = ""
+        fun cerrar() { if (actual.isNotBlank()) salida += actual.toString().trim() to seccion; actual.clear() }
         for (p in texto.split(Regex("\n\\s*\n"))) {
-            if (actual.isNotEmpty() && actual.length + p.length > TROZO) { salida += actual.toString().trim(); actual.clear() }
-            if (p.length > TROZO * 2) p.chunked(TROZO).forEach { salida += it } else actual.append(p).append("\n\n")
+            val lineas = p.trim().lines()
+            val titulo = lineas.firstOrNull()?.takeIf { it.startsWith("#") }?.trimStart('#', ' ')?.trim()
+            val cuerpo = if (titulo != null) { cerrar(); seccion = titulo.take(80); lineas.drop(1).joinToString("\n") } else p
+            if (cuerpo.isBlank()) continue
+            if (actual.isNotEmpty() && actual.length + cuerpo.length > TROZO) cerrar()
+            if (cuerpo.length > TROZO * 2) { cerrar(); cuerpo.chunked(TROZO).forEach { salida += it to seccion } } else actual.append(cuerpo.trim()).append("\n\n")
         }
-        if (actual.isNotBlank()) salida += actual.toString().trim()
+        cerrar()
         return salida
     }
 
     private fun palabrasDe(s: String): List<String> = Freno.norm(s).split(Regex("[^a-z0-9ñ]+")).filter { it.length >= 3 }
 
-    @Synchronized private fun indice(): Map<String, List<Triple<String, Int, List<String>>>> = indice ?: tomos().associate { t ->
-        t.id to t.capitulos.flatMap { c -> trozos(caja.leer(archivo(t.id, c.numero))).map { Triple(it, c.numero, palabrasDe(c.titulo + " " + it)) } }
+    @Synchronized private fun indice(): Map<String, List<Trozo>> = indice ?: tomos().associate { t ->
+        t.id to t.capitulos.flatMap { c ->
+            trozos(caja.leer(archivo(t.id, c.numero))).map { (texto, seccion) -> Trozo(texto, c.numero, seccion, palabrasDe(c.titulo + " " + seccion + " " + texto)) }
+        }
     }.also { indice = it }
 
     /** Los pasajes que mejor responden a la pregunta, de toda la biblioteca o de un solo tomo. */
@@ -110,21 +186,37 @@ class Biblioteca(private val caja: Caja) {
         val tomos = tomos().associateBy { it.id }
         val docs = indice().filterKeys { soloTomo == null || it == soloTomo }.flatMap { (id, l) -> l.map { id to it } }
         if (docs.isEmpty()) return emptyList()
-        val media = docs.sumOf { it.second.third.size }.toDouble() / docs.size
-        val frecuencia = q.associateWith { p -> docs.count { p in it.second.third } }
+        val media = docs.sumOf { it.second.palabras.size }.toDouble() / docs.size
+        val frecuencia = q.associateWith { p -> docs.count { p in it.second.palabras } }
         return docs.map { (id, d) ->
             val puntos = q.sumOf { p ->
-                val f = d.third.count { it == p }
+                val f = d.palabras.count { it == p }
                 if (f == 0) 0.0 else {
                     val idf = ln(1 + (docs.size - frecuencia.getValue(p) + 0.5) / (frecuencia.getValue(p) + 0.5))
-                    idf * f * 2.2 / (f + 1.2 * (0.25 + 0.75 * d.third.size / media))
+                    idf * f * 2.2 / (f + 1.2 * (0.25 + 0.75 * d.palabras.size / media))
                 }
             }
             Triple(id, d, puntos)
         }.filter { it.third > 0 }.sortedByDescending { it.third }.take(max).mapNotNull { (id, d, p) ->
             val t = tomos[id] ?: return@mapNotNull null
-            Pasaje(t, t.capitulos.first { it.numero == d.second }, d.first, p, q.count { it in d.third }, q.size)
+            Pasaje(t, t.capitulos.first { it.numero == d.capitulo }, d.texto, p, q.count { it in d.palabras }, q.size, d.seccion)
         }
+    }
+
+    /**
+     * Los pasajes listos para leer: cada uno con su tomo, capítulo y sección, y las fuentes UNA sola vez al final
+     * (una línea por capítulo citado), en vez de repetidas en cada pasaje.
+     */
+    fun respuesta(l: List<Pasaje>): String {
+        if (l.isEmpty()) return ""
+        val pasajes = l.mapIndexed { i, p -> "[${i + 1}] ${p.cita()}\n${p.texto}" }.joinToString("\n\n")
+        val citados = l.map { it.tomo to it.capitulo }.distinctBy { it.first.id to it.second.numero }
+        val fuentes = citados.joinToString("\n") { (t, c) ->
+            "· «${t.titulo}», capítulo ${c.numero}: " + if (c.fuentes.isEmpty()) "(sin fuentes apuntadas)" else c.fuentes.joinToString("; ")
+        }
+        val dudas = pendientes().filter { p -> citados.any { it.first.id == p.tomo && it.second.numero == p.capitulo } }
+        return pasajes + "\n\nFuentes:\n" + fuentes +
+            if (dudas.isEmpty()) "" else "\n\nOjo, datos de estos capítulos pendientes de contrastar:\n" + dudas.joinToString("\n") { "· ${it.id}: ${it.dato}" }
     }
 
     /** Lo que viene al caso para un mensaje, listo para dárselo al agente. Vacío si la biblioteca no tiene nada que decir. */
@@ -142,6 +234,7 @@ class Biblioteca(private val caja: Caja) {
         const val MIN_CAPITULO = 600
         const val MAX_CAPITULO = 9000
         const val TROZO = 1200
+        const val MAX_PENDIENTES = 200
         private val VACIAS = setOf("que", "los", "las", "una", "uno", "del", "por", "para", "con", "sin", "como", "pero", "mas", "sus", "muy", "esta", "este",
             "esto", "hay", "son", "fue", "ser", "cuando", "donde", "quiero", "puedes", "dime", "sobre", "cual", "cuales", "entre", "desde", "hasta", "the", "and", "for")
     }
