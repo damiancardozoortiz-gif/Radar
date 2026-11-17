@@ -181,6 +181,41 @@ Mantén `--host 127.0.0.1`. Con `0.0.0.0`, cualquiera en tu wifi podría usar el
 - **Comprobado aquí:** el cliente contra un **llama-server real** compilado de llama.cpp, que responde, se apaga (la app lo detecta) y se recupera al volver a arrancarlo. También contra un servidor simulado: modelo cargando (503), errores, respuestas rotas, tiempo agotado, que no bloquea el hilo que llama, que «Detener» corta la espera en el acto y que Claude se llama como mucho una vez por mensaje.
 - **No comprobado:** el modelo de la prueba era uno diminuto con pesos al azar, porque aquí no se pudo descargar Qwen. Tampoco se ha probado la app en un teléfono con Termux. **La integración no está confirmada hasta que, en tu teléfono, preguntes algo desde JARVIS y conteste Qwen.** Además, la calidad de un modelo de 0,5B es limitada: para conversar sirve, pero puede inventarse cosas.
 
+### Lo nuevo de la 2.5: el taller (JARVIS trabaja en su propio código)
+
+Le dices por voz o por escrito «JARVIS, mejora tal cosa de tu código» y él lo hace: lee, cambia, compila, pasa las pruebas, corrige, hace commit y te avisa. Trabaja en una **copia** del proyecto dentro de Termux, nunca en la app instalada, y cada cambio pasa por el freno.
+
+**Cómo funciona.** `taller/taller.py` es un servidor pequeño de Termux que JARVIS usa como un puente más.
+- **Sin pedir permiso:** leer, buscar, ver el estado, el historial y los cambios.
+- **Con tu toque en la tarjeta:**
+  - crear la rama de trabajo `jarvis/…` (deja un punto de respaldo);
+  - cambiar archivos (antes guarda una copia de cada uno);
+  - hacer commit y compilar, solo con objetivos fijos: pruebas, apk o lint;
+  - volver a un punto de respaldo y subir a GitHub. Estos dos nunca se pueden dejar como permiso fijo.
+- **No hay terminal libre.**
+- **Nunca toca:** la firma, `.git`, `.github`, `gradlew`, `gradle/wrapper` ni `local.properties`.
+- **Credencial obligatoria:** cualquier app del teléfono puede llegar a 127.0.0.1.
+- **Registro** en `~/.jarvis-taller/taller.log`.
+- **Memoria técnica:** JARVIS apunta lo que hace en `jarvis-android/MEMORIA-TECNICA.md`.
+
+**Instalarlo (en Termux, una vez):**
+```sh
+pkg install -y git python
+git clone --branch ccr-a2f47d67-l3jw2z https://github.com/damiancardozoortiz-gif/Radar.git ~/jarvis-taller/Radar
+bash ~/jarvis-taller/Radar/jarvis-android/taller/instalar.sh            # solo el taller
+bash ~/jarvis-taller/Radar/jarvis-android/taller/instalar.sh --compilar # además Java, SDK de Android y aapt2 para compilar en el teléfono
+bash ~/jarvis-taller/Radar/jarvis-android/taller/arrancar.sh            # arranca y enseña la credencial
+```
+En JARVIS, ve a *Ajustes → Puentes* y añade el nombre `taller`, la dirección `http://127.0.0.1:8090/mcp` y la credencial. Después pulsa «Probar y añadir el puente». Claude debe estar autorizado: Qwen 2B no tiene capacidad para programar este proyecto.
+
+**Compilar en el teléfono no está comprobado.** Gradle descarga un `aapt2` para PC que no funciona en Android. El script instala el de Termux y se lo pasa a Gradle, pero en algunos teléfonos falla. Además, Gradle y Qwen a la vez piden mucha RAM. Si no compila, JARVIS puede igualmente editar y hacer commits, y `taller_subir` (con tu toque) manda la rama a GitHub, donde se compila y se prueba sola.
+
+**Recuperación:**
+- Cada rama de trabajo empieza con una etiqueta `respaldo/…`.
+- `taller_deshacer` vuelve atrás sin perder lo deshecho: deja otra etiqueta y guarda en `git stash` lo que no estaba guardado.
+- Las copias de cada archivo cambiado están en `~/.jarvis-taller/copias/`.
+- La app instalada solo cambia si tú instalas una APK nueva.
+
 ## 6. Editar video
 
 Dale los videos con **+** (o deja que vea tu galería) y pídeselo con tus palabras:
@@ -249,7 +284,7 @@ Una tarea son varias llamadas seguidas (una por paso) y cada una reenvía la con
 
 ## 10. Lo que no está comprobado o hay que saber
 
-- **Probado en un teléfono real:** conversar, la voz y manejar el teléfono (1.1); la memoria automática y la pantalla *mente* (2.0); estudiar un tomo y consultar la biblioteca (2.1, con los fallos que arregla la 2.2). Lo demás se construyó en un entorno sin teléfono ni emulador: está comprobado que compila, que la APK está firmada y que pasan las 116 pruebas automáticas del núcleo.
+- **Probado en un teléfono real:** conversar, la voz y manejar el teléfono (1.1); la memoria automática y la pantalla *mente* (2.0); estudiar un tomo y consultar la biblioteca (2.1, con los fallos que arregla la 2.2). Lo demás se construyó en un entorno sin teléfono ni emulador: está comprobado que compila, que la APK está firmada y que pasan las 121 pruebas automáticas del núcleo y las 15 del taller.
 - **Lo nuevo de la 2.2 no se ha visto funcionar con la API real.** Está probado contra una API de Claude simulada que el cupo se descuenta, que el modelo ve lo que le queda y que la búsqueda deja de ofrecerse al agotarse; y con un escritor simulado, que un tomo de 9 capítulos se completa y que un corte en el capítulo 4 se reanuda en el 5. **No se ha estudiado ningún tomo real con esta versión**: la búsqueda directa y la lectura de páginas son herramientas de Anthropic que aquí no se pudieron llamar. Si la lectura de páginas no estuviera disponible para tu cuenta o tu modelo, la API lo dirá con un error al primer mensaje; dímelo y la desactivo.
 - **Lo nuevo de la 2.3 no se ha visto funcionar en un teléfono.** Los diez criterios del informe están cubiertos por pruebas automáticas, con un teléfono y una API simulados: la tarea de 15 pasos cortada en el 7 sigue en el 8, no se da por hecho un envío que no se ve en pantalla, el bucle avisa a la tercera y para a la cuarta, el permiso fijo no se pregunta y lo prohibido sí, el repaso encuentra dos lecciones que se contradicen, «¿cómo va lo de los videos?» trae el siguiente paso, y el registro coincide con lo que se hizo. Sin estrenar: leer PDF con el lector de Android, la carpeta de documentos, la voz cortada con el dictado real y retomar una tarea después de que Android cierre la app. Además, el nombre del chat contigo mismo tiene que coincidir exactamente con lo que se ve arriba del chat. Si no coincide, JARVIS seguirá preguntando, que es lo seguro.
 - **El estudio en segundo plano depende de que Android deje viva la app.** Con la accesibilidad activada suele seguir; si el teléfono la cierra, se retoma al abrir JARVIS.
@@ -298,6 +333,7 @@ jarvis-android/app/src/main/kotlin/com/radar/jarvis/
 │   ├── LocalAIClient.kt       el cliente de llama-server (/health y /v1/chat/completions), sin bloquear y con fallos tipados
 │   ├── CerebroLocal.kt        la conversación con el modelo local: prompt corto, memoria y perfil, historial breve
 │   ├── Enrutador.kt           qué cerebro atiende cada mensaje, y Claude como mucho una vez
+jarvis-android/taller/         el taller de Termux: taller.py (servidor MCP), instalar.sh, arrancar.sh y sus pruebas
 │   ├── Estudios.kt            el estudio de un tomo como tarea larga que se reanuda
 │   ├── Lienzo.kt              el lenguaje con el que dibuja y anima: escenas, capas, movimiento
 │   ├── Biblioteca.kt          los tomos que estudia, y cómo los busca

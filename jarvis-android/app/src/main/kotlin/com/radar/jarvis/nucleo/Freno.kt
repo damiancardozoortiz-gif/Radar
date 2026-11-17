@@ -69,7 +69,7 @@ object Freno {
     /** Palabras que en el nombre de una herramienta de un puente la hacen imposible de dejar fija. */
     private val NUNCA_PUENTE = Regex("\\b(send|reply|forward|post|publish|delete|remove|trash|destroy|pay|charge|refund|purchase|order|buy|transfer|" +
         "invite|share|call|book|cancel|unsubscribe|message|sms|email|tweet|enviar|responder|publicar|borrar|eliminar|pagar|cobrar|comprar|" +
-        "compartir|invitar|cancelar|llamar|mandar|transferir)\\b")
+        "compartir|invitar|cancelar|llamar|mandar|transferir|subir|push|upload|deshacer|reset)\\b")
 
     /**
      * Qué clase de acción es, para los permisos fijos: «nunca» (no se puede dejar fija), «enviar» (solo se deja fija

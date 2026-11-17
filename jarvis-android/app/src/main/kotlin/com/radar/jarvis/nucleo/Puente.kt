@@ -21,14 +21,16 @@ data class HerramientaPuente(
  * Zapier, Notion o GitHub ofrecen sus herramientas a los asistentes.
  *
  * Las llamadas salen de ESTE teléfono, no de los servidores de Claude: así cada herramienta pasa por el freno
- * antes de ejecutarse. Solo habla https.
+ * antes de ejecutarse. Solo habla https, salvo con servidores de este mismo teléfono (127.0.0.1 o localhost),
+ * como el taller de Termux, cuyo tráfico no sale del teléfono.
  */
 class ClienteMcp(private val cfg: PuenteConfig, private val permitirHttp: Boolean = false) {
     private var sesion: String? = null
     private var n = 0
 
     private fun rpc(metodo: String, params: JSONObject?, espera: Boolean = true): JSONObject? {
-        if (!cfg.url.startsWith("https://") && !(permitirHttp && cfg.url.startsWith("http://"))) throw ErrorManos("la dirección del puente debe empezar por https://")
+        if (!cfg.url.startsWith("https://") && !esLocal(cfg.url) && !(permitirHttp && cfg.url.startsWith("http://")))
+            throw ErrorManos("la dirección del puente debe empezar por https:// (o ser http://127.0.0.1, este mismo teléfono)")
         val id = ++n
         val cuerpo = JSONObject().put("jsonrpc", "2.0").put("method", metodo)
         if (espera) cuerpo.put("id", id)
@@ -100,7 +102,11 @@ class ClienteMcp(private val cfg: PuenteConfig, private val permitirHttp: Boolea
         return texto.take(Puentes.MAX_RESPUESTA) to r.optBoolean("isError", false)
     }
 
-    private companion object { const val VERSION = "2025-06-18" }
+    companion object {
+        private const val VERSION = "2025-06-18"
+        /** ¿Es un servidor de este mismo teléfono por http? (el taller de Termux). Ninguna otra dirección puede ir sin cifrar. */
+        fun esLocal(url: String): Boolean = Regex("^http://(127\\.0\\.0\\.1|localhost)(:\\d+)?(/.*)?$").matches(url.trim())
+    }
 }
 
 /** Todos los puentes que tiene JARVIS. Se conectan la primera vez que hacen falta y se recuerdan mientras la app vive. */

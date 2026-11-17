@@ -48,6 +48,8 @@ object Enrutador {
             "estudia(r|lo|la|te)?", "tomos?", "biblioteca", "capitulos?", "rutinas?", "habilidad(es)?", "aprende a",
             "recuerda(me|lo|la)?", "recordar", "acuerdate", "apunta(r|lo|la|me)?", "anota(r|lo|la|me)?", "olvida(r|lo|la|te)?",
             "documentos?", "pdf", "archivos?", "proyectos?", "tareas?", "comparte\\w*", "compartir", "publica(r|lo|la)?",
+            "codigo", "programa(r|lo|la|cion)?", "compila\\w*", "commit", "git", "gradle", "kotlin", "rama", "taller", "tests?", "depura\\w*",
+            "bug", "refactoriza\\w*", "mejora(r|te|lo|la)?", "corrige\\w*", "arregla\\w*", "implementa\\w*",
             "noticias", "clima", "que tiempo hace", "precios?", "cotizacion", "dolar", "partido de hoy", "ultima hora",
         ).joinToString("|") + ")\\b"
     )

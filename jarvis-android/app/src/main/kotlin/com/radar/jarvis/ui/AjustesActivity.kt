@@ -180,6 +180,7 @@ class AjustesActivity : Activity() {
         boton("Dejar de usar la carpeta") { a.carpetaDocs = ""; pintar() }
 
         titulo("Puentes · otros servicios")
+        nota("El taller de Termux (para que JARVIS trabaje en su propio código) también es un puente: nombre «taller», dirección http://127.0.0.1:8090/mcp y la credencial que muestra el taller al arrancar.")
         nota("Un puente conecta a JARVIS con un servicio de fuera (correo, documentos, tareas…) sin manejar la pantalla. Usa el estándar MCP: pega aquí la dirección del servidor MCP del servicio. Por ejemplo, Zapier (zapier.com/mcp) te da una sola dirección que abre miles de aplicaciones. Consultar lo hace solo; lo que envía, crea o borra espera tu toque.")
         puentes = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
         col.addView(puentes)
@@ -188,7 +189,8 @@ class AjustesActivity : Activity() {
         val pToken = campo("Credencial (si el servicio la pide)", "", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD)
         boton("Probar y añadir el puente") {
             val cfg = com.radar.jarvis.nucleo.PuenteConfig(pNombre.text.toString().trim(), pUrl.text.toString().trim(), pToken.text.toString().trim())
-            if (cfg.nombre.length < 2 || !cfg.url.startsWith("https://")) return@boton Toast.makeText(c, "Pon un nombre y una dirección que empiece por https://", Toast.LENGTH_LONG).show()
+            if (cfg.nombre.length < 2 || !(cfg.url.startsWith("https://") || com.radar.jarvis.nucleo.ClienteMcp.esLocal(cfg.url)))
+                return@boton Toast.makeText(c, "Pon un nombre y una dirección que empiece por https:// (o http://127.0.0.1 para el taller de Termux)", Toast.LENGTH_LONG).show()
             if (a.puentes.any { it.nombre.equals(cfg.nombre, true) }) return@boton Toast.makeText(c, "Ya hay un puente con ese nombre.", Toast.LENGTH_LONG).show()
             Toast.makeText(c, "Probando la conexión…", Toast.LENGTH_SHORT).show()
             Thread {
