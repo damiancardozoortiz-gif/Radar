@@ -147,6 +147,15 @@ class Almacen(ctx: Context) : Caja {
 
     fun ajustes() = Ajustes(clave, modelo, esfuerzo, web, quien)
 
+    /** El cerebro: auto (local primero), local o claude. Y si Claude está autorizado para lo que el local no puede. */
+    var proveedor: String get() = texto("proveedor", "auto"); set(v) = prefs.edit().putString("proveedor", v).apply()
+    var claudeAutorizado: Boolean get() = si("claude_autorizado", true); set(v) = pon("claude_autorizado", v)
+    var respaldoClaude: Boolean get() = si("respaldo_claude", false); set(v) = pon("respaldo_claude", v)
+    /** Dónde escucha llama-server. No es un secreto: es una dirección del propio teléfono. */
+    var urlLocal: String get() = texto("url_local", com.radar.jarvis.nucleo.LocalAIClient.POR_DEFECTO); set(v) = prefs.edit().putString("url_local", v.trim()).apply()
+
+    fun preferencias() = com.radar.jarvis.nucleo.Preferencias(proveedor, claudeAutorizado, respaldoClaude, hayClave)
+
     /** La carpeta de documentos que eligió la persona (dirección de Android), o vacío. */
     var carpetaDocs: String get() = texto("carpeta_docs", ""); set(v) = prefs.edit().putString("carpeta_docs", v).apply()
     /** Los documentos adjuntados con el botón +, el más reciente primero. */

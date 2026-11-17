@@ -227,7 +227,7 @@ class MainActivity : Activity() {
         btnDetener.visibility = if (Sesion.ocupado) View.VISIBLE else View.GONE
 
         val faltan = buildList {
-            if (!Sesion.almacen.hayClave) add("poner tu clave de la API de Claude")
+            if (!Sesion.almacen.hayClave && Sesion.almacen.proveedor == "claude") add("poner tu clave de la API de Claude")
             if (!ServicioAccesibilidad.activo) add("activar el permiso de accesibilidad para que pueda manejar el teléfono")
         }
         aviso.visibility = if (faltan.isEmpty()) View.GONE else View.VISIBLE

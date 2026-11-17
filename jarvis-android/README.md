@@ -142,6 +142,45 @@ Sale del segundo informe de JARVIS, con sus diez puntos.
 
 Lo que se dejó fuera del punto 8: un entorno para ejecutar código o ffmpeg dentro del teléfono. Es pesado y frágil, y el montaje de video ya lo hace la app. Leer documentos sí entra.
 
+### Lo nuevo de la 2.4: cerebro local en Termux
+
+JARVIS puede pensar con un modelo pequeño que corre dentro del teléfono, en Termux: `llama-server` (llama.cpp) con `qwen2.5-0.5b-instruct-q4_k_m.gguf`. No cuesta nada y no sale del teléfono.
+
+- **Qué hace el cerebro local:** conversar, explicar y responder lo que sabe, con tu perfil y la memoria que viene al caso. **No tiene manos:** no maneja el teléfono, no busca en internet, no edita video ni usa herramientas. Si se lo pides, te lo dice en vez de fingir.
+- **Quién atiende cada mensaje** (*Ajustes → Cerebro*):
+  - **Automático** (por defecto): el local primero. Claude solo entra si el mensaje pide hacer algo (abrir, enviar, buscar, alarmas, video, estudiar, recordar, documentos…) **y** Claude está autorizado.
+  - **Solo local:** nunca llama a Claude. Las rutinas, los estudios y las tareas retomadas no saltan, porque necesitan herramientas.
+  - **Solo Claude:** como hasta la 2.3.
+- **Una sola llamada a Claude por mensaje.** Si el local contesta, Claude no se llama. Si el local está apagado, por defecto te lo dice y no gasta. Con el interruptor de respaldo encendido, se pasa a Claude **una vez**.
+- **Probar la conexión:** *Ajustes → Cerebro → Guardar y probar el cerebro local*. Comprueba `/health`, hace una pregunta corta y enseña la respuesta y lo que tardó.
+- En la pantalla principal, cada respuesta dice qué cerebro contestó, y el registro de *mente* guarda la llamada `cerebro_local`.
+- **Red:** la app solo permite http sin cifrar hacia `127.0.0.1` y `localhost`, es decir, el propio teléfono. Todo lo demás sigue cifrado.
+
+#### Poner en marcha llama-server en Termux
+
+```sh
+# arrancarlo (solo escucha en el propio teléfono; -c 4096 limita la memoria que usa)
+llama-server -m ~/elyon/modelos/qwen2.5-0.5b-instruct-q4_k_m.gguf --host 127.0.0.1 --port 8080 -c 4096
+
+# comprobar desde Termux que está listo (debe decir {"status":"ok"})
+curl http://127.0.0.1:8080/health
+```
+
+Para que siga vivo con la pantalla apagada o mientras usas otras apps:
+
+1. En Termux, ejecuta `termux-wake-lock` antes de arrancarlo, o toca «Acquire wakelock» en su notificación.
+2. Quita a **Termux** de la optimización de batería: *Ajustes → Aplicaciones → Termux → Batería → Sin restricciones*.
+3. Para dejarlo en segundo plano: `nohup llama-server … > ~/llama.log 2>&1 &`. Si se cae, lo verás en `~/llama.log`.
+4. **Android 12 o superior** puede matar procesos lanzados por Termux (el «phantom process killer»), sobre todo si hay varios. Si llama-server desaparece solo, ese es el motivo probable. Se desactiva desde las opciones de desarrollador o con adb, según el teléfono.
+5. Opcional: la app Termux:Boot puede arrancarlo al encender el teléfono.
+
+Mantén `--host 127.0.0.1`. Con `0.0.0.0`, cualquiera en tu wifi podría usar el modelo.
+
+#### Lo que se ha comprobado y lo que no
+
+- **Comprobado aquí:** el cliente contra un **llama-server real** compilado de llama.cpp, que responde, se apaga (la app lo detecta) y se recupera al volver a arrancarlo. También contra un servidor simulado: modelo cargando (503), errores, respuestas rotas, tiempo agotado, que no bloquea el hilo que llama, que «Detener» corta la espera en el acto y que Claude se llama como mucho una vez por mensaje.
+- **No comprobado:** el modelo de la prueba era uno diminuto con pesos al azar, porque aquí no se pudo descargar Qwen. Tampoco se ha probado la app en un teléfono con Termux. **La integración no está confirmada hasta que, en tu teléfono, preguntes algo desde JARVIS y conteste Qwen.** Además, la calidad de un modelo de 0,5B es limitada: para conversar sirve, pero puede inventarse cosas.
+
 ## 6. Editar video
 
 Dale los videos con **+** (o deja que vea tu galería) y pídeselo con tus palabras:
@@ -210,7 +249,7 @@ Una tarea son varias llamadas seguidas (una por paso) y cada una reenvía la con
 
 ## 10. Lo que no está comprobado o hay que saber
 
-- **Probado en un teléfono real:** conversar, la voz y manejar el teléfono (1.1); la memoria automática y la pantalla *mente* (2.0); estudiar un tomo y consultar la biblioteca (2.1, con los fallos que arregla la 2.2). Lo demás se construyó en un entorno sin teléfono ni emulador: está comprobado que compila, que la APK está firmada y que pasan las 100 pruebas automáticas del núcleo.
+- **Probado en un teléfono real:** conversar, la voz y manejar el teléfono (1.1); la memoria automática y la pantalla *mente* (2.0); estudiar un tomo y consultar la biblioteca (2.1, con los fallos que arregla la 2.2). Lo demás se construyó en un entorno sin teléfono ni emulador: está comprobado que compila, que la APK está firmada y que pasan las 116 pruebas automáticas del núcleo.
 - **Lo nuevo de la 2.2 no se ha visto funcionar con la API real.** Está probado contra una API de Claude simulada que el cupo se descuenta, que el modelo ve lo que le queda y que la búsqueda deja de ofrecerse al agotarse; y con un escritor simulado, que un tomo de 9 capítulos se completa y que un corte en el capítulo 4 se reanuda en el 5. **No se ha estudiado ningún tomo real con esta versión**: la búsqueda directa y la lectura de páginas son herramientas de Anthropic que aquí no se pudieron llamar. Si la lectura de páginas no estuviera disponible para tu cuenta o tu modelo, la API lo dirá con un error al primer mensaje; dímelo y la desactivo.
 - **Lo nuevo de la 2.3 no se ha visto funcionar en un teléfono.** Los diez criterios del informe están cubiertos por pruebas automáticas, con un teléfono y una API simulados: la tarea de 15 pasos cortada en el 7 sigue en el 8, no se da por hecho un envío que no se ve en pantalla, el bucle avisa a la tercera y para a la cuarta, el permiso fijo no se pregunta y lo prohibido sí, el repaso encuentra dos lecciones que se contradicen, «¿cómo va lo de los videos?» trae el siguiente paso, y el registro coincide con lo que se hizo. Sin estrenar: leer PDF con el lector de Android, la carpeta de documentos, la voz cortada con el dictado real y retomar una tarea después de que Android cierre la app. Además, el nombre del chat contigo mismo tiene que coincidir exactamente con lo que se ve arriba del chat. Si no coincide, JARVIS seguirá preguntando, que es lo seguro.
 - **El estudio en segundo plano depende de que Android deje viva la app.** Con la accesibilidad activada suele seguir; si el teléfono la cierra, se retoma al abrir JARVIS.
@@ -256,6 +295,9 @@ jarvis-android/app/src/main/kotlin/com/radar/jarvis/
 │   ├── Proyectos.kt           las fichas de proyecto y cuándo vienen al caso
 │   ├── Bitacora.kt            el registro por turno: cada herramienta, con qué y qué devolvió
 │   ├── Documentos.kt          los documentos que puede leer (interfaz)
+│   ├── LocalAIClient.kt       el cliente de llama-server (/health y /v1/chat/completions), sin bloquear y con fallos tipados
+│   ├── CerebroLocal.kt        la conversación con el modelo local: prompt corto, memoria y perfil, historial breve
+│   ├── Enrutador.kt           qué cerebro atiende cada mensaje, y Claude como mucho una vez
 │   ├── Estudios.kt            el estudio de un tomo como tarea larga que se reanuda
 │   ├── Lienzo.kt              el lenguaje con el que dibuja y anima: escenas, capas, movimiento
 │   ├── Biblioteca.kt          los tomos que estudia, y cómo los busca

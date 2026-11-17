@@ -36,6 +36,7 @@ class AjustesActivity : Activity() {
     private lateinit var diario: TextView
     private lateinit var listaPermisos: LinearLayout
     private lateinit var estadoDocs: TextView
+    private lateinit var estadoLocal: TextView
     private val a get() = Sesion.almacen
 
     override fun onCreate(guardado: Bundle?) {
@@ -101,7 +102,35 @@ class AjustesActivity : Activity() {
         boton("Borrar clave de ElevenLabs") { a.claveVoz = ""; pintar() }
 
         titulo("Cerebro")
-        nota("Modelo. Los más capaces cuestan más por tarea; puedes cambiarlo cuando quieras.")
+        nota("Quién piensa. El cerebro local es un modelo pequeño (Qwen) que corre en Termux dentro de este teléfono: gratis y sin internet, " +
+            "pero solo conversa: no maneja el teléfono, no busca en internet ni edita video. Para eso hace falta Claude.")
+        lista(com.radar.jarvis.nucleo.Enrutador.PROVEEDORES, a.proveedor) { a.proveedor = it; Sesion.reconfigurar(); pintar() }
+        interruptor("Permitir Claude cuando haga falta (tareas con el teléfono, internet, video, estudio, rutinas). Cuesta dinero con tu clave.", a.claudeAutorizado) { a.claudeAutorizado = it }
+        interruptor("Si el cerebro local no responde, usar Claude una vez en su lugar", a.respaldoClaude) { a.respaldoClaude = it }
+        nota("Dirección de llama-server en Termux. Con http sin cifrar solo se acepta 127.0.0.1 o localhost (el propio teléfono).")
+        val url = campo(com.radar.jarvis.nucleo.LocalAIClient.POR_DEFECTO, a.urlLocal, InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI)
+        estadoLocal = nota("")
+        boton("Guardar y probar el cerebro local") {
+            val nueva = url.text.toString().trim().ifEmpty { com.radar.jarvis.nucleo.LocalAIClient.POR_DEFECTO }
+            com.radar.jarvis.nucleo.LocalAIClient(nueva).problemaDireccion()?.let { return@boton Toast.makeText(c, "No guardé la dirección: $it.", Toast.LENGTH_LONG).show() }
+            a.urlLocal = nueva; Sesion.reconfigurar()
+            estadoLocal.text = "Probando $nueva…"; estadoLocal.setTextColor(Estilo.TENUE)
+            Thread {
+                val cliente = com.radar.jarvis.nucleo.LocalAIClient(nueva, leerMs = 120_000)
+                val (texto, bien) = kotlinx.coroutines.runBlocking {
+                    when (val s = cliente.salud()) {
+                        is com.radar.jarvis.nucleo.RespuestaLocal.Fallo -> s.frase(nueva) to false
+                        is com.radar.jarvis.nucleo.RespuestaLocal.Ok -> when (val r = cliente.chat(listOf(com.radar.jarvis.nucleo.MensajeIA("user", "Saluda en una frase corta, en español.")), 60)) {
+                            is com.radar.jarvis.nucleo.RespuestaLocal.Ok -> "✓ Responde ${r.modelo.substringAfterLast('/').ifEmpty { "el modelo" }} en ${"%.1f".format(r.ms / 1000.0)} s: «${r.texto.take(120)}»" to true
+                            is com.radar.jarvis.nucleo.RespuestaLocal.Fallo -> r.frase(nueva) to false
+                        }
+                    }
+                }
+                a.apuntar("PRUEBA cerebro local: ${texto.take(160)}")
+                runOnUiThread { estadoLocal.text = texto; estadoLocal.setTextColor(if (bien) Estilo.MENTA else Estilo.AMBAR) }
+            }.start()
+        }
+        nota("Modelo de Claude. Los más capaces cuestan más por tarea; puedes cambiarlo cuando quieras.")
         lista(Ajustes.MODELOS, a.modelo) { a.modelo = it; Sesion.reconfigurar() }
         nota("Esfuerzo: cuánto piensa antes de actuar.")
         lista(Ajustes.ESFUERZOS, a.esfuerzo) { a.esfuerzo = it; Sesion.reconfigurar() }

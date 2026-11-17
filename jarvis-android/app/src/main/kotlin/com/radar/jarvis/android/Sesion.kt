@@ -43,6 +43,9 @@ object Sesion {
     private val oyentes = CopyOnWriteArraySet<() -> Unit>()
     private var trabajo: Job? = null
     private var agente: Agente? = null
+    private var cerebroLocal: com.radar.jarvis.nucleo.CerebroLocal? = null
+    /** Hay archivos adjuntos que aún no ha mirado nadie: los mira Claude, que tiene ojos. */
+    @Volatile private var adjuntosNuevos = false
     private var herramientas: Herramientas? = null
     private var decision: CompletableDeferred<Boolean>? = null
     private lateinit var ctx: Context
@@ -97,7 +100,7 @@ object Sesion {
      * mientras escribe. No toca el teléfono: solo busca, lee y escribe en la biblioteca.
      */
     fun estudiar() {
-        if (estudiando || pausa || !almacen.hayClave || !almacen.estudios.toca()) return
+        if (estudiando || pausa || !almacen.preferencias().puedeClaude || !almacen.estudios.toca()) return
         trabajoEstudio = ambito.launch {
             val fin = com.radar.jarvis.nucleo.Estudiante(almacen.estudios, ::escribirCapitulo) { p ->
                 almacen.apuntar("ESTUDIO ${p.resumen()}"); avisar()
@@ -136,10 +139,14 @@ object Sesion {
     }
 
     /** Los ajustes cambiaron: el próximo mensaje usa un agente nuevo (y una conversación nueva). */
-    fun reconfigurar() { agente = null; herramientas = null }
+    fun reconfigurar() { agente = null; herramientas = null; cerebroLocal = null }
+
+    private fun cerebroLocal() = cerebroLocal ?: com.radar.jarvis.nucleo.CerebroLocal(
+        com.radar.jarvis.nucleo.LocalAIClient(almacen.urlLocal), mente, almacen.quien).also { cerebroLocal = it }
 
     fun nuevaConversacion() {
         agente?.olvidarConversacion()
+        cerebroLocal?.olvidarConversacion()
         pasos.clear(); detalle = ""; porVotar = 0
         poner(Estado.ESPERA, "Conversación nueva.")
     }
@@ -213,7 +220,7 @@ object Sesion {
 
     /** Si una tarea larga quedó cortada (la app se cerró, se fue la red), JARVIS la retoma solo desde el paso siguiente. */
     fun retomarTarea() {
-        if (ocupado || pausa || !almacen.hayClave) return
+        if (ocupado || pausa || !almacen.preferencias().puedeClaude) return
         val t = almacen.tareas.paraRetomar() ?: return
         if (mente.gastoSoloHoy(System.currentTimeMillis()) >= almacen.fusible) return
         val encargo = almacen.tareas.retomar(t.id)
@@ -223,6 +230,11 @@ object Sesion {
     }
 
     private fun lanzar(t: String, rutina: Rutina?, motivo: String?, canal: String? = null, sola: Boolean = rutina != null) {
+        // qué cerebro lo atiende: lo que lanza él solo (rutinas, tareas retomadas) siempre necesita herramientas, o sea Claude
+        val prefs = almacen.preferencias()
+        val ruta = if (rutina != null || sola) com.radar.jarvis.nucleo.Ruta(com.radar.jarvis.nucleo.Cerebro.CLAUDE, "lo lanza JARVIS solo")
+            else com.radar.jarvis.nucleo.Enrutador.decidir(prefs, t, almacen.tareas.abierta() != null, adjuntosNuevos)
+        if (ruta.cerebro == null) { almacen.apuntar("CEREBRO: ninguno · ${ruta.motivo}"); return poner(Estado.ESPERA, ruta.motivo) }
         voz.callar()
         pasos.clear(); detalle = ""; porVotar = 0
         almacen.apuntar(if (rutina != null) "RUTINA «${rutina.nombre}» salta: $motivo" else "TAREA: $t")
@@ -231,16 +243,41 @@ object Sesion {
             val fecha = System.currentTimeMillis()
             val a = agente()
             herramientas?.nivel = rutina?.nivel ?: "hacer"
-            almacen.bitacora.empezar(fecha, t, when { rutina != null -> "rutina «${rutina.nombre}»"; sola -> "retomada"; canal != null -> canal; else -> "escrito" })
-            val r = try {
+            almacen.bitacora.empezar(fecha, t, when { rutina != null -> "rutina «${rutina.nombre}»"; sola -> "retomada"; canal != null -> canal; else -> "escrito" } +
+                if (ruta.cerebro == com.radar.jarvis.nucleo.Cerebro.LOCAL) " · cerebro local" else " · Claude")
+            suspend fun conClaude(): Respuesta = try {
                 a.correr(t, rutina?.let { "«${it.nombre}» (nivel ${it.nivel}), porque $motivo" }, canal)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 Respuesta("Algo falló dentro de JARVIS: ${e.javaClass.simpleName}. ${e.message.orEmpty().take(120)}", "fallo", 0)
             } finally { herramientas?.nivel = "hacer" }
+
+            if (ruta.cerebro == com.radar.jarvis.nucleo.Cerebro.LOCAL) {
+                pasos += Paso(0, "Cerebro local (Qwen) · ${ruta.motivo}", "nota", ""); avisar()
+                almacen.apuntar("CEREBRO local · ${ruta.motivo}")
+            } else almacen.apuntar("CEREBRO Claude · ${ruta.motivo}")
+            val atendido = com.radar.jarvis.nucleo.Enrutador.atender(ruta, prefs,
+                local = {
+                    val nota = listOfNotNull(canal, if (ruta.motivo.contains("Claude no está")) "Esto necesitaría manos y Claude no está activado: dilo, no lo hagas como si pudieras" else null)
+                        .joinToString(". ").ifEmpty { null }
+                    val t0 = System.currentTimeMillis()
+                    val par = try { cerebroLocal().responder(t, nota) } catch (e: CancellationException) { throw e } catch (e: Exception) {
+                        Respuesta("Algo falló al hablar con el cerebro local: ${e.javaClass.simpleName}.", "fallo", 0) to
+                            com.radar.jarvis.nucleo.RespuestaLocal.Fallo(com.radar.jarvis.nucleo.TipoFallo.FORMATO, e.message.orEmpty())
+                    }
+                    almacen.bitacora.anotar("cerebro_local", mapOf("direccion" to almacen.urlLocal),
+                        com.radar.jarvis.nucleo.Resultado(par.first.texto, error = par.second != null), System.currentTimeMillis() - t0)
+                    par
+                },
+                claude = { conClaude() },
+                nota = { m -> pasos += Paso(0, m, "nota", ""); almacen.apuntar("CEREBRO respaldo con Claude · $m"); avisar() })
+            val r = atendido.respuesta
+            val cerebro = atendido.cerebro
+            val usoClaude = cerebro == com.radar.jarvis.nucleo.Cerebro.CLAUDE
+            if (usoClaude) adjuntosNuevos = false
             almacen.bitacora.cerrar(r.texto, r.estado, r.coste)
-            almacen.tareas.alTerminarTurno(if (r.estado == "fallo") "cortado" else "terminado")
+            if (usoClaude) almacen.tareas.alTerminarTurno(if (r.estado == "fallo") "cortado" else "terminado")
             val tareaFallida = almacen.tareas.todas().any { it.actualizada >= fecha && it.estado == "fallida" }
             almacen.apuntar("FIN (${r.estado}, ${r.pasos} pasos, ${r.busquedas} búsquedas, ${r.lecturas} lecturas, ~${"%.3f".format(java.util.Locale.US, r.coste)} $): ${r.texto.take(160)}")
             val partes = r.texto.trim().split(Regex("\n\\s*\n"), limit = 2)
@@ -251,7 +288,7 @@ object Sesion {
             val hechos = synchronized(pasos) { pasos.filter { it.n > 0 }.map { "${it.texto} (${it.estado}${if (it.detalle.isNotEmpty()) ": " + it.detalle else ""})" } }
             mente.evaluar(Evaluacion(fecha, t, r.estado == "terminada" && !tareaFallida, 3, r.pasos, System.currentTimeMillis() - fecha, r.coste, sola = sola))
             if (r.estado != "fallo" || r.pasos > 0) porVotar = fecha
-            if (almacen.memoriaSola && almacen.hayClave) ambito.launch {
+            if (usoClaude && almacen.memoriaSola && almacen.hayClave) ambito.launch {      // la revisión usa Claude: solo tras un turno de Claude
                 revisar(a, Vivido(fecha, t, r.texto, hechos, r.estado == "terminada" && !tareaFallida, sola, r.habilidades, almacen.rutinasSolas))
             }
 
@@ -316,6 +353,7 @@ object Sesion {
             poner(estado, if (n == 0) "No pude leer esos archivos: tienen que ser videos, audios, imágenes, PDF o textos."
                 else "$n ${if (n == 1) "archivo adjunto" else "archivos adjuntos"}. Dime qué hago con ${if (n == 1) "él" else "ellos"}.")
             if (n == 0) return@launch
+            adjuntosNuevos = true
         }
     }
 
@@ -381,7 +419,7 @@ object Sesion {
                     synchronized(enCola) { enCola.clear() }
                     return@launch
                 }
-                if (!almacen.hayClave) return@launch
+                if (!almacen.preferencias().puedeClaude) return@launch              // las rutinas necesitan herramientas: solo con Claude autorizado
                 principal.post { if (!ocupado && !pausa) lanzar(siguiente.first.encargo, siguiente.first, siguiente.second) }
             } catch (e: CancellationException) { throw e } catch (e: Exception) { almacen.apuntar("FALLO en el pulso de rutinas: ${e.javaClass.simpleName}") }
         }

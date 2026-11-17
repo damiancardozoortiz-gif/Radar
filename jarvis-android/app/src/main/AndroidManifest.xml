@@ -30,6 +30,7 @@
         android:allowBackup="true"
         android:dataExtractionRules="@xml/copia"
         android:fullBackupContent="@xml/copia_antigua"
+        android:networkSecurityConfig="@xml/red"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
