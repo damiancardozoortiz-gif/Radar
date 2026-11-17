@@ -45,6 +45,8 @@ YES_WORDS = {"si", "sí", "vale", "adelante", "envialo", "envíalo", "mandalo", 
              "dale", "hazlo", "si envialo", "sí, envíalo", "si mandalo", "correcto"}
 _convs = {}
 _convs_lock = threading.Lock()
+AL_PAUSAR = []            # lo que hay que parar cuando se pulsa PAUSA (el agente autónomo se apunta aquí)
+STOP_RE = re.compile(r"^(jarvis )?(cancela|cancelar|deten|detener|para|parar|aborta|abortar|deja)( ya)? (la |esa |esta )?(tarea|accion|eso)$")
 
 
 # ------------------------------------------------------------------ prompt de sistema
@@ -116,13 +118,15 @@ def parse_reply(text):
             obj = None
     if not isinstance(obj, dict) or not isinstance(obj.get("decir"), str):
         # Sin JSON válido: el texto entero se trata como lo que se dice
-        return {"decir": t, "detalle": "", "recordar": None, "formato": False}
+        return {"decir": t, "detalle": "", "recordar": None, "tarea": None, "formato": False}
     det = obj.get("detalle") or ""
     if not isinstance(det, str):
         det = json.dumps(det, ensure_ascii=False)
     rec = obj.get("recordar")
     rec = rec.strip() if isinstance(rec, str) and rec.strip() else None
-    return {"decir": obj["decir"], "detalle": det, "recordar": rec, "formato": True}
+    tarea = obj.get("tarea")
+    tarea = tarea.strip() if isinstance(tarea, str) and tarea.strip() else None
+    return {"decir": obj["decir"], "detalle": det, "recordar": rec, "tarea": tarea, "formato": True}
 
 
 def clean_speech(s):
@@ -156,8 +160,14 @@ def conv(cid):
     with _convs_lock:
         c = _convs.get(cid)
         if not c:
-            c = _convs[cid] = {"session": None, "history": deque(maxlen=MAX_TURNS), "lock": threading.Lock()}
+            c = _convs[cid] = {"session": None, "history": deque(maxlen=MAX_TURNS), "lock": threading.Lock(),
+                               "notas": []}
         return c
+
+
+def anotar(cid, texto):
+    """Deja una nota para la próxima respuesta de esa conversación (p. ej. el resultado de una tarea autónoma)."""
+    conv(cid)["notas"].append(texto)
 
 
 def compose(question, res, conv_state):
@@ -167,6 +177,12 @@ def compose(question, res, conv_state):
         for h in conv_state["history"]:
             lines.append(f"- Usuario: {h['q']}\n  JARVIS: {h['a']}")
         lines.append("")
+    while conv_state["notas"]:
+        lines.append("Nota del servidor (ya se lo contaste en voz alta): " + conv_state["notas"].pop(0))
+    import agente
+    t = agente.en_curso()
+    if t:
+        lines.append(f"Ahora mismo estás haciendo una tarea autónoma: «{t['texto'][:200]}». No lances otra hasta que acabe.")
     lines.append(f"Mensaje: {question}")
     tool = res["tool"]
     if tool == "conversacion":
@@ -177,12 +193,15 @@ def compose(question, res, conv_state):
             lines.append(res["context"])
         if res.get("card"):
             lines.append("\nLa herramienta YA pinta su tarjeta en pantalla: deja \"detalle\" vacío salvo que sea un borrador.")
-    lines.append('\nResponde solo con el JSON {"decir": ..., "detalle": ..., "recordar": ...}.')
+    lines.append('\nResponde solo con el JSON {"decir": ..., "detalle": ..., "recordar": ..., "tarea": ...}.')
     return "\n".join(lines)
 
 
 def set_pause(on, by="botón"):
     PAUSE.update(on=bool(on), since=time.strftime("%H:%M:%S") if on else None, by=by if on else None)
+    if on:
+        for parar in AL_PAUSAR:
+            parar()
     return dict(PAUSE)
 
 
@@ -224,6 +243,14 @@ def answer(cid, question, forced_tool=None):
         set_pause(True, by="voz")
         return _short(cid, question, "En pausa. No hago nada hasta que la quites en pantalla.", "pausa",
                       {"paused": True, "brain": "pausa"})
+    import agente
+    from freno import FRENO
+    limpio = re.sub(r"[^a-zñ ,]+", "", norm(question)).strip(" ,")
+    if STOP_RE.match(limpio):
+        hubo = agente.detener("lo pediste tú")
+        return _short(cid, question, "Tarea detenida." if hubo else "No hay ninguna tarea en marcha.", "tarea")
+    if FRENO.lista() and limpio in {norm(w) for w in YES_WORDS} | {"no", "rechaza", "rechazalo", "no lo hagas"}:
+        return _short(cid, question, "Eso se decide con un clic: pulsa Aprobar o Rechazar en pantalla.", "autorizacion")
     c = conv(cid)
     pend = pending_for(cid)
     if pend and re.sub(r"[^a-zñ ,]+", "", norm(question)).strip(" ,") in {norm(w) for w in YES_WORDS}:
@@ -255,6 +282,12 @@ def answer(cid, question, forced_tool=None):
                 APPROVALS[aid] = {"id": aid, "conv": cid, "kind": "borrador", "text": det, "state": "pendiente",
                                   "created": time.strftime("%H:%M:%S"), "question": question}
                 out["approval"] = APPROVALS[aid]
+            if rep["tarea"]:
+                t, motivo = agente.lanzar(rep["tarea"], cid, int(os.environ.get("JARVIS_PORT", "8790")))
+                if t:
+                    out["task"] = agente.publica(t)
+                else:
+                    out["say"] = f"No puedo empezar: {motivo}."
             if not rep["formato"]:
                 out["warning"] = "Claude no devolvió el formato pedido; muestro su texto tal cual."
         except BrainError as e:
@@ -308,7 +341,7 @@ def warmup():
         STATUS["claude"] = shutil.which("claude")
         t0 = time.perf_counter()
         try:
-            raw = call_claude('Calentamiento. Responde solo {"decir": "listo", "detalle": "", "recordar": null}', timeout=40)
+            raw = call_claude('Calentamiento. Responde solo {"decir": "listo", "detalle": "", "recordar": null, "tarea": null}', timeout=40)
             STATUS["brain"], STATUS["detail"] = "listo", ""
             STATUS["warm_ms"] = int((time.perf_counter() - t0) * 1000)
             print(f"  cerebro listo · calentamiento {STATUS['warm_ms']} ms", flush=True)

@@ -3,18 +3,25 @@
 Arranque:  ./jarvis.sh   (o: python3 agent/main.py)
 Puerto:    JARVIS_PORT (por defecto 8790). Solo escucha en 127.0.0.1.
 """
+import hmac
 import json
 import mimetypes
 import os
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import acciones  # noqa: E402
+import agente  # noqa: E402
 import cerebro  # noqa: E402
 import data  # noqa: E402
+from freno import FRENO  # noqa: E402
+from navegador import MARCA, NAVEGADOR  # noqa: E402
+from telefono import TELEFONO, TelefonoError  # noqa: E402
 import tools  # noqa: E402
 import voice  # noqa: E402
 from vault import VAULT  # noqa: E402
@@ -59,13 +66,40 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("demasiado grande")
         return self.rfile.read(n) if n else b""
 
+    def es_el_agente(self):
+        """El navegador que maneja JARVIS no puede hablar con el propio JARVIS: no se aprueba a sí mismo."""
+        return MARCA in self.headers.get("User-Agent", "")
+
+    def es_el_puente(self):
+        return hmac.compare_digest(self.headers.get("X-Jarvis-Puente", ""), agente.CLAVE_PUENTE)
+
     # ---------- GET ----------
     def do_GET(self):
         url = urlparse(self.path)
         p = url.path
         q = parse_qs(url.query)
+        if self.es_el_agente():
+            return self.send_json({"error": "no permitido"}, 403)
+        if p.startswith("/interno/"):
+            if not self.es_el_puente():
+                return self.send_json({"error": "no permitido"}, 403)
+            if p == "/interno/herramientas":
+                return self.send_json(acciones.catalogo())
+            return self.send_json({"error": "ruta desconocida"}, 404)
         if p in ("/favicon.svg", "/favicon.ico"):
             return self.send_bytes(FAVICON, "image/svg+xml")
+        if p == "/api/events":
+            try:
+                desde = int((q.get("desde") or ["0"])[0])
+            except ValueError:
+                desde = 0
+            nuevos, ultimo = agente.eventos_desde(desde, espera=25.0 if desde >= 0 else 0)
+            return self.send_json({"eventos": nuevos, "ultimo": ultimo})
+        if p == "/api/screen":
+            pan = acciones.PANTALLAS.get((q.get("canal") or [""])[0])
+            if not pan or not pan["img"]:
+                return self.send_json({"error": "sin imagen"}, 404)
+            return self.send_bytes(pan["img"], pan["mime"])
         if p == "/api/status":
             return self.send_json(status())
         if p == "/api/graph":
@@ -108,9 +142,34 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         p = urlparse(self.path).path
-        if not self.same_origin():
+        if self.es_el_agente() or not self.same_origin():
             return self.send_json({"error": "origen no permitido"}, 403)
+        if p.startswith("/interno/"):
+            if not self.es_el_puente():
+                return self.send_json({"error": "no permitido"}, 403)
+            try:
+                body = json.loads(self.read_body(256 * 1024) or b"{}")
+            except ValueError:
+                return self.send_json({"error": "cuerpo no válido"}, 400)
+            if p == "/interno/herramienta":
+                return self.send_json(acciones.ejecutar(str(body.get("nombre", "")), body.get("args")))
+            return self.send_json({"error": "ruta desconocida"}, 404)
         try:
+            if p == "/api/task":
+                body = json.loads(self.read_body(64 * 1024) or b"{}")
+                t, motivo = agente.lanzar(str(body.get("text", "")), str(body.get("conv", "anon"))[:64], PORT)
+                return self.send_json({"task": agente.publica(t)}) if t else self.send_json({"error": motivo}, 409)
+            if p == "/api/task/stop":
+                return self.send_json({"stopped": agente.detener("lo pediste tú")})
+            if p == "/api/look":
+                body = json.loads(self.read_body(4096) or b"{}")
+                if cerebro.PAUSE["on"]:
+                    return self.send_json({"error": "JARVIS está en pausa"}, 423)
+                canal = body.get("canal")
+                if canal not in ("telefono", "web"):
+                    return self.send_json({"error": "canal no válido"}, 400)
+                acciones._refrescar_pantalla(canal)
+                return self.send_json({"ok": True})
             if p == "/api/pause":
                 body = json.loads(self.read_body(4096) or b"{}")
                 st = cerebro.set_pause(body.get("on"), by="botón")
@@ -119,7 +178,8 @@ class Handler(BaseHTTPRequestHandler):
                 body = json.loads(self.read_body(4096) or b"{}")
                 if body.get("decision") not in ("aprobar", "descartar"):
                     return self.send_json({"error": "decisión no válida"}, 400)
-                a = cerebro.decide(str(body.get("id", "")), body["decision"])
+                aid = str(body.get("id", ""))
+                a = FRENO.decidir(aid, body["decision"]) if aid.startswith("f") else cerebro.decide(aid, body["decision"])
                 return self.send_json(a) if a else self.send_json({"error": "no existe"}, 404)
             if p in ("/api/speak", "/api/listen") and cerebro.PAUSE["on"]:
                 self.read_body(10 * 1024 * 1024)
@@ -159,13 +219,38 @@ class Handler(BaseHTTPRequestHandler):
         return self.send_json({"error": "ruta desconocida"}, 404)
 
 
+DISPOSITIVOS = {"telefono": {"disponible": False, "conectado": False, "detalle": "comprobando…"}}
+
+
+def vigilar_telefono():
+    """Cada poco mira si hay teléfono, para que la pantalla lo enseñe. No toca nada: solo pregunta el estado."""
+    while True:
+        d = {"disponible": TELEFONO.disponible(), "conectado": False, "detalle": ""}
+        if not d["disponible"]:
+            d["detalle"] = "falta adb en esta computadora"
+        elif not cerebro.PAUSE["on"]:
+            try:
+                e = TELEFONO.estado()
+                d.update(conectado=True, modelo=e["modelo"], bateria=e["bateria"], cargando=e["cargando"],
+                         bloqueado=e["bloqueado"], app=e["app"], android=e["android"])
+            except TelefonoError as err:
+                d["detalle"] = str(err)
+        else:
+            d = DISPOSITIVOS["telefono"]
+        DISPOSITIVOS["telefono"] = d
+        time.sleep(12 if not agente.en_curso() else 30)
+
+
 def status():
     s = VAULT.summary()
     return {"mode": data.mode(), "today": data.today().isoformat(), "notes": s["notes"],
             "edges": s["edges"], "by_type": s["by_type"], "skipped": s["skipped"],
             "mail": data.inbox() is not None, "calendar": data.calendar() is not None,
             "brain": cerebro.STATUS, "pause": cerebro.PAUSE,
-            "approvals": [a for a in cerebro.APPROVALS.values() if a["state"] == "pendiente"],
+            "approvals": [a for a in cerebro.APPROVALS.values() if a["state"] == "pendiente"] + FRENO.lista(),
+            "task": agente.publica(agente.ACTUAL["tarea"]), "phone": DISPOSITIVOS["telefono"],
+            "browser": {"disponible": NAVEGADOR.disponible(), "abierto": NAVEGADOR.abierto()},
+            "screens": {k: {"v": v["v"], "titulo": v["titulo"]} for k, v in acciones.PANTALLAS.items()},
             "voice": {"configured": voice.configured(), **voice.STATUS}}
 
 
@@ -177,6 +262,7 @@ def main():
     for path, why in s["skipped"]:
         print(f"  saltado: {path} ({why})", flush=True)
     cerebro.warmup()
+    threading.Thread(target=vigilar_telefono, daemon=True).start()
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     srv.daemon_threads = True
     try:

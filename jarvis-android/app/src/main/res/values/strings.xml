@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">JARVIS</string>
+    <string name="servicio_nombre">JARVIS: manejar el teléfono</string>
+    <string name="avisos_nombre">JARVIS: leer notificaciones</string>
+    <string name="servicio_descripcion">Permite que JARVIS lea lo que hay en pantalla y toque, escriba y abra aplicaciones cuando tú se lo pides. Lo que lee se envía a Claude (Anthropic) solo mientras hace una tarea. Enviar, pagar, comprar, borrar o llamar siempre espera a que pulses Aprobar. Nunca escribe contraseñas.</string>
+</resources>

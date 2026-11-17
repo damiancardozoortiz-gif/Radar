@@ -6,3 +6,7 @@ __pycache__/
 *.pyc
 memory/*
 !memory/.gitkeep
+perfil_navegador/
+registro/
+platform-tools/
+data/demo/telefono_estado.json

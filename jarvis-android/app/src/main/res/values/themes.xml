@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="fondo">#03060B</color>
+    <style name="Tema.Jarvis" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/fondo</item>
+        <item name="android:statusBarColor">@color/fondo</item>
+        <item name="android:navigationBarColor">@color/fondo</item>
+        <item name="android:colorAccent">#5EE4FF</item>
+        <item name="android:textColorPrimary">#E6F3FA</item>
+        <item name="android:textColorHint">#7F95A6</item>
+    </style>
+</resources>

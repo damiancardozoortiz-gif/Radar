@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Red de JARVIS. Todo va cifrado (https), salvo el cerebro local: llama-server en Termux, en el propio teléfono
+     (127.0.0.1 o localhost), que habla http sin cifrar. Ese tráfico no sale del teléfono. Ninguna otra dirección
+     puede usar http sin cifrar. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+</network-security-config>

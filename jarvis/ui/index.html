@@ -11,49 +11,96 @@
 <canvas id="graph" aria-label="Mapa de notas"></canvas>
 
 <header id="topbar">
-  <span class="brand">J.A.R.V.I.S.</span>
+  <span class="brand"><i id="dot" class="dot-state"></i>J.A.R.V.I.S.</span>
   <span id="mode" class="chip">…</span>
   <span id="counts" class="dim"></span>
   <span class="spacer"></span>
   <span id="st-brain" class="chip st">cerebro …</span>
+  <span id="st-phone" class="chip st">teléfono …</span>
+  <span id="st-web" class="chip st">navegador …</span>
   <span id="st-mic" class="chip st">micrófono …</span>
   <span id="st-voice" class="chip st">voz …</span>
 </header>
 
-<aside id="left" class="panel">
-  <section id="note" class="card hidden">
-    <div class="card-head">
-      <span id="note-type" class="tag"></span>
-      <button id="note-close" class="icon-btn" title="Cerrar">×</button>
-    </div>
-    <h2 id="note-title"></h2>
-    <div id="note-body" class="note-body"></div>
-    <div id="note-backlinks" class="backlinks"></div>
-  </section>
-  <section class="card">
-    <h3>Más conectadas</h3>
-    <ol id="top-list" class="top-list"></ol>
-  </section>
-</aside>
+<main id="main">
+  <!-- izquierda: lo que está haciendo (o la nota abierta, en modo mapa) -->
+  <aside id="left" class="col">
+    <section id="activity" class="card holo">
+      <div class="card-head">
+        <h3>Actividad</h3>
+        <span id="task-meta" class="tag"></span>
+      </div>
+      <p id="task-text" class="task-text hidden"></p>
+      <ol id="steps" class="steps"></ol>
+      <div id="activity-empty" class="empty">
+        <p>Dime qué hago y lo hago solo. Lo verás aquí paso a paso.</p>
+        <ul id="hints" class="hints"></ul>
+      </div>
+    </section>
+    <section id="note" class="card holo hidden map-only">
+      <div class="card-head">
+        <span id="note-type" class="tag"></span>
+        <button id="note-close" class="icon-btn" title="Cerrar" aria-label="Cerrar nota">×</button>
+      </div>
+      <h2 id="note-title"></h2>
+      <div id="note-body" class="note-body"></div>
+      <div id="note-backlinks" class="backlinks"></div>
+    </section>
+    <section class="card holo map-only">
+      <h3>Más conectadas</h3>
+      <ol id="top-list" class="top-list"></ol>
+      <h3 class="gap">Tipos</h3>
+      <div id="filters" class="filters"></div>
+    </section>
+  </aside>
 
-<aside id="right" class="panel">
-  <section class="card reactor-card">
-    <canvas id="reactor" width="220" height="220" aria-label="Estado de JARVIS"></canvas>
-    <div id="reactor-state" class="reactor-state">en espera</div>
-  </section>
-  <section class="card">
-    <h3>Tipos</h3>
-    <div id="filters" class="filters"></div>
-  </section>
-  <section id="answer" class="card hidden">
-    <div class="card-head">
-      <span id="answer-meta" class="tag"></span>
-      <button id="answer-close" class="icon-btn" title="Cerrar">×</button>
+  <!-- centro: el orbe -->
+  <section id="stage" aria-live="polite">
+    <canvas id="orb" aria-label="Estado de JARVIS"></canvas>
+    <div id="caption" class="caption">
+      <div id="state-label" class="state-label">en espera</div>
+      <p id="said" class="said"></p>
     </div>
-    <p id="answer-say" class="say"></p>
-    <div id="answer-card" class="answer-card"></div>
+    <div id="permit" class="permit hidden" role="alertdialog" aria-labelledby="permit-action">
+      <div class="permit-kicker">Necesito tu sí</div>
+      <div id="permit-action" class="permit-action"></div>
+      <div id="permit-why" class="permit-why"></div>
+      <div id="permit-extra" class="permit-extra"></div>
+      <div class="row">
+        <button id="permit-yes" class="btn primary">Aprobar</button>
+        <button id="permit-no" class="btn">Rechazar</button>
+      </div>
+      <div id="permit-more" class="permit-more"></div>
+    </div>
   </section>
-</aside>
+
+  <!-- derecha: lo que ve (teléfono y navegador) y la respuesta -->
+  <aside id="right" class="col">
+    <section id="view" class="card holo">
+      <div class="card-head">
+        <div class="tabs" role="tablist">
+          <button id="tab-telefono" class="tab on" role="tab" data-canal="telefono">Teléfono</button>
+          <button id="tab-web" class="tab" role="tab" data-canal="web">Navegador</button>
+        </div>
+        <button id="view-refresh" class="icon-btn" title="Mirar ahora" aria-label="Mirar ahora">⟳</button>
+      </div>
+      <div id="view-meta" class="view-meta dim"></div>
+      <div id="screen" class="screen telefono">
+        <img id="screen-img" alt="" class="hidden">
+        <i id="tap" class="tap hidden"></i>
+        <div id="screen-empty" class="empty"></div>
+      </div>
+    </section>
+    <section id="answer" class="card holo hidden">
+      <div class="card-head">
+        <span id="answer-meta" class="tag"></span>
+        <button id="answer-close" class="icon-btn" title="Cerrar" aria-label="Cerrar respuesta">×</button>
+      </div>
+      <p id="answer-say" class="say"></p>
+      <div id="answer-card" class="answer-card"></div>
+    </section>
+  </aside>
+</main>
 
 <footer id="bar">
   <button id="btn-mic" class="round" title="Micrófono (Espacio)" aria-label="Micrófono">
@@ -61,22 +108,25 @@
   </button>
   <div id="listen" class="listen hidden"><div id="bars" class="bars"></div><span id="listen-time">0,0 s</span></div>
   <form id="ask" autocomplete="off">
-    <input id="q" type="text" placeholder="Pregúntame algo…" aria-label="Pregunta">
+    <input id="q" type="text" placeholder="Dime qué hago…" aria-label="Mensaje para JARVIS">
   </form>
+  <button id="btn-stop" class="pill warn hidden" title="Detener la tarea en curso">detener tarea</button>
   <button id="btn-mute" class="pill" title="Silenciar la voz">silencio</button>
   <button id="btn-brief" class="pill">parte del día</button>
   <button id="btn-plan" class="pill">plan</button>
   <button id="btn-memory" class="pill">memoria</button>
+  <button id="btn-map" class="pill" title="Ver el mapa de tus notas">mapa</button>
   <button id="btn-pause" class="pill pause" title="Pausa de emergencia (P)">pausa</button>
 </footer>
 
 <div id="pause-banner" class="pause-banner hidden">
-  <strong>EN PAUSA</strong> · no llamo al cerebro, no ejecuto herramientas, no guardo memoria, no hablo ni escucho.
+  <strong>EN PAUSA</strong> · no actúo, no toco el teléfono ni el navegador, no llamo al cerebro, no hablo ni escucho.
   <button id="btn-unpause" class="pill">quitar pausa</button>
 </div>
 <div id="toast" class="toast hidden"></div>
 
 <script src="/graph.js"></script>
+<script src="/orb.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>
