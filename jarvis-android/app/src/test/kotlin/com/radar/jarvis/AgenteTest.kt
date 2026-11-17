@@ -196,6 +196,39 @@ class AgenteTest {
         assertTrue(r.coste > 0.0)
     }
 
+    @Test fun laVozCortadaYLaTareaAbiertaViajanEnElMensaje() = runBlocking {
+        respuestas += mensaje(dice("¿Qué quieres que te escriba?"), "end_turn")
+        val caja = CajaFalsa()
+        val tareas = com.radar.jarvis.nucleo.Tareas(caja)
+        tareas.empezar("Ordenar los álbumes de fotos", listOf("Abrir la galería", "Crear álbumes"), com.radar.jarvis.nucleo.Comprobacion("manual", "Los álbumes salen en la galería"))
+        val mente = Mente(caja)
+        val a = Agente(Ajustes("sk-ant-api03-prueba", baseUrl = "http://127.0.0.1:$puerto"), Herramientas(TelefonoFalso(), mente, { true }, pausaTrasActuar = 0), mente,
+            contextoExtra = { tareas.contexto() })
+        a.correr("Escríbeme", canal = "Entró por voz, y la grabación terminó de golpe: la frase puede estar a medias")
+        val primero = peticiones[0].getJSONArray("messages").getJSONObject(0).get("content").toString()
+        assertTrue(primero.contains("grabación terminó de golpe"))
+        assertTrue(primero.contains("Tarea abierta") && primero.contains("Ordenar los álbumes"))
+        assertTrue(peticiones[0].getString("system").contains("pregunta antes de actuar"))
+    }
+
+    @Test fun lasPaginasDeUnPdfViajanComoImagenes() = runBlocking {
+        respuestas += mensaje(usa("t1", "leer_documento", """{"id":"d1"}"""), "tool_use")
+        respuestas += mensaje(dice("Es un informe."), "end_turn")
+        val docs = object : com.radar.jarvis.nucleo.Documentos {
+            override fun lista() = listOf(com.radar.jarvis.nucleo.Documento("d1", "Informe.pdf", "pdf", 3, "adjunto"))
+            override fun texto(id: String): String? = null
+            override fun paginas(id: String, desde: Int, hasta: Int) = (desde..hasta).map { byteArrayOf(it.toByte()) }
+        }
+        val mente = Mente(CajaFalsa())
+        Agente(Ajustes("sk-ant-api03-prueba", baseUrl = "http://127.0.0.1:$puerto"), Herramientas(TelefonoFalso(), mente, { true }, pausaTrasActuar = 0, documentos = docs), mente)
+            .correr("Resume el informe")
+        val m = peticiones[1].getJSONArray("messages")
+        val resultado = m.getJSONObject(m.length() - 1).getJSONArray("content").getJSONObject(0)
+        val bloques = resultado.getJSONArray("content")
+        assertEquals(4, bloques.length())                     // el texto y las tres páginas
+        assertEquals("image", bloques.getJSONObject(3).getString("type"))
+    }
+
     @Test fun laRevisionEsUnaLlamadaBarataYSinHerramientas() = runBlocking {
         respuestas += mensaje(dice("{}"), "end_turn")
         val a = agente(TelefonoFalso(), mutableListOf(), true)

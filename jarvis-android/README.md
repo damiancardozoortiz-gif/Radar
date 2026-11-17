@@ -125,6 +125,23 @@ Sale del informe que dejó el propio JARVIS al probar la 2.1.
 
 Estudiar un tomo de 9 capítulos son 9 tareas seguidas, cada una con sus búsquedas y lecturas: es lo más caro que hace JARVIS. El coste de cada capítulo queda en el diario y en *mente → Cómo le va*.
 
+### Lo nuevo de la 2.3: más autonomía, con comprobación
+
+Sale del segundo informe de JARVIS, con sus diez puntos.
+
+- **Tareas largas que se retoman.** Para un encargo de varios pasos, JARVIS abre una tarea con su objetivo, sus pasos y cómo se comprueba. Guarda el progreso después de cada paso. Si se cierra la app o se va la red, al volver retoma la tarea **desde el paso siguiente**, como mucho tres veces y solo durante las 12 horas siguientes. Si paró para preguntarte algo, espera tu respuesta en vez de seguir solo. La tarea abierta se ve, y se cierra, en *mente*.
+- **Comprobar antes de dar algo por hecho.** Al cerrar una tarea, la app comprueba el resultado sin fiarse de lo que diga JARVIS: busca el texto acordado en la pantalla (el mensaje en el chat, la alarma en la lista), o revisa que el capítulo tenga secciones y fuentes. Si la comprobación falla, JARVIS reintenta una vez; si vuelve a fallar, la tarea queda como no lograda y te lo dice.
+- **Te avisa solo.** Tiene una herramienta para ponerte una notificación (como mucho tres por conversación). Además, las tareas largas y los estudios te avisan solos al terminar.
+- **Detecta bucles.** Si después de actuar vuelve a la misma pantalla por tercera vez, se le avisa de que cambie de plan. A la cuarta, sus manos se paran hasta la siguiente conversación y te cuenta qué pasa. Se mantiene el tope de 80 acciones.
+- **Permisos fijos.** En la tarjeta de permiso aparece **«Aprobar y no volver a preguntar»** cuando esa acción se puede dejar fija: confirmar o guardar dentro de una aplicación (el calendario, el reloj) o una herramienta de un puente que no envía, ni publica, ni borra. Para mandarte mensajes a ti mismo, escribe en *Ajustes → Permisos fijos* cómo se llama tu chat contigo. Pagar, comprar, transferir, borrar, publicar, instalar, llamar y escribir a otras personas **siempre** esperan tu toque, y eso no se puede desmarcar. Los permisos se ven y se quitan en Ajustes, y cada vez que se usa uno queda en el diario.
+- **Memoria ordenada.** Cada lección guarda cuántas veces se confirmó. Una vez por semana, un repaso junta lo repetido y busca lecciones que se contradicen; las enseña en *mente* para que decidas cuál vale. JARVIS puede además buscar, corregir y olvidar sus propios recuerdos.
+- **Proyectos.** Una ficha por proyecto, con objetivo, siguiente paso y pendientes. Cuando sale el tema («¿cómo va lo de los videos?»), JARVIS recibe la ficha y la pone al día. Se ven en *mente*.
+- **Documentos.** Lee los PDF y textos que le adjuntes con el botón + y los de una carpeta que elijas en Ajustes. Solo esos, no el resto del teléfono. Los PDF los ve página a página.
+- **Órdenes por voz.** Le llega si el mensaje entró por voz y si la grabación se cortó de golpe. Si tocas el micrófono mientras hablas, usa lo que oyó hasta ahí y lo marca como cortado. Ante una orden cortada o demasiado corta, pregunta antes de actuar.
+- **Registro por turno.** *mente → Registro* enseña cada herramienta que usó en cada conversación, con qué datos, qué devolvió y si falló. Lo escribe la app, no JARVIS. Se queda en el teléfono, fuera de la copia en la nube, porque guarda lo que se vio en pantalla.
+
+Lo que se dejó fuera del punto 8: un entorno para ejecutar código o ffmpeg dentro del teléfono. Es pesado y frágil, y el montaje de video ya lo hace la app. Leer documentos sí entra.
+
 ## 6. Editar video
 
 Dale los videos con **+** (o deja que vea tu galería) y pídeselo con tus palabras:
@@ -153,13 +170,14 @@ Límites: 40 trozos y 10 minutos por montaje. Nunca modifica ni borra los origin
 
 | Lo hace solo | Espera que toques **Aprobar** | No lo hace nunca |
 |---|---|---|
-| Abrir aplicaciones y páginas, buscar, leer, deslizar, rellenar campos, escribir un mensaje sin enviarlo | Tocar cualquier botón que diga enviar, pagar, comprar, confirmar, reservar, eliminar, publicar, llamar, instalar, transferir… · pulsar Intro en un chat · lo que el propio agente marque como irreversible · **cualquier** acción dentro de un banco o aplicación de pagos (una vez por tarea, y cada pago aparte) | Escribir contraseñas, PIN o datos de tarjeta · manejar su propia ventana (no puede pulsar su propio «Aprobar» ni cambiarse los ajustes) |
+| Abrir aplicaciones y páginas, buscar, leer, deslizar, rellenar campos, escribir un mensaje sin enviarlo · lo que hayas dejado como permiso fijo (confirmar en una app concreta, una herramienta de un puente que no envía, mandarte mensajes a tu propio chat) | Tocar cualquier botón que diga enviar, pagar, comprar, confirmar, reservar, eliminar, publicar, llamar, instalar, transferir… · pulsar Intro en un chat · lo que el propio agente marque como irreversible · **cualquier** acción dentro de un banco o aplicación de pagos (una vez por tarea, y cada pago aparte) | Escribir contraseñas, PIN o datos de tarjeta · manejar su propia ventana (no puede pulsar su propio «Aprobar» ni cambiarse los ajustes) |
 
 - Decir «sí» en voz alta no aprueba nada: solo vale tu toque. Si no respondes en 10 minutos, cuenta como no.
 - El freno lo aplica la aplicación mirando **qué elemento** se va a tocar; no depende de lo que el modelo decida.
 - Lo que lee en pantalla o en una web va marcado como datos, no como órdenes. Aunque una página intentara engañarle, el botón de enviar o pagar seguiría esperando tu toque.
 - Todo lo que hace y cada permiso que pide queda en **ajustes → Diario de acciones**.
-- Límites: una tarea cada vez y 80 acciones por tarea.
+- Límites: una tarea cada vez y 80 acciones por tarea; si se queda en bucle en la misma pantalla, se paran sus manos.
+- Los permisos fijos solo los das tú, con el botón de la tarjeta o en Ajustes: JARVIS no tiene ninguna forma de dárselos. En una rutina de nivel «preparar» tampoco se usan: deja el último paso para ti.
 
 ## 8. Privacidad
 
@@ -169,7 +187,8 @@ Límites: 40 trozos y 10 minutos por montaje. Nunca modifica ni borra los origin
 - Después de cada conversación, un resumen de lo dicho y hecho se envía a Claude otra vez para la revisión (qué recordar, cómo salió). Se apaga en *Ajustes → Autonomía*.
 - Las fuentes que enciendas (notificaciones, agenda, contactos, ubicación) solo se leen cuando una tarea o una rutina las necesita, y entonces viajan a Claude.
 - Con un puente, lo que JARVIS le pida a ese servicio viaja del teléfono al servicio, y su respuesta viaja a Claude.
-- No hay servidores propios, ni cuentas, ni analítica. La memoria vive en el teléfono y, si tienes activada la copia de seguridad de Android, en tu Google Drive. El diario se queda en el teléfono.
+- Los documentos que lea (los que adjuntes o los de tu carpeta) viajan a Claude: el texto, o las páginas de un PDF como imagen.
+- No hay servidores propios, ni cuentas, ni analítica. La memoria vive en el teléfono y, si tienes activada la copia de seguridad de Android, en tu Google Drive. El diario y el registro por turno se quedan en el teléfono.
 
 ## 9. Cuánto cuesta
 
@@ -191,8 +210,9 @@ Una tarea son varias llamadas seguidas (una por paso) y cada una reenvía la con
 
 ## 10. Lo que no está comprobado o hay que saber
 
-- **Probado en un teléfono real:** conversar, la voz y manejar el teléfono (1.1); la memoria automática y la pantalla *mente* (2.0); estudiar un tomo y consultar la biblioteca (2.1, con los fallos que arregla la 2.2). Lo demás se construyó en un entorno sin teléfono ni emulador: está comprobado que compila, que la APK está firmada y que pasan las 78 pruebas automáticas del núcleo.
+- **Probado en un teléfono real:** conversar, la voz y manejar el teléfono (1.1); la memoria automática y la pantalla *mente* (2.0); estudiar un tomo y consultar la biblioteca (2.1, con los fallos que arregla la 2.2). Lo demás se construyó en un entorno sin teléfono ni emulador: está comprobado que compila, que la APK está firmada y que pasan las 100 pruebas automáticas del núcleo.
 - **Lo nuevo de la 2.2 no se ha visto funcionar con la API real.** Está probado contra una API de Claude simulada que el cupo se descuenta, que el modelo ve lo que le queda y que la búsqueda deja de ofrecerse al agotarse; y con un escritor simulado, que un tomo de 9 capítulos se completa y que un corte en el capítulo 4 se reanuda en el 5. **No se ha estudiado ningún tomo real con esta versión**: la búsqueda directa y la lectura de páginas son herramientas de Anthropic que aquí no se pudieron llamar. Si la lectura de páginas no estuviera disponible para tu cuenta o tu modelo, la API lo dirá con un error al primer mensaje; dímelo y la desactivo.
+- **Lo nuevo de la 2.3 no se ha visto funcionar en un teléfono.** Los diez criterios del informe están cubiertos por pruebas automáticas, con un teléfono y una API simulados: la tarea de 15 pasos cortada en el 7 sigue en el 8, no se da por hecho un envío que no se ve en pantalla, el bucle avisa a la tercera y para a la cuarta, el permiso fijo no se pregunta y lo prohibido sí, el repaso encuentra dos lecciones que se contradicen, «¿cómo va lo de los videos?» trae el siguiente paso, y el registro coincide con lo que se hizo. Sin estrenar: leer PDF con el lector de Android, la carpeta de documentos, la voz cortada con el dictado real y retomar una tarea después de que Android cierre la app. Además, el nombre del chat contigo mismo tiene que coincidir exactamente con lo que se ve arriba del chat. Si no coincide, JARVIS seguirá preguntando, que es lo seguro.
 - **El estudio en segundo plano depende de que Android deje viva la app.** Con la accesibilidad activada suele seguir; si el teléfono la cierra, se retoma al abrir JARVIS.
 - **Lo nuevo de la 2.1 no se ha visto funcionar en un teléfono.**
   - **Dibujar y animar.** Está probado que el lenguaje se lee bien, que los errores se explican y que el movimiento se calcula como debe. **Pintar de verdad y codificar el video no se han ejecutado nunca**: dependen de Android y del codificador de cada teléfono. Es la parte con más riesgo de esta versión. Si falla, lo más probable es que falle el video y no la imagen.
@@ -230,7 +250,12 @@ jarvis-android/app/src/main/kotlin/com/radar/jarvis/
 ├── nucleo/                    sin nada de Android: se prueba en cualquier computadora
 │   ├── Freno.kt               qué hace solo y qué espera tu sí
 │   ├── Manos.kt               lo que JARVIS puede ver y hacer en un teléfono (interfaz)
-│   ├── Herramientas.kt        las 37 herramientas del agente (más las de los puentes), pasando por el freno
+│   ├── Herramientas.kt        las 51 herramientas del agente (más las de los puentes), pasando por el freno; vigila los bucles
+│   ├── Permisos.kt            los permisos fijos que da la persona, y qué pueden cubrir
+│   ├── Tareas.kt              tareas largas: pasos guardados, comprobación y retomar desde el paso siguiente
+│   ├── Proyectos.kt           las fichas de proyecto y cuándo vienen al caso
+│   ├── Bitacora.kt            el registro por turno: cada herramienta, con qué y qué devolvió
+│   ├── Documentos.kt          los documentos que puede leer (interfaz)
 │   ├── Estudios.kt            el estudio de un tomo como tarea larga que se reanuda
 │   ├── Lienzo.kt              el lenguaje con el que dibuja y anima: escenas, capas, movimiento
 │   ├── Biblioteca.kt          los tomos que estudia, y cómo los busca
@@ -249,6 +274,7 @@ jarvis-android/app/src/main/kotlin/com/radar/jarvis/
 │   ├── Voz.kt                 dictado y voz de Android
 │   ├── FuentesAndroid.kt      las fuentes de verdad, y el servicio que oye las notificaciones
 │   ├── Avisos.kt              los avisos de JARVIS y el despertador de las rutinas
+│   ├── DocumentosAndroid.kt   PDF y textos adjuntos o de tu carpeta; los PDF, página a página
 │   └── Almacen.kt             claves cifradas, ajustes, archivos de la mente y diario
 └── ui/                        MainActivity, AjustesActivity, MenteActivity (memoria, habilidades, rutinas), OrbView
 ```

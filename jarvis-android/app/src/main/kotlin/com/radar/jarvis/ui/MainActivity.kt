@@ -34,6 +34,7 @@ class MainActivity : Activity() {
     private lateinit var tarjeta: LinearLayout
     private lateinit var tarjetaAccion: TextView
     private lateinit var tarjetaMotivo: TextView
+    private lateinit var btnSiempre: TextView
     private lateinit var campo: EditText
     private lateinit var btnPausa: TextView
     private lateinit var btnDetener: TextView
@@ -90,6 +91,8 @@ class MainActivity : Activity() {
                     LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(c, 10) })
                 addView(Estilo.boton(c, "Rechazar") { Sesion.decidir(false) }, LinearLayout.LayoutParams(0, -2, 1f))
             })
+            btnSiempre = Estilo.boton(c, "Aprobar y no volver a preguntar", tinta = Estilo.AMBAR, borde = Estilo.AMBAR) { Sesion.decidir(true, siempre = true) }
+            addView(btnSiempre, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(c, 8) })
             addView(Estilo.texto(c, "Solo vale tu toque: decir «sí» no aprueba nada.", 11f, Estilo.TENUE), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(c, 8) })
         }
         raiz.addView(tarjeta, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(c, 16), 0, dp(c, 16), dp(c, 8)) })
@@ -160,7 +163,7 @@ class MainActivity : Activity() {
     private fun elegirArchivos() {
         try {
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")
-                .putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("video/*", "audio/*", "image/*")).putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true), 2)
+                .putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("video/*", "audio/*", "image/*", "application/pdf", "text/*")).putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true), 2)
         } catch (e: Exception) {
             android.widget.Toast.makeText(this, "Este teléfono no tiene selector de archivos.", android.widget.Toast.LENGTH_LONG).show()
         }
@@ -235,6 +238,8 @@ class MainActivity : Activity() {
         if (p != null) {
             tarjetaAccion.text = p.accion
             tarjetaMotivo.text = "En ${p.donde.ifEmpty { "el teléfono" }} · ${p.motivo}." + if (p.detalle.isNotEmpty()) "\n${p.detalle}" else ""
+            btnSiempre.visibility = if (p.fijable != null) View.VISIBLE else View.GONE
+            p.fijable?.let { btnSiempre.text = "Siempre: ${it.que}".take(90) }
         }
 
         pasos.removeAllViews()

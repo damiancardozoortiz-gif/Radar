@@ -55,6 +55,8 @@ object Sesion {
         private set
     lateinit var fuentes: FuentesAndroid
         private set
+    lateinit var documentos: DocumentosAndroid
+        private set
     val mente: Mente get() = almacen.mente
 
     @Volatile var estado = Estado.ESPERA; private set
@@ -75,7 +77,9 @@ object Sesion {
         voz = Voz(ctx)
         estudio = EstudioAndroid(ctx, almacen)
         fuentes = FuentesAndroid(ctx, almacen)
+        documentos = DocumentosAndroid(ctx, almacen)
         principal.postDelayed(pulso, 20_000)
+        principal.postDelayed({ retomarTarea() }, 8_000)    // si una tarea larga quedó cortada al cerrarse la app, sigue desde el paso siguiente
         principal.postDelayed({ estudiar() }, 6_000)        // si un estudio quedó a medias al cerrarse la app, sigue por donde iba
     }
 
@@ -144,9 +148,14 @@ object Sesion {
         val h = Herramientas(ServicioAccesibilidad.manos, mente, ::pedirPermiso, ::alPaso,
             alCrearRutina = { r -> almacen.apuntar("RUTINA creada: ${r.nombre} (${r.disparador.frase()})"); programarDespertador() },
             estudio = estudio, fuentes = fuentes, biblioteca = almacen.biblioteca, puentes = com.radar.jarvis.nucleo.Puentes(almacen.puentes),
-            estudios = almacen.estudios, alEstudiar = { alCambiarEstudio() })
+            estudios = almacen.estudios, alEstudiar = { alCambiarEstudio() },
+            tareas = almacen.tareas, proyectos = almacen.proyectos, documentos = documentos, permisos = almacen.permisos, bitacora = almacen.bitacora,
+            avisarPersona = { titulo, texto -> almacen.apuntar("AVISO a la persona: $titulo"); Avisador.avisar(ctx, "JARVIS · $titulo", texto) },
+            alCerrarTarea = { t -> alCerrarTarea(t) },
+            alUsarPermiso = { almacen.apuntar("PERMISO FIJO usado: $it") })
         herramientas = h
-        Agente(almacen.ajustes(), h, mente, { nota -> pasos += Paso(0, nota, "nota", ""); avisar() }, almacen.biblioteca).also { agente = it }
+        Agente(almacen.ajustes(), h, mente, { nota -> pasos += Paso(0, nota, "nota", ""); avisar() }, almacen.biblioteca,
+            contextoExtra = { m -> listOf(almacen.tareas.contexto(), almacen.proyectos.contexto(m)).filter { it.isNotEmpty() }.joinToString("\n") }).also { agente = it }
     }
 
     private fun alPaso(n: Int, texto: String, est: String, det: String) {
@@ -173,19 +182,47 @@ object Sesion {
         return ok
     }
 
-    /** Tu respuesta a la tarjeta de permiso. Solo vale tocar el botón. */
-    fun decidir(aprobar: Boolean) { decision?.complete(aprobar) }
+    /**
+     * Tu respuesta a la tarjeta de permiso. Solo vale tocar el botón.
+     * Con `siempre`, además queda como permiso fijo (si esa acción se puede dejar fija: nunca dinero, borrar, publicar…).
+     */
+    fun decidir(aprobar: Boolean, siempre: Boolean = false) {
+        if (aprobar && siempre) peticion?.fijable?.let { almacen.permisos.conceder(it); almacen.apuntar("PERMISO FIJO concedido: ${it.que}") }
+        decision?.complete(aprobar)
+    }
 
-    /** Lo que le dices o le escribes. */
-    fun enviar(texto: String) {
+    /** Una tarea larga se cerró: queda en el diario y, si no estás mirando o era larga, te avisa. */
+    private fun alCerrarTarea(t: com.radar.jarvis.nucleo.Tarea) {
+        almacen.apuntar("TAREA ${t.estado}: ${t.objetivo} · ${t.resultado}")
+        if (!enPrimerPlano || t.pasos.size >= 5)
+            Avisador.avisar(ctx, if (t.estado == "terminada") "JARVIS terminó una tarea" else "JARVIS no pudo terminar una tarea",
+                "${t.objetivo}. ${t.resultado}".trim())
+    }
+
+    /**
+     * Lo que le dices o le escribes.
+     * @param canal cómo llegó, como nota para JARVIS (p. ej. por voz y cortado), o null si lo escribiste.
+     */
+    fun enviar(texto: String, canal: String? = null) {
         val t = texto.trim()
         if (t.isEmpty()) return
         if (pausa) return poner(Estado.PAUSA, "Estoy en pausa. Quítala para seguir.")
         if (ocupado) return poner(estado, "Estoy con otra cosa. Espera o pulsa Detener.")
-        lanzar(t, null, null)
+        lanzar(t, null, null, canal)
     }
 
-    private fun lanzar(t: String, rutina: Rutina?, motivo: String?) {
+    /** Si una tarea larga quedó cortada (la app se cerró, se fue la red), JARVIS la retoma solo desde el paso siguiente. */
+    fun retomarTarea() {
+        if (ocupado || pausa || !almacen.hayClave) return
+        val t = almacen.tareas.paraRetomar() ?: return
+        if (mente.gastoSoloHoy(System.currentTimeMillis()) >= almacen.fusible) return
+        val encargo = almacen.tareas.retomar(t.id)
+        almacen.apuntar("TAREA retomada (${t.reanudaciones + 1}.ª vez) desde el paso ${t.actual}: ${t.objetivo}")
+        if (!enPrimerPlano) Avisador.avisar(ctx, "JARVIS sigue con una tarea", "Se había cortado: «${t.objetivo}». Sigo desde el paso ${t.actual}.")
+        lanzar(encargo, null, null, "Esto lo retomas tú solo porque la tarea se cortó; la persona puede no estar mirando", sola = true)
+    }
+
+    private fun lanzar(t: String, rutina: Rutina?, motivo: String?, canal: String? = null, sola: Boolean = rutina != null) {
         voz.callar()
         pasos.clear(); detalle = ""; porVotar = 0
         almacen.apuntar(if (rutina != null) "RUTINA «${rutina.nombre}» salta: $motivo" else "TAREA: $t")
@@ -194,13 +231,17 @@ object Sesion {
             val fecha = System.currentTimeMillis()
             val a = agente()
             herramientas?.nivel = rutina?.nivel ?: "hacer"
+            almacen.bitacora.empezar(fecha, t, when { rutina != null -> "rutina «${rutina.nombre}»"; sola -> "retomada"; canal != null -> canal; else -> "escrito" })
             val r = try {
-                a.correr(t, rutina?.let { "«${it.nombre}» (nivel ${it.nivel}), porque $motivo" })
+                a.correr(t, rutina?.let { "«${it.nombre}» (nivel ${it.nivel}), porque $motivo" }, canal)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 Respuesta("Algo falló dentro de JARVIS: ${e.javaClass.simpleName}. ${e.message.orEmpty().take(120)}", "fallo", 0)
             } finally { herramientas?.nivel = "hacer" }
+            almacen.bitacora.cerrar(r.texto, r.estado, r.coste)
+            almacen.tareas.alTerminarTurno(if (r.estado == "fallo") "cortado" else "terminado")
+            val tareaFallida = almacen.tareas.todas().any { it.actualizada >= fecha && it.estado == "fallida" }
             almacen.apuntar("FIN (${r.estado}, ${r.pasos} pasos, ${r.busquedas} búsquedas, ${r.lecturas} lecturas, ~${"%.3f".format(java.util.Locale.US, r.coste)} $): ${r.texto.take(160)}")
             val partes = r.texto.trim().split(Regex("\n\\s*\n"), limit = 2)
             detalle = partes.getOrElse(1) { "" }.trim()
@@ -208,10 +249,10 @@ object Sesion {
 
             // se apunta cómo fue; la revisión posterior lo afina y aprende de ello
             val hechos = synchronized(pasos) { pasos.filter { it.n > 0 }.map { "${it.texto} (${it.estado}${if (it.detalle.isNotEmpty()) ": " + it.detalle else ""})" } }
-            mente.evaluar(Evaluacion(fecha, t, r.estado == "terminada", 3, r.pasos, System.currentTimeMillis() - fecha, r.coste, sola = rutina != null))
+            mente.evaluar(Evaluacion(fecha, t, r.estado == "terminada" && !tareaFallida, 3, r.pasos, System.currentTimeMillis() - fecha, r.coste, sola = sola))
             if (r.estado != "fallo" || r.pasos > 0) porVotar = fecha
             if (almacen.memoriaSola && almacen.hayClave) ambito.launch {
-                revisar(a, Vivido(fecha, t, r.texto, hechos, r.estado == "terminada", rutina != null, r.habilidades, almacen.rutinasSolas))
+                revisar(a, Vivido(fecha, t, r.texto, hechos, r.estado == "terminada" && !tareaFallida, sola, r.habilidades, almacen.rutinasSolas))
             }
 
             if (rutina != null) Avisador.avisar(ctx, "JARVIS · ${rutina.nombre}", decir)
@@ -251,6 +292,10 @@ object Sesion {
     /** Para lo que esté haciendo: rechaza lo que esperaba permiso y corta la tarea. */
     fun detener(motivo: String = "Detenido.") {
         decision?.complete(false)
+        if (trabajo?.isActive == true) {
+            almacen.tareas.alTerminarTurno("detenido")
+            almacen.bitacora.cerrar("(Detenido por la persona.)", "detenido", 0.0)
+        }
         trabajo?.cancel()
         voz.callar(); voz.dejarDeEscuchar()
         poner(Estado.ESPERA, motivo)
@@ -266,8 +311,9 @@ object Sesion {
     /** Los videos o audios que eliges con el botón de adjuntar. */
     fun adjuntar(uris: List<android.net.Uri>) {
         ambito.launch {
-            val n = estudio.adjuntar(uris)
-            poner(estado, if (n == 0) "No pude leer esos archivos: tienen que ser videos, audios o imágenes."
+            val (docs, medios) = uris.partition { documentos.esDocumento(it) }
+            val n = estudio.adjuntar(medios) + documentos.adjuntar(docs)
+            poner(estado, if (n == 0) "No pude leer esos archivos: tienen que ser videos, audios, imágenes, PDF o textos."
                 else "$n ${if (n == 1) "archivo adjunto" else "archivos adjuntos"}. Dime qué hago con ${if (n == 1) "él" else "ellos"}.")
             if (n == 0) return@launch
         }
@@ -276,9 +322,12 @@ object Sesion {
     /** Escucha una frase por el micrófono y la manda. Desde el hilo principal. */
     fun escucharVoz() {
         if (pausa || ocupado) return
-        if (estado == Estado.ESCUCHANDO) { voz.dejarDeEscuchar(); return poner(Estado.ESPERA, "") }
+        if (estado == Estado.ESCUCHANDO) { voz.terminar(); return }      // se usa lo que se oyó, marcado como cortado
         poner(Estado.ESCUCHANDO, "Te escucho…")
-        voz.escuchar({ enviar(it) }, { poner(Estado.ESPERA, it) })
+        voz.escuchar({ t, cortada ->
+            if (estado == Estado.ESCUCHANDO) poner(Estado.ESPERA)
+            enviar(t, "Entró por voz" + if (cortada) ", y la grabación terminó de golpe: la frase puede estar a medias" else "")
+        }, { poner(Estado.ESPERA, it) })
     }
 
     // ------------------------------------------------------------ iniciativa
@@ -298,6 +347,11 @@ object Sesion {
     /** El pulso de la iniciativa: ¿toca alguna rutina? Se llama cada minuto, al llegar una notificación y al sonar el despertador. */
     fun latido() {
         estudiar()                                           // si un estudio se cortó (sin red, app cerrada), aquí se retoma
+        retomarTarea()                                       // y lo mismo con una tarea larga
+        if (System.currentTimeMillis() - mente.ultimoRepaso() > REPASO_MS) ambito.launch {
+            val r = mente.repasar()
+            almacen.apuntar("MEMORIA repasada: ${r.fusionados} repetidos juntados, ${r.contradicciones.size} contradicciones, ${r.debiles.size} lecciones de un solo caso")
+        }
         ambito.launch {
             try {
                 val rutinas = mente.rutinas().filter { it.activa }
@@ -344,6 +398,7 @@ object Sesion {
 
     private const val ESPERA_MAX = 10 * 60 * 1000L
     private const val COLA_MAX = 30 * 60 * 1000L
+    private const val REPASO_MS = 7 * 86_400_000L
     /** El cupo de internet de CADA capítulo al estudiar: empieza de cero en cada uno. */
     private const val BUSQUEDAS_POR_CAPITULO = 4
     private const val LECTURAS_POR_CAPITULO = 3

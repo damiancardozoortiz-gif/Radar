@@ -17,7 +17,13 @@ interface Caja {
 }
 
 /** Algo que JARVIS recuerda. Capas: perfil (quién eres), hecho (personas, lugares, datos), episodio (qué hizo), leccion (qué aprendió). */
-data class Recuerdo(val id: String, val capa: String, val texto: String, val fecha: Long, val origen: String)
+data class Recuerdo(val id: String, val capa: String, val texto: String, val fecha: Long, val origen: String, val veces: Int = 1) {
+    /** Cómo de firme es: una lección vista una sola vez puede ser casualidad. */
+    fun firmeza() = if (veces > 1) "confirmada $veces veces" else "de un solo caso"
+}
+
+/** Lo que dejó el repaso de la memoria. */
+data class Repaso(val fusionados: Int, val contradicciones: List<Pair<Recuerdo, Recuerdo>>, val debiles: List<Recuerdo>)
 
 /** Una receta que JARVIS sabe seguir. No es código: son instrucciones. */
 data class Habilidad(
@@ -91,10 +97,10 @@ class Mente(private val caja: Caja) {
 
     // ============================================================ memoria
     @Synchronized fun recuerdos(): List<Recuerdo> = leer("recuerdos") {
-        Recuerdo(it.getString("id"), it.getString("capa"), it.getString("texto"), it.getLong("fecha"), it.optString("origen"))
+        Recuerdo(it.getString("id"), it.getString("capa"), it.getString("texto"), it.getLong("fecha"), it.optString("origen"), it.optInt("veces", 1))
     }
     private fun guardarRecuerdos(l: List<Recuerdo>) = guardar("recuerdos", l) {
-        JSONObject().put("id", it.id).put("capa", it.capa).put("texto", it.texto).put("fecha", it.fecha).put("origen", it.origen)
+        JSONObject().put("id", it.id).put("capa", it.capa).put("texto", it.texto).put("fecha", it.fecha).put("origen", it.origen).put("veces", it.veces)
     }
 
     /**
@@ -106,7 +112,11 @@ class Mente(private val caja: Caja) {
         if (t.length < 4 || capa !in CAPAS || pareceSecreto(t)) return null
         val todos = recuerdos()
         val mias = palabras(t)
-        if (todos.any { it.capa == capa && parecido(mias, palabras(it.texto)) >= 0.8 }) return null
+        todos.firstOrNull { it.capa == capa && parecido(mias, palabras(it.texto)) >= 0.8 && negada(it.texto) == negada(t) }?.let { igual ->
+            // ya lo sabía: no se duplica, pero cuenta como una confirmación más
+            guardarRecuerdos(todos.map { if (it.id == igual.id) it.copy(veces = it.veces + 1) else it })
+            return null
+        }
         val nuevo = Recuerdo(id("r"), capa, t, ahora, origen)
         var l = todos + nuevo
         if (l.size > MAX_RECUERDOS) {               // si no cabe, se van los episodios más viejos; el perfil y los hechos se quedan
@@ -129,6 +139,62 @@ class Mente(private val caja: Caja) {
 
     @Synchronized fun borrarRecuerdo(id: String) = guardarRecuerdos(recuerdos().filter { it.id != id })
     @Synchronized fun borrarMemoria() = guardarRecuerdos(emptyList())
+
+    /** Busca recuerdos por palabras (o los últimos, si no hay consulta), para que JARVIS pueda revisar su memoria. */
+    fun buscarRecuerdos(consulta: String, capa: String? = null, max: Int = 30): List<Recuerdo> {
+        val l = recuerdos().filter { capa == null || it.capa == capa }
+        val q = palabras(consulta)
+        if (q.isEmpty()) return l.sortedByDescending { it.fecha }.take(max)
+        return l.map { it to palabras(it.texto).count { p -> p in q } }.filter { it.second > 0 }
+            .sortedWith(compareByDescending<Pair<Recuerdo, Int>> { it.second }.thenByDescending { it.first.fecha }).take(max).map { it.first }
+    }
+
+    fun recuerdo(id: String) = recuerdos().firstOrNull { it.id == id }
+
+    // ============================================================ repaso de la memoria
+    /** Las parejas de lecciones que se contradicen, según el último repaso (ids). */
+    @Synchronized fun dudas(): List<Pair<Recuerdo, Recuerdo>> {
+        val por = recuerdos().associateBy { it.id }
+        val a = try { JSONArray(caja.leer("memoria_dudas").ifBlank { "[]" }) } catch (e: Exception) { JSONArray() }
+        return (0 until a.length()).mapNotNull { i -> a.optJSONArray(i)?.let { p -> por[p.optString(0)]?.let { x -> por[p.optString(1)]?.let { y -> x to y } } } }
+    }
+
+    /**
+     * El repaso: junta los recuerdos repetidos (sumando sus confirmaciones), detecta lecciones que se contradicen
+     * (dicen lo mismo, pero una lo niega) y señala las lecciones de un solo caso que llevan un mes sin confirmarse.
+     * Las contradicciones no se borran solas: se apuntan para que JARVIS (o la persona) decida cuál vale.
+     */
+    @Synchronized fun repasar(ahora: Long = System.currentTimeMillis()): Repaso {
+        var l = recuerdos()
+        var fusionados = 0
+        for (capa in listOf("perfil", "hecho", "leccion")) {
+            val de = l.filter { it.capa == capa }.sortedByDescending { it.fecha }
+            val quitar = mutableSetOf<String>()
+            val sumar = mutableMapOf<String, Int>()
+            for (i in de.indices) for (j in i + 1 until de.size) {
+                val a = de[i]; val b = de[j]
+                if (a.id in quitar || b.id in quitar) continue
+                if (negada(a.texto) == negada(b.texto) && parecido(palabras(a.texto), palabras(b.texto)) >= 0.6) {
+                    quitar += b.id; sumar[a.id] = (sumar[a.id] ?: 0) + b.veces; fusionados++    // se queda el más reciente
+                }
+            }
+            l = l.filter { it.id !in quitar }.map { r -> sumar[r.id]?.let { r.copy(veces = r.veces + it) } ?: r }
+        }
+        val lecciones = l.filter { it.capa == "leccion" }
+        val contra = mutableListOf<Pair<Recuerdo, Recuerdo>>()
+        for (i in lecciones.indices) for (j in i + 1 until lecciones.size) {
+            val a = lecciones[i]; val b = lecciones[j]
+            if (negada(a.texto) != negada(b.texto) && parecido(sinMarcas(a.texto), sinMarcas(b.texto)) >= 0.5) contra += a to b
+        }
+        if (fusionados > 0) guardarRecuerdos(l)
+        caja.escribir("memoria_dudas", JSONArray(contra.map { JSONArray(listOf(it.first.id, it.second.id)) }).toString())
+        caja.escribir("memoria_repaso", ahora.toString())
+        val debiles = lecciones.filter { it.veces == 1 && ahora - it.fecha > 30 * 86_400_000L }
+        return Repaso(fusionados, contra, debiles)
+    }
+
+    /** Cuándo fue el último repaso (0 si nunca). */
+    fun ultimoRepaso(): Long = caja.leer("memoria_repaso").trim().toLongOrNull() ?: 0L
 
     /** Los recuerdos de una capa que tienen que ver con la consulta, los más parecidos primero. */
     fun relevantes(consulta: String, capa: String, max: Int): List<Recuerdo> {
@@ -335,7 +401,11 @@ class Mente(private val caja: Caja) {
         bloque("Lo que sabes de la persona", perfil)
         bloque("Datos que vienen al caso", hechos)
         bloque("Veces anteriores parecidas", episodios)
-        bloque("Lecciones que aprendiste (aplícalas)", lecciones)
+        if (lecciones.isNotEmpty()) s.append("Lecciones que aprendiste (aplícalas):\n").append(lecciones.joinToString("\n") { "- ${it.texto} (${it.firmeza()})" }).append("\n")
+        val ids = lecciones.map { it.id }.toSet()
+        dudas().filter { it.first.id in ids || it.second.id in ids }.forEach { (a, b) ->
+            s.append("OJO, estas dos lecciones se contradicen; decide cuál vale y borra la otra con memoria_olvidar: «${a.texto}» (${a.id}) / «${b.texto}» (${b.id})\n")
+        }
         for (h in habs) s.append("Habilidad «${h.nombre}» (${h.cuando}). Síguela si encaja:\n${h.pasos}\n")
         if (otras.isNotEmpty()) s.append("Otras habilidades que tienes: ${otras.joinToString(", ") { it.nombre }}.\n")
         return Contexto(s.toString().trim(), habs.map { it.id })
@@ -363,6 +433,13 @@ class Mente(private val caja: Caja) {
         private val VACIAS = setOf("que", "los", "las", "una", "uno", "del", "por", "para", "con", "sin", "como", "pero", "mas", "sus", "muy",
             "esta", "este", "esto", "eso", "esa", "ese", "hay", "son", "fue", "ser", "the", "and", "for", "me", "mi", "tu", "le", "se", "lo", "la",
             "el", "en", "de", "al", "ya", "no", "si", "es", "un", "su", "te", "nos", "cuando", "donde", "quiero", "puedes", "hazme", "dime")
+
+        private val NEGACION = setOf("no", "nunca", "jamas", "evita", "evitar", "not", "never", "dont", "sin")
+
+        /** ¿La frase niega? Sirve para no juntar «haz X» con «no hagas X», y para ver que se contradicen. */
+        fun negada(s: String): Boolean = Freno.norm(s).split(Regex("[^a-z0-9ñ]+")).any { it in NEGACION }
+
+        private fun sinMarcas(s: String) = palabras(s) - setOf("siempre", "evita", "evitar", "nunca", "jamas")
 
         fun palabras(s: String): Set<String> =
             Freno.norm(s).split(Regex("[^a-z0-9ñ]+")).filter { it.length >= 2 && it !in VACIAS }.toSet()

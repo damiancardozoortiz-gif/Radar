@@ -36,6 +36,11 @@ class Almacen(ctx: Context) : Caja {
     val mente = Mente(this)
     val biblioteca = com.radar.jarvis.nucleo.Biblioteca(this)
     val estudios = com.radar.jarvis.nucleo.Estudios(this, biblioteca)
+    val tareas = com.radar.jarvis.nucleo.Tareas(this)
+    val proyectos = com.radar.jarvis.nucleo.Proyectos(this)
+    /** El registro por turno guarda lo que se vio en pantalla: se queda en el teléfono, fuera de la copia en la nube. */
+    val bitacora = com.radar.jarvis.nucleo.Bitacora(CajaLocal(File(ctx.filesDir, "local").apply { mkdirs() }))
+    val permisos = com.radar.jarvis.nucleo.Permisos(this)
 
     init {
         // versiones anteriores guardaban las claves junto a los ajustes: se mudan al archivo que no entra en la copia
@@ -46,6 +51,15 @@ class Almacen(ctx: Context) : Caja {
         prefs.getString("memoria", null)?.let { vieja ->
             runCatching { JSONArray(vieja).let { a -> for (i in 0 until a.length()) mente.recordar("hecho", a.getString(i).substringAfter(": "), "versión anterior") } }
             prefs.edit().remove("memoria").apply()
+        }
+    }
+
+    /** Archivos que no entran en la copia de seguridad (la copia solo incluye mente/ y los ajustes). */
+    private class CajaLocal(private val carpeta: File) : Caja {
+        @Synchronized override fun leer(nombre: String): String = try { File(carpeta, "$nombre.json").readText() } catch (e: Exception) { "" }
+        @Synchronized override fun escribir(nombre: String, texto: String) {
+            try { File(carpeta, "$nombre.json.tmp").apply { writeText(texto); if (!renameTo(File(carpeta, "$nombre.json"))) File(carpeta, "$nombre.json").writeText(texto) } }
+            catch (e: Exception) { }
         }
     }
 
@@ -132,6 +146,13 @@ class Almacen(ctx: Context) : Caja {
     var fuenteUbicacion: Boolean get() = si("fuente_ubicacion", false); set(v) = pon("fuente_ubicacion", v)
 
     fun ajustes() = Ajustes(clave, modelo, esfuerzo, web, quien)
+
+    /** La carpeta de documentos que eligió la persona (dirección de Android), o vacío. */
+    var carpetaDocs: String get() = texto("carpeta_docs", ""); set(v) = prefs.edit().putString("carpeta_docs", v).apply()
+    /** Los documentos adjuntados con el botón +, el más reciente primero. */
+    var docsAdjuntos: List<String>
+        get() = try { JSONArray(texto("docs_adjuntos", "[]")).let { a -> (0 until a.length()).map { a.getString(it) } } } catch (e: Exception) { emptyList() }
+        set(v) = prefs.edit().putString("docs_adjuntos", JSONArray(v.take(40)).toString()).apply()
 
     // ---------- diario de acciones ----------
     @Synchronized fun apuntar(linea: String) {

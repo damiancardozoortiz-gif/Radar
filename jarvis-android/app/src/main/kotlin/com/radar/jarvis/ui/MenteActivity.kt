@@ -69,6 +69,28 @@ class MenteActivity : Activity() {
         nota("Hoy, por iniciativa: unos ${"%.2f".format(mente.gastoSoloHoy(ahora))} $ de un límite de ${"%.2f".format(Sesion.almacen.fusible)} $. " +
             "El coste es una estimación por arriba, con precios de lista.")
 
+        // ---- tarea larga
+        val al = Sesion.almacen
+        al.tareas.abierta()?.let { t ->
+            titulo("Tarea abierta")
+            ficha(t.objetivo, "${t.hechos} de ${t.pasos.size} pasos · ${if (t.estado == "esperando") "esperando tu respuesta" else "en curso"}" +
+                if (t.reanudaciones > 0) " · retomada ${t.reanudaciones} veces" else "") {
+                AlertDialog.Builder(this).setTitle("Tarea").setMessage(t.detalle())
+                    .setNeutralButton("Cerrarla") { _, _ -> al.tareas.cerrar(t.id, "detenida", "La cerraste desde «mente»."); pintar() }
+                    .setNegativeButton("Volver", null).show()
+            }
+        }
+
+        // ---- proyectos
+        titulo("Proyectos")
+        val proyectos = al.proyectos.lista().sortedWith(compareBy<com.radar.jarvis.nucleo.Proyecto> { it.estado != "activo" }.thenByDescending { it.actualizado })
+        if (proyectos.isEmpty()) nota("Ninguno todavía. Cuéntale uno: «apunta el proyecto videos explicativos: objetivo…, siguiente paso…».")
+        for (p in proyectos) ficha((if (p.estado == "activo") "" else "(cerrado) ") + p.nombre, "Siguiente: ${p.siguiente.ifEmpty { "sin decidir" }}") {
+            AlertDialog.Builder(this).setTitle(p.nombre).setMessage(p.ficha())
+                .setNeutralButton("Borrar") { _, _ -> confirmar("¿Borrar la ficha de «${p.nombre}»?") { al.proyectos.borrar(p.id); pintar() } }
+                .setNegativeButton("Cerrar", null).show()
+        }
+
         // ---- rutinas
         titulo("Rutinas · lo que hace por iniciativa")
         val rutinas = mente.rutinas()
@@ -112,16 +134,45 @@ class MenteActivity : Activity() {
         }
 
         // ---- memoria
+        val dudasMemoria = mente.dudas()
+        if (dudasMemoria.isNotEmpty()) {
+            titulo("Memoria · lecciones que se contradicen (${dudasMemoria.size})")
+            nota("Lo encontró el repaso semanal. Toca la que NO vale para borrarla, o pídele a JARVIS que lo resuelva.", Estilo.AMBAR)
+            for ((x, y) in dudasMemoria) for (r in listOf(x, y)) ficha(r.texto, "${fecha.format(Date(r.fecha))} · ${r.firmeza()}") { verRecuerdo(r) }
+        }
         val recuerdos = mente.recuerdos()
         for ((capa, nombre) in listOf("perfil" to "Memoria · quién eres", "hecho" to "Memoria · tu mundo", "leccion" to "Memoria · lecciones", "episodio" to "Memoria · lo que ha hecho")) {
             val l = recuerdos.filter { it.capa == capa }.sortedByDescending { it.fecha }
             titulo("$nombre (${l.size})")
             if (l.isEmpty()) nota("Nada todavía.")
-            for (r in l.take(if (capa == "episodio") 40 else 200)) ficha(r.texto, "${fecha.format(Date(r.fecha))} · ${r.origen}") { verRecuerdo(r) }
+            for (r in l.take(if (capa == "episodio") 40 else 200)) ficha(r.texto, "${fecha.format(Date(r.fecha))} · ${r.origen}" +
+                if (capa == "leccion") " · ${r.firmeza()}" else "") { verRecuerdo(r) }
         }
         if (recuerdos.isNotEmpty()) col.addView(Estilo.boton(this, "Borrar toda la memoria", tinta = Estilo.ROJO, borde = Estilo.ROJO) {
             confirmar("¿Borrar todo lo que recuerda? No se puede deshacer.") { mente.borrarMemoria(); pintar() }
         }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(this@MenteActivity, 12) })
+        registro()
+    }
+
+    private fun registro() {
+        titulo("Registro · lo que hizo en cada turno")
+        nota("Cada herramienta que usó, con qué datos y qué le devolvió. Lo escribe la app, no JARVIS: sirve para comprobar lo que te cuenta. Se queda en este teléfono.")
+        val hora = SimpleDateFormat("d MMM HH:mm", Locale("es"))
+        val turnos = Sesion.almacen.bitacora.turnos().reversed()
+        if (turnos.isEmpty()) nota("Nada todavía.")
+        for (t in turnos) ficha(t.mensaje.take(90), "${hora.format(Date(t.fecha))} · ${t.canal} · ${t.usos.size} herramientas · ${t.estado}" +
+            if (t.usos.any { it.error }) " · ${t.usos.count { it.error }} con error" else "") {
+            val texto = buildString {
+                append("Pedido (${t.canal}): ${t.mensaje}\n\n")
+                t.usos.forEachIndexed { i, u ->
+                    append("${i + 1}. ${if (u.error) "✗" else "✓"} ${u.herramienta}")
+                    if (u.datos.isNotEmpty()) append(" (${u.datos})")
+                    append(" · ${u.ms / 1000.0} s\n   → ${u.resultado}\n")
+                }
+                append("\nRespondió (${t.estado}): ${t.respuesta}")
+            }
+            AlertDialog.Builder(this).setTitle("Turno").setMessage(texto).setNegativeButton("Cerrar", null).show()
+        }
     }
 
     private fun confirmar(pregunta: String, hacer: () -> Unit) =

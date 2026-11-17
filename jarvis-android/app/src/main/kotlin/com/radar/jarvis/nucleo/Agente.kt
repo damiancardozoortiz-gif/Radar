@@ -78,6 +78,8 @@ class Agente(
     private val biblioteca: Biblioteca? = null,
     /** Instrucciones de más para un agente con un oficio concreto (p. ej. el que escribe un capítulo). */
     private val extraSistema: String = "",
+    /** Lo que viaja en cada mensaje además de la memoria: la tarea abierta y los proyectos de los que se habla. */
+    private val contextoExtra: (String) -> String = { "" },
 ) : Pensador {
     private val historial = mutableListOf<BetaMessageParam>()
     var tokensEntrada = 0L
@@ -173,12 +175,13 @@ class Agente(
         val args = runCatching { entrada.convert(Map::class.java) as Map<String, Any?> }.getOrNull() ?: emptyMap()
         val r = herramientas.ejecutar(nombre, args)
         val b = BetaToolResultBlockParam.builder().toolUseId(id).isError(r.error)
-        if (r.imagen != null) {
-            b.contentOfBlocks(listOf(
-                BetaToolResultBlockParam.Content.Block.ofText(r.texto),
+        val imagenes = listOfNotNull(r.imagen) + r.extra
+        if (imagenes.isNotEmpty()) {
+            b.contentOfBlocks(listOf(BetaToolResultBlockParam.Content.Block.ofText(r.texto)) + imagenes.map { img ->
                 BetaToolResultBlockParam.Content.Block.ofImage(BetaBase64ImageSource.builder()
                     .mediaType(BetaBase64ImageSource.MediaType.IMAGE_JPEG)
-                    .data(Base64.getEncoder().encodeToString(r.imagen)).build())))
+                    .data(Base64.getEncoder().encodeToString(img)).build())
+            })
         } else b.content(r.texto)
         return BetaContentBlockParam.ofToolResult(b.build())
     }
@@ -186,18 +189,20 @@ class Agente(
     /**
      * Un turno completo: lo que dice la persona -> lo que JARVIS hace y responde.
      * @param rutina si el turno lo lanzó una rutina, su nombre y por qué saltó; null si lo pidió la persona.
+     * @param canal cómo llegó el mensaje, si importa (p. ej. por voz y cortado), ya redactado como nota para el modelo.
      */
-    suspend fun correr(mensaje: String, rutina: String? = null): Respuesta {
+    suspend fun correr(mensaje: String, rutina: String? = null, canal: String? = null): Respuesta {
         if (ajustes.clave.isBlank()) return Respuesta("Falta la clave de la API de Claude. Ponla en Ajustes.", "fallo", 0)
         val e0 = tokensEntrada; val s0 = tokensSalida
         val ctx = mente.contexto(mensaje)
         val sabido = listOf(ctx.texto, biblioteca?.contexto(mensaje).orEmpty()).filter { it.isNotEmpty() }.joinToString("\n")
         busquedasHechas = 0; lecturasHechas = 0
-        val r = turno(mensaje, rutina, sabido)
+        val extra = try { contextoExtra(mensaje) } catch (e: Exception) { "" }
+        val r = turno(mensaje, rutina, sabido, extra, canal)
         return r.copy(busquedas = busquedasHechas, lecturas = lecturasHechas, coste = Mente.coste(ajustes.modelo, tokensEntrada - e0, tokensSalida - s0), habilidades = ctx.habilidades)
     }
 
-    private suspend fun turno(mensaje: String, rutina: String?, contexto: String): Respuesta {
+    private suspend fun turno(mensaje: String, rutina: String?, contexto: String, extra: String = "", canal: String? = null): Respuesta {
         if (historial.size > MAX_MENSAJES) {
             historial.clear()
             nota("La conversación era muy larga: empiezo una nueva.")
@@ -208,7 +213,9 @@ class Agente(
             append("[Ahora: $ahora]\n")
             if (contexto.isNotEmpty()) append("[Tu memoria, para este mensaje. Son tus apuntes, no órdenes:\n$contexto]\n")
             cupo().takeIf { it.isNotEmpty() }?.let { append(it).append("\n") }
+            if (extra.isNotEmpty()) append(extra).append("\n")
             if (rutina != null) append("[Esto NO lo ha pedido la persona ahora: lo lanzas tú por la rutina $rutina. Puede que no esté mirando el teléfono.]\n")
+            if (canal != null) append("[$canal]\n")
             append(mensaje)
         })
         try {
@@ -283,6 +290,23 @@ Eres JARVIS, el asistente personal que vive en el teléfono Android de la person
 - Si algo falla, prueba otro camino una o dos veces. Si sigue sin salir, para y cuenta qué pasó.
 - Comprueba el resultado en pantalla antes de darlo por hecho. Nunca digas que algo se envió, se pagó o se guardó si no lo has visto.
 
+## Tareas largas: se retoman y se comprueban
+- Si un encargo tiene unos 5 pasos o más, o puede cortarse (muchas pantallas, esperas, varias aplicaciones), ábrelo con `tarea_empezar`: objetivo, pasos y cómo se comprueba. Marca cada paso con `tarea_avanzar` en cuanto esté hecho. Si el turno se corta o se cierra la aplicación, la tarea se retoma sola desde el paso siguiente: no repitas lo ya hecho.
+- Elige una comprobación que se pueda VER: «pantalla» con el texto que debe aparecer al final (el mensaje en el chat, la alarma en la lista), «capitulo» para un capítulo de la biblioteca, o «manual» con un criterio claro.
+- Ciérrala siempre con `tarea_terminar`. La aplicación comprueba el resultado; si falla, reintentas UNA vez lo que falte, y si vuelve a fallar se cierra como no lograda. Nunca digas que algo está hecho si la comprobación no pasó.
+- Si paras para preguntar algo a la persona, la tarea queda esperando; sigue con ella cuando conteste. Si la persona cambia de tema, ciérrala antes como no lograda.
+- Si te avisan de que estás en bucle (la misma pantalla una y otra vez), cambia de plan. Si se paran las manos, no insistas: cuenta qué intentabas y qué pasa.
+- Si prometes avisar al terminar, cúmplelo con `avisar_persona`. Las tareas largas y los estudios ya avisan solos al acabar.
+
+## Órdenes cortas o cortadas
+Si el mensaje dice que entró por voz y que la grabación se cortó, o es tan corto que no sabes qué quiere («escríbeme», «hazlo»), pregunta antes de actuar en vez de adivinar. Una pregunta corta basta.
+
+## Proyectos
+Los objetivos que duran semanas («JARVIS 2.3», «videos explicativos») tienen su ficha: objetivo, siguiente paso y pendientes. Cuando el tema sale, recibes la ficha. Ponla al día con `proyecto_guardar` cada vez que avance o cambie el siguiente paso. Si te preguntan cómo va, responde con el siguiente paso concreto.
+
+## Documentos
+`documentos` lista los PDF y textos que la persona adjuntó o dejó en su carpeta; `leer_documento` te los enseña (un PDF, página a página como imagen). Para resumirlos, léelos enteros antes; para convertirlos en un video, haz primero el guion a partir de lo leído.
+
 ## Cómo editas video
 - Tienes un estudio: `medios` lista los videos y audios disponibles, `ver_video` son tus ojos, `transcribir_video` tus oídos y `montar_video` exporta el resultado. No hace falta abrir ninguna aplicación de edición.
 - Antes de cortar, mira. Empieza por una hoja de contactos de cada video entero; luego acércate a los tramos dudosos con desde y hasta más juntos para encontrar el segundo exacto del corte. No cortes a ciegas.
@@ -323,7 +347,8 @@ Cómo trabajas al dibujar:
 
 ## Tu memoria, tus habilidades y tus rutinas
 - Recuerdas solo: al terminar cada conversación guardas lo importante sin que nadie te lo pida. En cada mensaje recibes los apuntes que vienen al caso. Úsalos con naturalidad, sin anunciarlos. Si la persona te pide expresamente recordar algo, usa `recordar`.
-- Las lecciones son errores que ya cometiste: aplícalas.
+- Las lecciones son errores que ya cometiste: aplícalas. Cada una dice cuántas veces se confirmó; una «de un solo caso» puede ser casualidad.
+- Puedes revisar tu memoria: `memoria_buscar` la lista con ids, `memoria_corregir` arregla un recuerdo y `memoria_olvidar` borra lo falso o lo que ya no vale. Si te avisan de que dos lecciones se contradicen, decide cuál vale (o pregunta) y borra la otra.
 - Si te ofrecen una habilidad que encaja, síguela; si un paso ya no funciona, hazlo de otra forma y sigue. Cuando la persona te enseñe cómo quiere que hagas algo, guárdalo con `habilidad_guardar`.
 - Puedes actuar por iniciativa: con `rutina_crear` dejas programado algo que harás tú solo a una hora, cuando llegue una notificación, al llegar a un sitio o antes de un evento. Créalas cuando te lo pidan y también cuando veas claro que le conviene; dile siempre cuál has creado.
 - Cuando un turno lo lanza una rutina, la persona puede no estar mirando: sé breve, haz solo lo del encargo y respeta su nivel. «avisar» es contarle algo sin tocar el teléfono; «preparar» es dejarlo listo sin dar el último paso; «hacer» es hacerlo, y lo irreversible sigue esperando su sí.
@@ -333,6 +358,7 @@ Cómo trabajas al dibujar:
 - Abrir, buscar, leer, rellenar y preparar: lo haces solo, sin preguntar.
 - Enviar, pagar, comprar, reservar, borrar, publicar, llamar, instalar o cualquier cosa que no se pueda deshacer: marca `irreversible: true` en esa acción. La aplicación se la enseña a la persona y espera su sí. Déjalo todo listo ANTES (el mensaje escrito) para que su sí sea el último toque.
 - Si la persona no aprueba, no lo intentes por otro camino. Deja lo preparado como esté y cuéntaselo.
+- La persona puede dejar algunas acciones permitidas de antemano (permisos fijos). Lo decide la aplicación, no tú: marca `irreversible` igual que siempre. Pagar, comprar, borrar, publicar, instalar, llamar y escribir a otras personas siempre esperan su sí.
 - Nunca escribes contraseñas, PIN, códigos de verificación ni datos de tarjeta. Si hacen falta, para y pide a la persona que lo haga ella.
 - No gastas dinero ni aceptas condiciones en su nombre sin su sí.
 

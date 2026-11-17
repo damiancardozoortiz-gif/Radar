@@ -51,22 +51,34 @@ class Voz(private val ctx: Context) {
 
     fun tienePermiso() = ctx.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
-    /** Escucha una frase. Hay que llamarlo desde el hilo principal. */
-    fun escuchar(alOir: (String) -> Unit, alFallar: (String) -> Unit) {
+    private var parcial = ""
+    private var cortadaPorTi = false
+
+    /**
+     * Escucha una frase. Hay que llamarlo desde el hilo principal.
+     * alOir recibe el texto y si la grabación terminó de golpe (la paraste tú a mitad, o el dictado se cortó y solo quedó lo parcial).
+     */
+    fun escuchar(alOir: (String, Boolean) -> Unit, alFallar: (String) -> Unit) {
         if (!tienePermiso()) return alFallar("Falta el permiso del micrófono. Dámelo en Ajustes.")
         if (!SpeechRecognizer.isRecognitionAvailable(ctx)) return alFallar("Este teléfono no tiene dictado por voz. Escríbemelo.")
         callar()
         dejarDeEscuchar()
+        parcial = ""; cortadaPorTi = false
         val r = SpeechRecognizer.createSpeechRecognizer(ctx)
         reconocedor = r
         r.setRecognitionListener(object : RecognitionListener {
             override fun onResults(b: Bundle?) {
                 val t = b?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.trim().orEmpty()
+                val cortada = cortadaPorTi
+                val p = parcial
                 dejarDeEscuchar()
-                if (t.isEmpty()) alFallar("No te oí.") else alOir(t)
+                if (t.isNotEmpty()) alOir(t, cortada) else if (p.isNotEmpty()) alOir(p, true) else alFallar("No te oí.")
             }
             override fun onError(codigo: Int) {
+                val p = parcial
                 dejarDeEscuchar()
+                // se cortó, pero algo se entendió: va, marcado como cortado, para que JARVIS pregunte si hace falta
+                if (p.isNotEmpty() && codigo != SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) return alOir(p, true)
                 alFallar(when (codigo) {
                     SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No te oí."
                     SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Falta el permiso del micrófono."
@@ -79,13 +91,23 @@ class Voz(private val ctx: Context) {
             override fun onRmsChanged(db: Float) { nivel = ((db + 2f) / 12f).coerceIn(0f, 1f) }
             override fun onBufferReceived(b: ByteArray?) {}
             override fun onEndOfSpeech() {}
-            override fun onPartialResults(b: Bundle?) {}
+            override fun onPartialResults(b: Bundle?) {
+                b?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.trim()?.takeIf { it.isNotEmpty() }?.let { parcial = it }
+            }
             override fun onEvent(t: Int, b: Bundle?) {}
         })
         r.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
             .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             .putExtra(RecognizerIntent.EXTRA_LANGUAGE, idioma.toLanguageTag())
+            .putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             .putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1))
+    }
+
+    /** La persona tocó para parar mientras hablaba: se usa lo que se oyó, marcado como cortado. */
+    fun terminar() {
+        val r = reconocedor ?: return
+        cortadaPorTi = true
+        runCatching { r.stopListening() }
     }
 
     fun dejarDeEscuchar() {

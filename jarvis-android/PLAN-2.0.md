@@ -6,7 +6,9 @@ La versión 2.1 (ver README) añadió lo que el dueño pidió después: imágene
 sincronizados con la voz, el movimiento en imágenes y los fundidos), una biblioteca que JARVIS construye investigando, y puentes
 MCP hacia servicios externos. La versión 2.2 arregló lo que el propio JARVIS encontró al probar la 2.1: el cupo de búsquedas pasa a llevarlo la app (por turno y por
 capítulo), búsqueda directa y lectura de páginas, estudio de tomos en segundo plano y reanudable, datos pendientes de contrastar,
-consultas con las fuentes una sola vez y corrección de capítulos por fragmentos.
+consultas con las fuentes una sola vez y corrección de capítulos por fragmentos. La versión 2.3 sale del segundo informe de JARVIS: tareas largas que se retoman y se comprueban,
+avisos a la persona, detección de bucles, permisos fijos (nunca para dinero, borrar, publicar, instalar, llamar ni escribir a terceros),
+memoria con confirmaciones y repaso semanal, fichas de proyecto, lectura de PDF y textos, órdenes por voz marcadas y registro por turno.
 
 Sigue pendiente: cambio de velocidad y volumen por partes en los montajes de video real.
 

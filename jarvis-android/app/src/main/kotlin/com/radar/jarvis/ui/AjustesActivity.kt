@@ -34,6 +34,8 @@ class AjustesActivity : Activity() {
     private lateinit var estadoAvisos: TextView
     private lateinit var estadoFuentes: TextView
     private lateinit var diario: TextView
+    private lateinit var listaPermisos: LinearLayout
+    private lateinit var estadoDocs: TextView
     private val a get() = Sesion.almacen
 
     override fun onCreate(guardado: Bundle?) {
@@ -125,6 +127,29 @@ class AjustesActivity : Activity() {
         boton("Permitir que JARVIS me avise") { if (android.os.Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 4) }
         boton("Ver su mente: memoria, habilidades y rutinas") { startActivity(Intent(c, MenteActivity::class.java)) }
 
+        titulo("Permisos fijos")
+        nota("Acciones que JARVIS puede hacer sin preguntarte cada vez. Se añaden con «Aprobar y no volver a preguntar» en la tarjeta de permiso. " +
+            "Pagar, comprar, transferir, borrar, publicar, instalar, llamar y escribir a otras personas SIEMPRE esperan tu toque: eso no se puede dejar fijo.")
+        nota("Mensajes a ti mismo: escribe cómo se llama tu chat contigo en WhatsApp o Telegram (por ejemplo «Tú» o «Rafael (tú)»), tal cual aparece arriba del chat. " +
+            "JARVIS podrá enviar ahí sin preguntar. Déjalo vacío para que pregunte siempre.")
+        val chat = campo("Nombre de tu chat contigo", a.permisos.chatPropio, InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_WORDS)
+        boton("Guardar nombre del chat") {
+            a.permisos.chatPropio = chat.text.toString()
+            a.apuntar("PERMISO FIJO: chat propio = «${a.permisos.chatPropio}»")
+            Toast.makeText(c, if (a.permisos.chatPropio.isEmpty()) "Preguntará siempre antes de enviar." else "Guardado.", Toast.LENGTH_SHORT).show()
+        }
+        listaPermisos = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
+        col.addView(listaPermisos)
+
+        titulo("Documentos")
+        nota("JARVIS puede leer los PDF y textos que le adjuntes con el botón + y los de UNA carpeta que elijas aquí (y sus subcarpetas). No mira el resto del teléfono.")
+        estadoDocs = nota("")
+        boton("Elegir carpeta de documentos") {
+            try { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), 8) }
+            catch (e: Exception) { Toast.makeText(c, "Este teléfono no tiene selector de carpetas.", Toast.LENGTH_LONG).show() }
+        }
+        boton("Dejar de usar la carpeta") { a.carpetaDocs = ""; pintar() }
+
         titulo("Puentes · otros servicios")
         nota("Un puente conecta a JARVIS con un servicio de fuera (correo, documentos, tareas…) sin manejar la pantalla. Usa el estándar MCP: pega aquí la dirección del servidor MCP del servicio. Por ejemplo, Zapier (zapier.com/mcp) te da una sola dirección que abre miles de aplicaciones. Consultar lo hace solo; lo que envía, crea o borra espera tu toque.")
         puentes = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
@@ -179,6 +204,13 @@ class AjustesActivity : Activity() {
     override fun onResume() { super.onResume(); pintar() }
     override fun onRequestPermissionsResult(codigo: Int, permisos: Array<out String>, resultados: IntArray) = pintar()
 
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(codigo: Int, resultado: Int, datos: Intent?) {
+        super.onActivityResult(codigo, resultado, datos)
+        val uri = datos?.data
+        if (codigo == 8 && resultado == RESULT_OK && uri != null) { Sesion.documentos.elegirCarpeta(uri); pintar() }
+    }
+
     private fun pintar() {
         estadoClave.text = if (a.hayClave) "✓ Hay una clave guardada." else "No hay ninguna clave guardada."
         estadoClave.setTextColor(if (a.hayClave) Estilo.MENTA else Estilo.AMBAR)
@@ -212,5 +244,16 @@ class AjustesActivity : Activity() {
         estadoFuentes.text = if (faltan.isEmpty()) "" else "Falta el permiso de Android para: ${faltan.joinToString()}. Apaga y enciende el interruptor para pedirlo otra vez."
         estadoFuentes.setTextColor(Estilo.AMBAR)
         diario.text = a.diario().ifEmpty { "Todavía no ha hecho nada." }
+        listaPermisos.removeAllViews()
+        val fijos = a.permisos.lista()
+        if (fijos.isEmpty()) listaPermisos.addView(Estilo.texto(this, "Ningún permiso fijo todavía.", 13f, Estilo.TENUE))
+        for (p in fijos) listaPermisos.addView(Estilo.boton(this, "${p.que}  ✕") {
+            android.app.AlertDialog.Builder(this).setMessage("¿Quitar este permiso? JARVIS volverá a preguntarte: ${p.que}.")
+                .setPositiveButton("Quitar") { _, _ -> a.permisos.quitar(p.id); a.apuntar("PERMISO FIJO quitado: ${p.que}"); pintar() }
+                .setNegativeButton("No", null).show()
+        }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(this@AjustesActivity, 8) })
+        val carpeta = Sesion.documentos.nombreCarpeta()
+        estadoDocs.text = if (carpeta.isEmpty()) "Sin carpeta: solo lee lo que adjuntes." else "✓ Carpeta: $carpeta"
+        estadoDocs.setTextColor(if (carpeta.isEmpty()) Estilo.TENUE else Estilo.MENTA)
     }
 }
